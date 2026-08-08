@@ -5,4 +5,4 @@ short_desc: 输入输出检查、动态提示词与模型编排器。
 version: v0.1.0
 author: 咕咕大侠
 repo: https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail
-astrbot_version: ">=4.16,<5"
+astrbot_version: ">=4.26.0"

@@ -978,10 +978,10 @@
               },
               "provider_id": {
                 "type": "string",
-                "description": "输入审核 Provider",
+                "description": "目标 Provider",
                 "_special": "select_provider",
                 "default": "",
-                "hint": "判别该规则的 Provider。留空则尝试使用插件默认 Provider。"
+                "hint": "此路由的目标 Provider。留空则尝试使用插件默认 Provider。"
               }
             }
           },

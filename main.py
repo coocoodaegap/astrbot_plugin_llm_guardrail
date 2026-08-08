@@ -18,7 +18,7 @@ INTERNAL_MARKER = "__astrbot_plugin_llm_guardrail_internal__"
 
 @register(
     name=PLUGIN_NAME,
-    author="AstrBot Guardrail Contributors",
+    author="Coocoodaegap",
     desc="LLM Guardrail Orchestrator: dynamic prompt injection, output checks, anti-injection, and model routing.",
     version=PLUGIN_VERSION,
     repo="https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail",
