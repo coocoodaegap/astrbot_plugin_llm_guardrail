@@ -57,7 +57,7 @@
   "session_control": {
     "type": "object",
     "description": "会话过滤",
-    "hint": "用于决定哪些会话 UMO 启用本插件。可通过 AstrBot 内置 sid 指令查看。",
+    "hint": "用于决定哪些会话 UMO 启用本插件。可在目标会话发送 /guardrail 查看 current UMO 后复制填写。",
     "items": {
       "filter_type": {
         "type": "string",
@@ -68,21 +68,21 @@
       },
       "whitelist": {
         "type": "list",
-        "description": "白名单 SID",
+        "description": "白名单 UMO",
         "items": {
           "type": "string"
         },
         "default": [],
-        "hint": "whitelist 模式下，仅这些会话启用本插件。"
+        "hint": "whitelist 模式下，仅这些 UMO 对应的会话启用本插件。UMO 格式通常为 platform_id:message_type:session_id。"
       },
       "blacklist": {
         "type": "list",
-        "description": "黑名单 SID",
+        "description": "黑名单 UMO",
         "items": {
           "type": "string"
         },
         "default": [],
-        "hint": "blacklist 模式下，这些会话跳过本插件。"
+        "hint": "blacklist 模式下，这些 UMO 对应的会话跳过本插件。UMO 格式通常为 platform_id:message_type:session_id。"
       }
     }
   },
