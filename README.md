@@ -1,21 +1,72 @@
 # astrbot_plugin_llm_guardrail
 
-LLM Guardrail Orchestrator for AstrBot.
+面向 AstrBot 的 LLM Guardrail 编排插件，用于在一次 LLM 调用前后执行输入检查、请求路由、最终请求检查、提示词加固和输出检查。
 
-当前版本是配置评审用空壳：
+## 已实现功能
 
-- 插件可以加载。
-- 面板可以展示 `_conf_schema.json`。
-- `/guardrail` 可以查看占位状态。
-- LLM 请求和响应钩子只记录 debug 日志，不执行真实拦截。
+### 输入检查
 
-后续实现将围绕四段 rail 展开：
+- 在消息事件监听器早期执行，优先检查用户输入。
+- 支持关键词、正则和逻辑门规则。
+- 支持观察、拦截和净化输入。
+- 输入被拦截时可返回占位提示，也可尽量静默阻断。
+- 输入净化会写回消息事件文本，后续插件和 AstrBot 主流程会看到净化后的内容。
+- 规则结果会进入本轮上下文，可供后续路由、最终请求检查、提示词加固和输出检查通过 `depend_on` 引用。
 
-- Input Rail：输入分析与反注入。
-- Prompt Rail：提示词加固。
-- Routing Rail：模型路由。
-- Output Rail：输出分析、重试和兜底。
+### 请求模型路由
 
-详细设计见：
+- 在消息事件监听器末尾执行，早于 AstrBot 构造 LLM 请求。
+- 支持根据前置规则结果切换当前 UMO 的聊天 Provider。
+- 支持 first-hit 路由策略。
+- 响应阶段会尝试恢复切换前的 Provider。
 
-- `../guardrail_references/llm_guardrail_spec.md`
+### 最终请求检查
+
+- 在 `on_llm_request` 阶段执行，早于提示词加固。
+- 默认关闭，开启后检查当前 `ProviderRequest.prompt`。
+- 支持关键词、正则和逻辑门规则。
+- 支持观察、拦截和净化最终请求文本。
+- 规则结果会进入本轮上下文，可与先前阶段结果一起供后续规则通过 `depend_on` 引用。
+
+### 提示词加固
+
+- 在 `on_llm_request` 阶段执行，晚于最终请求检查。
+- 支持整体替换用户 prompt。
+- 支持向 system prompt 前缀、system prompt 后缀、临时用户上下文或输入包装中注入加固文本。
+- 支持通过前置规则结果有条件地执行加固。
+
+### 输出检查
+
+- 在 `on_llm_response` 阶段执行。
+- 支持检查 `LLMResponse.completion_text`。
+- 支持关键词、正则和逻辑门规则。
+- 支持观察、拦截和净化输出。
+- 流式 chunk 响应会被跳过。
+
+### 配置与诊断
+
+- 支持按 UMO 配置黑名单或白名单。
+- 支持仅群聊生效。
+- 支持 `/guardrail` 查看当前插件状态、当前 UMO、各 rail 启用状态和规则数量。
+- 支持 debug 日志输出本轮命中规则、路由结果、提示词变更摘要和 warning 摘要。
+
+## 当前链路
+
+```text
+消息事件监听器早期：
+  Step 1 输入检查
+
+消息事件监听器末尾：
+  Step 2 请求模型路由
+
+on_llm_request：
+  Step 3 最终请求检查
+  Step 4 提示词加固
+
+on_llm_response：
+  Step 5 输出检查
+```
+
+## 兼容性
+
+当前插件框架要求为 AstrBot `>=4.26.0,<5`。
