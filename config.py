@@ -7,10 +7,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-RAIL_NAMES = ("input_rail", "prompt_rail", "routing_rail", "output_rail")
+RAIL_NAMES = (
+    "input_rail",
+    "routing_rail",
+    "request_rail",
+    "prompt_rail",
+    "output_rail",
+)
 
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     "input_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
+    "request_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
     "prompt_rail": {"replace_input", "strengthen_prompt", "logic_gate"},
     "routing_rail": {"route_policy", "logic_gate"},
     "output_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
@@ -239,7 +246,7 @@ def _normalize_rule(
 
     if template_key in {"plain_keywords", "regex_pattern", "logic_gate"}:
         action = _as_str(config.get("action_on_hit", "default")) or "default"
-        if rail_name == "input_rail" and action not in INPUT_ACTIONS:
+        if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
             warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
             config["action_on_hit"] = "default"
         elif rail_name == "output_rail":
@@ -404,6 +411,12 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
         },
         "prompt_rail": {"enabled": True},
         "routing_rail": {"enabled": True},
+        "request_rail": {
+            "enabled": False,
+            "max_text_chars": 6000,
+            "default_action_on_hit": "observe",
+            "block_message": "",
+        },
         "output_rail": {
             "enabled": True,
             "max_text_chars": 6000,
@@ -428,6 +441,14 @@ def _coerce_rail_settings(
         if action not in {"observe", "block_input"}:
             warnings.append("input_rail.default_action_on_hit is invalid; fallback to block_input")
             action = "block_input"
+        settings["default_action_on_hit"] = action
+        settings["block_message"] = _as_str(settings.get("block_message", ""))
+    elif rail_name == "request_rail":
+        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        action = _as_str(settings.get("default_action_on_hit", "observe"))
+        if action not in {"observe", "block_input"}:
+            warnings.append("request_rail.default_action_on_hit is invalid; fallback to observe")
+            action = "observe"
         settings["default_action_on_hit"] = action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "output_rail":

@@ -48,23 +48,35 @@ class LlmGuardrailPlugin(Star):
             len(self.normalized_config.warnings),
         )
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
-    async def guardrail_message(self, event: AstrMessageEvent) -> None:
-        """Run input checks and route policy before AstrBot builds the LLM request."""
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
+    async def guardrail_message_input(self, event: AstrMessageEvent) -> None:
+        """Run user input checks before other ordinary message handlers."""
         if not self.normalized_config.enabled:
             return
         try:
-            rail_context = await self.pipeline.run_message(event)
+            rail_context = await self.pipeline.run_message_input(event)
         except Exception as exc:
-            logger.error("[LLMGuardrail] message pipeline failed: %s", exc, exc_info=True)
+            logger.error("[LLMGuardrail] message input pipeline failed: %s", exc, exc_info=True)
             return
-        self._log_context_summary("message", rail_context)
+        self._log_context_summary("message_input", rail_context)
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
+    async def guardrail_message_route(self, event: AstrMessageEvent) -> None:
+        """Run route policy late in message handling, before AstrBot builds the LLM request."""
+        if not self.normalized_config.enabled:
+            return
+        try:
+            rail_context = await self.pipeline.run_message_route(event)
+        except Exception as exc:
+            logger.error("[LLMGuardrail] message route pipeline failed: %s", exc, exc_info=True)
+            return
+        self._log_context_summary("message_route", rail_context)
 
     @filter.on_llm_request()
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
-        """Run input, prompt, and routing rails before the main model call."""
+        """Run final request checks and prompt mutations before the main model call."""
         if not self.normalized_config.enabled:
             return
         if self._is_internal_request(req):
@@ -101,7 +113,13 @@ class LlmGuardrailPlugin(Star):
         group_only = cfg.global_default_settings.get("group_only", False)
         private_skipped = group_only and self.adapter.is_private_chat(event)
         rail_lines = []
-        for rail_name in ("input_rail", "prompt_rail", "routing_rail", "output_rail"):
+        for rail_name in (
+            "input_rail",
+            "routing_rail",
+            "request_rail",
+            "prompt_rail",
+            "output_rail",
+        ):
             rail = cfg.rails[rail_name]
             enabled_rules = sum(1 for rule in rail.rules if rule.enabled and rule.valid)
             rail_lines.append(
@@ -120,7 +138,7 @@ class LlmGuardrailPlugin(Star):
             f"- debug: {cfg.global_default_settings.get('debug', False)}",
             f"- warnings: {len(cfg.warnings)}",
             *rail_lines,
-            "- capabilities: keywords, regex, logic gates, prompt mutations, first-hit routing, output blocking/sanitizing",
+            "- capabilities: keywords, regex, logic gates, request checks, prompt mutations, first-hit routing, output blocking/sanitizing",
         ]
         if cfg.warnings:
             lines.append("- first warning: " + self._clip_text(cfg.warnings[0], 160))

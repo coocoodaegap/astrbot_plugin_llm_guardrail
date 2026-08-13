@@ -44,6 +44,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 RESULTS_EXTRA_KEY = "_llm_guardrail_results"
 WARNINGS_EXTRA_KEY = "_llm_guardrail_warnings"
+STATE_EXTRA_KEY = "_llm_guardrail_state"
 
 DEFAULT_INPUT_BLOCK_MESSAGE = "Request blocked by LLM Guardrail."
 DEFAULT_OUTPUT_BLOCK_MESSAGE = "Response blocked by LLM Guardrail."
@@ -60,6 +61,12 @@ class GuardrailPipeline:
         self.scheduler = RuleScheduler()
 
     async def run_message(self, event: Any) -> RailContext:
+        context = await self.run_message_input(event)
+        if context.input_blocked:
+            return context
+        return await self.run_message_route(event)
+
+    async def run_message_input(self, event: Any) -> RailContext:
         context = self._make_request_context(event, request=None)
         if not self._in_scope(event, context):
             self._store_context(event, context)
@@ -72,10 +79,24 @@ class GuardrailPipeline:
         if input_rail.enabled:
             self._run_input_rail(input_rail, context)
 
-        if not context.input_blocked:
-            routing_rail = self.config.rails["routing_rail"]
-            if routing_rail.enabled:
-                await self._run_routing_rail(routing_rail, context)
+        self._store_context(event, context)
+        return context
+
+    async def run_message_route(self, event: Any) -> RailContext:
+        context = self._make_request_context(event, request=None)
+        if not self._in_scope(event, context):
+            self._store_context(event, context)
+            return context
+        if not self.adapter.is_llm_candidate_event(event):
+            self._store_context(event, context)
+            return context
+        if context.input_blocked:
+            self._store_context(event, context)
+            return context
+
+        routing_rail = self.config.rails["routing_rail"]
+        if routing_rail.enabled:
+            await self._run_routing_rail(routing_rail, context)
 
         self._store_context(event, context)
         return context
@@ -83,6 +104,14 @@ class GuardrailPipeline:
     async def run_request(self, event: Any, request: Any) -> RailContext:
         context = self._make_request_context(event, request)
         if not self._in_scope(event, context):
+            self._store_context(event, context)
+            return context
+
+        request_rail = self.config.rails["request_rail"]
+        if request_rail.enabled:
+            self._run_request_rail(request_rail, context)
+
+        if context.input_blocked:
             self._store_context(event, context)
             return context
 
@@ -116,6 +145,9 @@ class GuardrailPipeline:
         previous_warnings = self.adapter.get_event_extra(event, WARNINGS_EXTRA_KEY, [])
         if not isinstance(previous_warnings, list):
             previous_warnings = []
+        previous_state = self.adapter.get_event_extra(event, STATE_EXTRA_KEY, {})
+        if not isinstance(previous_state, dict):
+            previous_state = {}
         original_input = self.adapter.get_event_text(event)
         prompt = self.adapter.get_request_prompt(request)
         return RailContext(
@@ -128,6 +160,8 @@ class GuardrailPipeline:
             current_output="",
             results=dict(previous_results),
             warnings=list(previous_warnings),
+            input_blocked=bool(previous_state.get("input_blocked", False)),
+            output_blocked=bool(previous_state.get("output_blocked", False)),
         )
 
     def _make_response_context(self, event: Any, response: Any) -> RailContext:
@@ -137,6 +171,9 @@ class GuardrailPipeline:
         previous_warnings = self.adapter.get_event_extra(event, WARNINGS_EXTRA_KEY, [])
         if not isinstance(previous_warnings, list):
             previous_warnings = []
+        previous_state = self.adapter.get_event_extra(event, STATE_EXTRA_KEY, {})
+        if not isinstance(previous_state, dict):
+            previous_state = {}
         context = RailContext(
             event=event,
             request=None,
@@ -147,6 +184,8 @@ class GuardrailPipeline:
             current_output=self.adapter.get_response_text(response),
             results=dict(previous_results),
             warnings=list(previous_warnings),
+            input_blocked=bool(previous_state.get("input_blocked", False)),
+            output_blocked=bool(previous_state.get("output_blocked", False)),
         )
         return context
 
@@ -170,6 +209,12 @@ class GuardrailPipeline:
         context.warnings.extend(result.warnings)
         result = self.adapter.set_event_extra(event, WARNINGS_EXTRA_KEY, context.warnings)
         context.warnings.extend(result.warnings)
+        state = {
+            "input_blocked": context.input_blocked,
+            "output_blocked": context.output_blocked,
+        }
+        result = self.adapter.set_event_extra(event, STATE_EXTRA_KEY, state)
+        context.warnings.extend(result.warnings)
 
     def _run_input_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         check_original_only = bool(rail.settings.get("check_original_only", True))
@@ -187,6 +232,28 @@ class GuardrailPipeline:
             self._apply_input_action(rail, ctx, result, current_text)
             if result.matched and self._resolve_input_action(rail, result) == "sanitize_input":
                 current_text = ctx.current_input
+            return result
+
+        self.scheduler.run(
+            rail,
+            context,
+            execute,
+            should_stop=lambda ctx: ctx.input_blocked,
+        )
+
+    def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        max_chars = int(rail.settings.get("max_text_chars", 6000))
+        current_text = clip_text(
+            self.adapter.get_request_prompt(context.request) or context.current_input,
+            max_chars,
+        )
+
+        def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+            nonlocal current_text
+            result = evaluate_text_rule(rule, ctx, current_text)
+            self._apply_input_action(rail, ctx, result, current_text)
+            if result.matched and self._resolve_input_action(rail, result) == "sanitize_input":
+                current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
 
         self.scheduler.run(

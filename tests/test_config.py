@@ -89,6 +89,30 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertFalse(rule.valid)
         self.assertFalse(rule.enabled)
 
+    def test_request_rail_keyword_rule_is_normalized(self):
+        cfg = normalize_config(
+            {
+                "request_rail": {
+                    "enabled": True,
+                    "default_action_on_hit": "block_input",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "request_risk",
+                            "keywords": ["plugin-added"],
+                            "action_on_hit": "observe",
+                        }
+                    ],
+                }
+            }
+        )
+
+        rail = cfg.rails["request_rail"]
+        rule = rail.rules[0]
+        self.assertTrue(rail.enabled)
+        self.assertTrue(rule.valid)
+        self.assertEqual(rule.rule_id, "request_risk")
+
 
 if __name__ == "__main__":
     unittest.main()

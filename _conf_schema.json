@@ -88,8 +88,8 @@
   },
   "input_rail": {
     "type": "object",
-    "description": "Step 1 (on_message): 输入分析与拦截",
-    "hint": "在普通消息事件末尾执行。负责输入分析、输入阻断和输入净化；命中结果可供请求模型路由和后续提示词加工引用。",
+    "description": "Step 1 (message event listener early): 输入分析与拦截",
+    "hint": "在普通消息事件监听器中尽早执行。负责用户原始输入分析、输入阻断和输入净化；净化后的文本会继续交给后续插件与 AstrBot 主流程，命中结果可供请求模型路由和后续提示词加工引用。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -781,10 +781,208 @@
       }
     }
   },
+  "request_rail": {
+    "type": "object",
+    "description": "Step 3 (on_llm_request): 最终请求检查",
+    "hint": "默认关闭。在 AstrBot 构造 ProviderRequest 后、提示词加工前执行。用于检查 req.prompt 中由核心或其他插件写入的最终请求文本，并为后续 prompt_rail 生成可 depend_on 的规则结果。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用最终请求检查",
+        "hint": "开启后会在提示词加工前检查最终请求文本。适合需要兜底检查其他插件改写结果的场景；默认关闭，表示用户自行负责其他插件的输入加工。",
+        "default": false
+      },
+      "max_text_chars": {
+        "type": "int",
+        "description": "最大检查字符数",
+        "hint": "超出部分会被截断后再检查，避免超长请求拖慢审核。",
+        "default": 6000
+      },
+      "default_action_on_hit": {
+        "type": "string",
+        "description": "默认风险动作",
+        "hint": "observe=只记录；block_input=阻断本轮请求。局部净化请在单条规则中选择 sanitize_input。",
+        "options": ["observe", "block_input"],
+        "default": "observe"
+      },
+      "block_message": {
+        "type": "string",
+        "description": "默认阻断提示",
+        "hint": "最终请求检查阻断时返回给用户的提示。留空则使用插件内置默认值。",
+        "default": ""
+      },
+      "rule_list": {
+        "type": "template_list",
+        "description": "规则列表",
+        "hint": "",
+        "templates": {
+          "plain_keywords": {
+            "name": "常规 - 字符串关键词匹配",
+            "hint": "在最终请求文本中匹配关键词，可用于生成变量、触发提示词加固、阻断或净化本轮请求。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用",
+                "default": true
+              },
+              "rule_id": {
+                "type": "string",
+                "description": "规则 ID",
+                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。建议使用前缀，如 request_keyword_",
+                "default": ""
+              },
+              "depend_on": {
+                "type": "string",
+                "description": "前置判断",
+                "hint": "可选。设置一个在最终请求检查以及先前环节的规则作为前置判断。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
+                "default": ""
+              },
+              "priority": {
+                "type": "int",
+                "description": "执行顺序",
+                "hint": "无前置阻塞时，数值越小越先执行；相同优先级时按配置列表原始顺序执行。",
+                "default": 1
+              },
+              "keywords": {
+                "type": "list",
+                "description": "关键词",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "keyword_weights": {
+                "type": "list",
+                "description": "关键词权重",
+                "hint": "格式：关键词:权重，例如 password:2。未设置权重的关键词默认按 1 计分。",
+                "default": []
+              },
+              "threshold": {
+                "type": "float",
+                "description": "命中阈值",
+                "hint": "关键词总分达到阈值时视为命中。",
+                "default": 1
+              },
+              "action_on_hit": {
+                "type": "string",
+                "description": "命中动作",
+                "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize_input=净化 req.prompt；block_input=阻断本轮请求。",
+                "options": ["default", "observe", "sanitize_input", "block_input"],
+                "default": "default"
+              },
+              "sanitizer": {
+                "type": "string",
+                "description": "净化替换文本",
+                "hint": "当 action_on_hit=sanitize_input 时，将命中的关键词替换为此文本；留空表示删除命中文本。",
+                "default": ""
+              }
+            }
+          },
+          "regex_pattern": {
+            "name": "常规 - 正则匹配",
+            "hint": "在最终请求文本中用正则表达式匹配风险片段。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用",
+                "default": true
+              },
+              "rule_id": {
+                "type": "string",
+                "description": "规则 ID",
+                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。建议使用前缀，如 request_regex_",
+                "default": ""
+              },
+              "depend_on": {
+                "type": "string",
+                "description": "前置判断",
+                "hint": "可选。设置一个在最终请求检查以及先前环节的规则作为前置判断。",
+                "default": ""
+              },
+              "priority": {
+                "type": "int",
+                "description": "执行顺序",
+                "hint": "无前置阻塞时，数值越小越先执行；相同优先级时按配置列表原始顺序执行。",
+                "default": 1
+              },
+              "pattern": {
+                "type": "string",
+                "description": "正则表达式",
+                "hint": "使用 Python re 语法。正则编译失败时本规则会被跳过并记录 warning。",
+                "default": ""
+              },
+              "action_on_hit": {
+                "type": "string",
+                "description": "命中动作",
+                "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize_input=净化 req.prompt；block_input=阻断本轮请求。",
+                "options": ["default", "observe", "sanitize_input", "block_input"],
+                "default": "default"
+              },
+              "sanitizer": {
+                "type": "string",
+                "description": "净化替换文本",
+                "hint": "当 action_on_hit=sanitize_input 时，将命中的正则片段替换为此文本；留空表示删除命中文本。",
+                "default": ""
+              }
+            }
+          },
+          "logic_gate": {
+            "name": "测试 - 逻辑门",
+            "hint": "根据已有规则结果计算一个新的布尔判断。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用",
+                "hint": "用于组合多个规则结果，例如 A 与 B、A 或 B、结果取反。它不直接检查文本，只读取已经产生的规则结果。复杂逻辑可以拆成多个逻辑门串联。",
+                "default": true
+              },
+              "rule_id": {
+                "type": "string",
+                "description": "规则 ID",
+                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。建议使用前缀，如 request_gate_",
+                "default": ""
+              },
+              "depend_on": {
+                "type": "string",
+                "description": "前置判断",
+                "hint": "可选。设置一个在最终请求检查以及先前环节的规则作为前置判断。",
+                "default": ""
+              },
+              "priority": {
+                "type": "int",
+                "description": "执行顺序",
+                "hint": "无前置阻塞时，数值越小越先执行；相同优先级时按配置列表原始顺序执行。",
+                "default": 0
+              },
+              "gate": {
+                "type": "string",
+                "description": "逻辑关系",
+                "hint": "all=全部命中，any=任一命中。",
+                "options": ["all", "any"],
+                "default": "all"
+              },
+              "inputs": {
+                "type": "list",
+                "description": "输入规则",
+                "hint": "填写参与计算的规则 ID。",
+                "default": []
+              },
+              "invert": {
+                "type": "bool",
+                "description": "结果取反",
+                "hint": "开启后反转逻辑门结果。",
+                "default": false
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "prompt_rail": {
     "type": "object",
-    "description": "Step 3 (on_llm_request): 提示词加工",
-    "hint": "在 AstrBot 构造 ProviderRequest 后执行。根据 Step 1/Step 2 得到的结果对提示词进行加工。",
+    "description": "Step 4 (on_llm_request): 提示词加工",
+    "hint": "在最终请求检查之后执行。根据 Step 1/Step 2/Step 3 得到的结果对提示词进行加工。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -934,8 +1132,8 @@
   },
   "routing_rail": {
     "type": "object",
-    "description": "Step 2 (on_message): 请求模型路由",
-    "hint": "在普通消息事件末尾、AstrBot 选择 Provider 前执行。根据 Step 1 得到的结果选择本轮请求模型。",
+    "description": "Step 2 (message event listener late): 请求模型路由",
+    "hint": "在普通消息事件监听器末尾、AstrBot 选择 Provider 前执行。根据 Step 1 得到的结果选择本轮请求模型。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1072,7 +1270,7 @@
   },
   "output_rail": {
     "type": "object",
-    "description": "Step 4 (on_llm_response): 输出分析",
+    "description": "Step 5 (on_llm_response): 输出分析",
     "hint": "在主模型响应后、消息发送前执行。负责输出分析、输出阻断和输出净化。",
     "items": {
       "enabled": {
