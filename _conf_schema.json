@@ -96,12 +96,6 @@
         "description": "启用输入分析",
         "default": true
       },
-      "check_original_only": {
-        "type": "bool",
-        "description": "仅检查原始输入",
-        "hint": "开启后只检查用户原始消息，不检查已被记忆或 RAG 扩写后的 ProviderRequest.prompt。",
-        "default": true
-      },
       "max_text_chars": {
         "type": "int",
         "description": "最大检查字符数",
@@ -781,10 +775,148 @@
       }
     }
   },
+  "routing_rail": {
+    "type": "object",
+    "description": "Step 2 (message event listener late): 请求模型路由",
+    "hint": "在普通消息事件监听器末尾、AstrBot 选择 Provider 前执行。根据 Step 1 得到的结果选择本轮请求模型。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用请求模型路由",
+        "hint": "如不启用则直接使用当前会话默认 Provider。",
+        "default": false
+      },
+      "rule_list": {
+        "type": "template_list",
+        "description": "规则列表",
+        "hint": "",
+        "templates": {
+          "route_policy": {
+            "name": "常规 - 路由策略",
+            "hint": "根据前置判断选择本轮请求使用的 Provider 或模型。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用",
+                "hint": "路由策略按执行顺序排他生效；第一条命中的有效策略会成为本轮路由结果。留空目标 Provider 时表示保持当前模型。",
+                "default": true
+              },
+              "rule_id": {
+                "type": "string",
+                "description": "规则 ID",
+                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。规则 ID 应当只包含小写字母和下划线且在本插件环境内唯一。建议使用前缀，如 route_policy_",
+                "default": ""
+              },
+              "depend_on": {
+                "type": "string",
+                "description": "前置判断",
+                "hint": "可选。设置一个在请求模型路由以及先前环节的规则作为前置判断。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
+                "default": ""
+              },
+              "priority": {
+                "type": "int",
+                "description": "执行顺序",
+                "hint": "无前置阻塞时，数值越小策略优先级越高；相同优先级时按顺序采用第一个策略。",
+                "default": 1
+              },
+              "provider_id": {
+                "type": "string",
+                "description": "目标 Provider",
+                "_special": "select_provider",
+                "default": "",
+                "hint": "此路由的目标 Provider。留空则尝试使用插件默认 Provider。"
+              }
+            }
+          },
+          "logic_gate": {
+            "name": "测试 - 逻辑门",
+            "hint": "根据已有规则结果计算一个新的布尔判断。",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "启用",
+                "hint": "用于组合多个规则结果，例如 A 与 B、A 或 B、结果取反。它不直接检查文本，只读取已经产生的规则结果。复杂逻辑可以拆成多个逻辑门串联。",
+                "default": true
+              },
+              "rule_id": {
+                "type": "string",
+                "description": "规则 ID",
+                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。规则 ID 应当只包含小写字母和下划线且在本插件环境内唯一。建议使用前缀，如 routing_gate_",
+                "default": ""
+              },
+              "depend_on": {
+                "type": "string",
+                "description": "前置判断",
+                "hint": "可选。设置一个在请求模型路由以及先前环节的规则作为前置判断。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
+                "default": ""
+              },
+              "priority": {
+                "type": "int",
+                "description": "执行顺序",
+                "hint": "无前置阻塞时，数值越小越先执行；相同优先级时按配置列表原始顺序执行。建议 0（满足条件时立即计算并执行动作），如需要精细控制执行时机则可以设为更大的值。",
+                "default": 0
+              },
+              "gate": {
+                "type": "string",
+                "description": "逻辑关系",
+                "hint": "all=全部命中，any=任一命中。",
+                "options": ["all", "any"],
+                "default": "all"
+              },
+              "inputs": {
+                "type": "list",
+                "description": "输入规则",
+                "hint": "填写参与计算的规则 ID。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
+                "default": []
+              },
+              "invert": {
+                "type": "bool",
+                "description": "结果取反",
+                "hint": "开启后反转逻辑门结果。",
+                "default": false
+              }
+            }
+          }
+        }
+      },
+      "session_policy_state": {
+        "type": "object",
+        "description": "路由会话状态",
+        "hint": "保存路由缓存、任务延续和临时锁定等状态。完整查看与清理建议在插件面板中进行。",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "启用路由会话状态",
+            "default": false
+          },
+          "cache_enabled": {
+            "type": "bool",
+            "description": "启用路由缓存",
+            "default": false
+          },
+          "lock_enabled": {
+            "type": "bool",
+            "description": "启用会话锁定",
+            "default": false
+          },
+          "ttl_seconds": {
+            "type": "int",
+            "description": "状态有效期",
+            "default": 3600
+          },
+          "max_entries": {
+            "type": "int",
+            "description": "最大状态数量",
+            "default": 500
+          }
+        }
+      }
+    }
+  },
   "request_rail": {
     "type": "object",
     "description": "Step 3 (on_llm_request): 最终请求检查",
-    "hint": "默认关闭。在 AstrBot 构造 ProviderRequest 后、提示词加工前执行。用于检查 req.prompt 中由核心或其他插件写入的最终请求文本，并为后续 prompt_rail 生成可 depend_on 的规则结果。",
+    "hint": "在 AstrBot 构造 ProviderRequest 后、提示词加工前执行。用于检查 req.prompt 中由核心或其他插件写入的最终请求文本，并为后续 prompt_rail 生成可 depend_on 的规则结果。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1125,144 +1257,6 @@
                 "default": false
               }
             }
-          }
-        }
-      }
-    }
-  },
-  "routing_rail": {
-    "type": "object",
-    "description": "Step 2 (message event listener late): 请求模型路由",
-    "hint": "在普通消息事件监听器末尾、AstrBot 选择 Provider 前执行。根据 Step 1 得到的结果选择本轮请求模型。",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用请求模型路由",
-        "hint": "如不启用则直接使用当前会话默认 Provider。",
-        "default": false
-      },
-      "rule_list": {
-        "type": "template_list",
-        "description": "规则列表",
-        "hint": "",
-        "templates": {
-          "route_policy": {
-            "name": "常规 - 路由策略",
-            "hint": "根据前置判断选择本轮请求使用的 Provider 或模型。",
-            "items": {
-              "enabled": {
-                "type": "bool",
-                "description": "启用",
-                "hint": "路由策略按执行顺序排他生效；第一条命中的有效策略会成为本轮路由结果。留空目标 Provider 时表示保持当前模型。",
-                "default": true
-              },
-              "rule_id": {
-                "type": "string",
-                "description": "规则 ID",
-                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。规则 ID 应当只包含小写字母和下划线且在本插件环境内唯一。建议使用前缀，如 route_policy_",
-                "default": ""
-              },
-              "depend_on": {
-                "type": "string",
-                "description": "前置判断",
-                "hint": "可选。设置一个在请求模型路由以及先前环节的规则作为前置判断。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
-                "default": ""
-              },
-              "priority": {
-                "type": "int",
-                "description": "执行顺序",
-                "hint": "无前置阻塞时，数值越小策略优先级越高；相同优先级时按顺序采用第一个策略。",
-                "default": 1
-              },
-              "provider_id": {
-                "type": "string",
-                "description": "目标 Provider",
-                "_special": "select_provider",
-                "default": "",
-                "hint": "此路由的目标 Provider。留空则尝试使用插件默认 Provider。"
-              }
-            }
-          },
-          "logic_gate": {
-            "name": "测试 - 逻辑门",
-            "hint": "根据已有规则结果计算一个新的布尔判断。",
-            "items": {
-              "enabled": {
-                "type": "bool",
-                "description": "启用",
-                "hint": "用于组合多个规则结果，例如 A 与 B、A 或 B、结果取反。它不直接检查文本，只读取已经产生的规则结果。复杂逻辑可以拆成多个逻辑门串联。",
-                "default": true
-              },
-              "rule_id": {
-                "type": "string",
-                "description": "规则 ID",
-                "hint": "可选。填写后可被后续规则引用；留空则作为匿名一次性规则执行。规则 ID 应当只包含小写字母和下划线且在本插件环境内唯一。建议使用前缀，如 routing_gate_",
-                "default": ""
-              },
-              "depend_on": {
-                "type": "string",
-                "description": "前置判断",
-                "hint": "可选。设置一个在请求模型路由以及先前环节的规则作为前置判断。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
-                "default": ""
-              },
-              "priority": {
-                "type": "int",
-                "description": "执行顺序",
-                "hint": "无前置阻塞时，数值越小越先执行；相同优先级时按配置列表原始顺序执行。建议 0（满足条件时立即计算并执行动作），如需要精细控制执行时机则可以设为更大的值。",
-                "default": 0
-              },
-              "gate": {
-                "type": "string",
-                "description": "逻辑关系",
-                "hint": "all=全部命中，any=任一命中。",
-                "options": ["all", "any"],
-                "default": "all"
-              },
-              "inputs": {
-                "type": "list",
-                "description": "输入规则",
-                "hint": "填写参与计算的规则 ID。可在前置规则 ID 前使用简易符号：如 rude_language 表示同名规则已判别且命中；!rude_language 表示这个规则已判别但未命中；?rude_language 表示这个规则已判别但无所谓结果。复合判断可以借由逻辑门实现。",
-                "default": []
-              },
-              "invert": {
-                "type": "bool",
-                "description": "结果取反",
-                "hint": "开启后反转逻辑门结果。",
-                "default": false
-              }
-            }
-          }
-        }
-      },
-      "session_policy_state": {
-        "type": "object",
-        "description": "路由会话状态",
-        "hint": "保存路由缓存、任务延续和临时锁定等状态。完整查看与清理建议在插件面板中进行。",
-        "items": {
-          "enabled": {
-            "type": "bool",
-            "description": "启用路由会话状态",
-            "default": false
-          },
-          "cache_enabled": {
-            "type": "bool",
-            "description": "启用路由缓存",
-            "default": false
-          },
-          "lock_enabled": {
-            "type": "bool",
-            "description": "启用会话锁定",
-            "default": false
-          },
-          "ttl_seconds": {
-            "type": "int",
-            "description": "状态有效期",
-            "default": 3600
-          },
-          "max_entries": {
-            "type": "int",
-            "description": "最大状态数量",
-            "default": 500
           }
         }
       }
