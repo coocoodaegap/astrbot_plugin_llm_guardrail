@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,6 +65,7 @@ class RailContext:
 
 
 RuleExecutor = Callable[[NormalizedRule, RailContext], RuleResult]
+AsyncRuleExecutor = Callable[[NormalizedRule, RailContext], Any]
 StopPredicate = Callable[[RailContext], bool]
 
 
@@ -103,14 +105,16 @@ class RuleScheduler:
 
             for reason, rule in skipped_now:
                 context.results[rule.rule_id] = skipped_result(rule, reason)
-                context.warnings.append(f"{rule.rule_id} skipped: {reason}")
+                if _skip_reason_is_warning(reason):
+                    context.warnings.append(f"{rule.rule_id} skipped: {reason}")
                 pending.pop(rule.rule_id, None)
 
             if not ready:
                 for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
                     reason = self._blocked_reason(rule, pending)
                     context.results[rule.rule_id] = skipped_result(rule, reason)
-                    context.warnings.append(f"{rule.rule_id} skipped: {reason}")
+                    if _skip_reason_is_warning(reason):
+                        context.warnings.append(f"{rule.rule_id} skipped: {reason}")
                 pending.clear()
                 return
 
@@ -120,6 +124,87 @@ class RuleScheduler:
                 started = time.perf_counter()
                 try:
                     result = executor(rule, context)
+                except Exception as exc:  # Defensive boundary for user rules/config.
+                    result = make_result(
+                        rule,
+                        matched=False,
+                        executed=True,
+                        skipped_reason="",
+                        metadata={"error": f"{type(exc).__name__}: {exc}"},
+                    )
+                    context.warnings.append(
+                        f"{rule.rule_id} failed: {type(exc).__name__}: {exc}"
+                    )
+                result.latency_ms = int((time.perf_counter() - started) * 1000)
+                context.results[rule.rule_id] = result
+                pending.pop(rule.rule_id, None)
+                if should_stop is not None and should_stop(context):
+                    for remaining in sorted(
+                        pending.values(), key=lambda item: (item.priority, item.index)
+                    ):
+                        context.results[remaining.rule_id] = skipped_result(
+                            remaining, "rail_stopped"
+                        )
+                    pending.clear()
+                    return
+
+    async def run_async(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        executor: AsyncRuleExecutor,
+        should_stop: StopPredicate | None = None,
+    ) -> None:
+        pending: dict[str, NormalizedRule] = {}
+        for rule in sorted(rail.rules, key=lambda item: (item.priority, item.index)):
+            if not rule.enabled or not rule.valid:
+                result = skipped_result(
+                    rule,
+                    "disabled" if not rule.enabled else "invalid",
+                    warnings=rule.warnings,
+                )
+                context.results[rule.rule_id] = result
+                context.warnings.extend(rule.warnings)
+                continue
+            pending[rule.rule_id] = rule
+
+        while pending:
+            ready: list[NormalizedRule] = []
+            skipped_now: list[tuple[str, NormalizedRule]] = []
+
+            for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
+                state, reason = self._dependency_state(rule, context, pending)
+                if state == "ready":
+                    ready.append(rule)
+                elif state == "impossible":
+                    skipped_now.append((reason, rule))
+
+            for reason, rule in skipped_now:
+                context.results[rule.rule_id] = skipped_result(rule, reason)
+                if _skip_reason_is_warning(reason):
+                    context.warnings.append(f"{rule.rule_id} skipped: {reason}")
+                pending.pop(rule.rule_id, None)
+
+            if not ready:
+                for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
+                    reason = self._blocked_reason(rule, pending)
+                    context.results[rule.rule_id] = skipped_result(rule, reason)
+                    if _skip_reason_is_warning(reason):
+                        context.warnings.append(f"{rule.rule_id} skipped: {reason}")
+                pending.clear()
+                return
+
+            for rule in ready:
+                if rule.rule_id not in pending:
+                    continue
+                started = time.perf_counter()
+                try:
+                    maybe_result = executor(rule, context)
+                    result = (
+                        await maybe_result
+                        if inspect.isawaitable(maybe_result)
+                        else maybe_result
+                    )
                 except Exception as exc:  # Defensive boundary for user rules/config.
                     result = make_result(
                         rule,
@@ -218,6 +303,17 @@ def logic_gate_inputs(rule: NormalizedRule) -> list[str]:
     if not isinstance(inputs, list):
         return []
     return [str(item).strip() for item in inputs if str(item).strip()]
+
+
+def _skip_reason_is_warning(reason: str) -> bool:
+    return reason in {
+        "dependency_missing",
+        "dependency_not_executed",
+        "logic_input_missing",
+        "logic_input_not_executed",
+        "cyclic_dependency",
+        "dependency_unresolved",
+    }
 
 
 def make_result(

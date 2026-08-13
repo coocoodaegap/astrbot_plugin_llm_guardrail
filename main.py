@@ -34,7 +34,7 @@ class LlmGuardrailPlugin(Star):
         super().__init__(context)
         self.config = config
         self.normalized_config = normalize_config(config)
-        self.adapter = AstrBotAdapter()
+        self.adapter = AstrBotAdapter(context)
         self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
 
     async def initialize(self) -> None:
@@ -48,6 +48,18 @@ class LlmGuardrailPlugin(Star):
             len(self.normalized_config.warnings),
         )
 
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
+    async def guardrail_message(self, event: AstrMessageEvent) -> None:
+        """Run input checks and route policy before AstrBot builds the LLM request."""
+        if not self.normalized_config.enabled:
+            return
+        try:
+            rail_context = await self.pipeline.run_message(event)
+        except Exception as exc:
+            logger.error("[LLMGuardrail] message pipeline failed: %s", exc, exc_info=True)
+            return
+        self._log_context_summary("message", rail_context)
+
     @filter.on_llm_request()
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
@@ -58,7 +70,7 @@ class LlmGuardrailPlugin(Star):
         if self._is_internal_request(req):
             return
         try:
-            rail_context = self.pipeline.run_request(event, req)
+            rail_context = await self.pipeline.run_request(event, req)
         except Exception as exc:
             logger.error("[LLMGuardrail] request pipeline failed: %s", exc, exc_info=True)
             return
@@ -73,6 +85,8 @@ class LlmGuardrailPlugin(Star):
             return
         try:
             rail_context = self.pipeline.run_response(event, resp)
+            restore_result = await self.adapter.restore_route(event)
+            rail_context.warnings.extend(restore_result.warnings)
         except Exception as exc:
             logger.error("[LLMGuardrail] response pipeline failed: %s", exc, exc_info=True)
             return
@@ -146,15 +160,34 @@ class LlmGuardrailPlugin(Star):
             for result in rail_context.results.values()
             if result.executed and result.matched
         ]
+        route_label = (
+            rail_context.route_decision.provider_id
+            if rail_context.route_decision
+            else self.adapter.get_active_route_target(rail_context.event)
+        )
+        mutations = [
+            ":".join(
+                str(part)
+                for part in (
+                    item.get("kind", ""),
+                    item.get("target", ""),
+                    item.get("rule_id", ""),
+                )
+                if part
+            )
+            for item in rail_context.prompt_mutations
+        ]
         logger.info(
-            "[LLMGuardrail] %s | umo=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | warnings=%s",
+            "[LLMGuardrail] %s | umo=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | first_warning=%s",
             phase,
             rail_context.umo,
             ",".join(matched[:10]) or "-",
             rail_context.input_blocked,
             rail_context.output_blocked,
-            rail_context.route_decision.provider_id
-            if rail_context.route_decision
-            else "-",
+            route_label or "-",
+            ",".join(mutations[:10]) or "-",
             len(rail_context.warnings),
+            self._clip_text(rail_context.warnings[0], 180)
+            if rail_context.warnings
+            else "-",
         )

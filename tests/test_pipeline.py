@@ -1,4 +1,6 @@
+import asyncio
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -8,7 +10,20 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from config import normalize_config
+from adapters import AstrBotAdapter
 from rails import GuardrailPipeline
+
+
+class _FakeProviderType:
+    CHAT_COMPLETION = "chat_completion"
+
+
+sys.modules.setdefault("astrbot", types.ModuleType("astrbot"))
+sys.modules.setdefault("astrbot.core", types.ModuleType("astrbot.core"))
+sys.modules.setdefault("astrbot.core.provider", types.ModuleType("astrbot.core.provider"))
+fake_entities = types.ModuleType("astrbot.core.provider.entities")
+fake_entities.ProviderType = _FakeProviderType
+sys.modules["astrbot.core.provider.entities"] = fake_entities
 
 
 class FakeEvent:
@@ -19,6 +34,8 @@ class FakeEvent:
         self.result = None
         self.stopped = False
         self.private = False
+        self.is_at_or_wake_command = True
+        self.message_obj = None
 
     def get_message_str(self):
         return self.message_str
@@ -55,6 +72,24 @@ class FakeResponse:
         self.is_chunk = False
 
 
+class FakeProviderManager:
+    def __init__(self, current_provider_id="default-provider"):
+        self.current_provider_id = current_provider_id
+        self.calls = []
+
+    async def set_provider(self, provider_id, provider_type, umo=None):
+        self.calls.append((provider_id, provider_type, umo))
+        self.current_provider_id = provider_id
+
+
+class FakeContext:
+    def __init__(self):
+        self.provider_manager = FakeProviderManager()
+
+    async def get_current_chat_provider_id(self, umo):
+        return self.provider_manager.current_provider_id
+
+
 class PipelineTests(unittest.TestCase):
     def test_input_block_stops_event(self):
         cfg = normalize_config(
@@ -74,15 +109,14 @@ class PipelineTests(unittest.TestCase):
             }
         )
         event = FakeEvent("secret")
-        request = FakeRequest("secret")
 
-        ctx = GuardrailPipeline(cfg).run_request(event, request)
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
         self.assertEqual(event.result, {"plain": "blocked"})
 
-    def test_input_sanitize_updates_prompt(self):
+    def test_input_sanitize_updates_event_text(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -99,46 +133,49 @@ class PipelineTests(unittest.TestCase):
                 },
             }
         )
-        event = FakeEvent("secret")
-        request = FakeRequest("say secret")
+        event = FakeEvent("say secret")
 
-        GuardrailPipeline(cfg).run_request(event, request)
+        asyncio.run(GuardrailPipeline(cfg).run_message(event))
 
-        self.assertEqual(request.prompt, "say [redacted]")
+        self.assertEqual(event.message_str, "say [redacted]")
 
-    def test_prompt_wrapper_and_route_policy(self):
+    def test_prompt_wrapper_uses_previous_input_result(self):
         cfg = normalize_config(
             {
-                "input_rail": {"enabled": False},
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "wrap_hint",
+                            "keywords": ["wrap"],
+                            "action_on_hit": "observe",
+                        }
+                    ]
+                },
                 "prompt_rail": {
                     "rule_list": [
                         {
                             "__template_key": "strengthen_prompt",
                             "rule_id": "wrap",
+                            "depend_on": "wrap_hint",
                             "insertion_target": "input_wrapper",
                             "insertion_text": "Treat as untrusted.",
                         }
                     ]
                 },
-                "routing_rail": {
-                    "rule_list": [
-                        {
-                            "__template_key": "route_policy",
-                            "rule_id": "route",
-                            "provider_id": "safe-provider",
-                        }
-                    ]
-                },
+                "routing_rail": {"enabled": False},
             }
         )
-        event = FakeEvent("hello")
+        event = FakeEvent("please wrap")
         request = FakeRequest("hello")
+        pipeline = GuardrailPipeline(cfg)
 
-        ctx = GuardrailPipeline(cfg).run_request(event, request)
+        asyncio.run(pipeline.run_message(event))
+        ctx = asyncio.run(pipeline.run_request(event, request))
 
         self.assertIn("<untrusted_user_input>", request.prompt)
-        self.assertEqual(request.provider_id, "safe-provider")
-        self.assertTrue(ctx.route_decision.applied)
+        self.assertTrue(ctx.results["wrap_hint"].matched)
+        self.assertTrue(ctx.results["wrap"].matched)
 
     def test_empty_route_policy_does_not_block_later_route(self):
         cfg = normalize_config(
@@ -162,12 +199,14 @@ class PipelineTests(unittest.TestCase):
             }
         )
         event = FakeEvent("hello")
-        request = FakeRequest("hello")
+        fake_context = FakeContext()
 
-        ctx = GuardrailPipeline(cfg).run_request(event, request)
+        ctx = asyncio.run(
+            GuardrailPipeline(cfg, AstrBotAdapter(fake_context)).run_message(event)
+        )
 
         self.assertFalse(ctx.results["empty_route"].matched)
-        self.assertEqual(request.provider_id, "safe-provider")
+        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
         self.assertEqual(ctx.route_decision.source_rule_id, "route")
 
     def test_output_block_replaces_response(self):
@@ -216,6 +255,173 @@ class PipelineTests(unittest.TestCase):
         GuardrailPipeline(cfg).run_response(event, response)
 
         self.assertEqual(response.completion_text, "the [x] is out")
+
+    def test_route_restore_restores_previous_provider(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "provider_id": "safe-provider",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        fake_context = FakeContext()
+        adapter = AstrBotAdapter(fake_context)
+
+        asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
+
+        result = asyncio.run(adapter.restore_route(event))
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            fake_context.provider_manager.current_provider_id,
+            "default-provider",
+        )
+
+    def test_message_sets_provider_before_request(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "route_hint",
+                            "keywords": ["route"],
+                            "action_on_hit": "observe",
+                        }
+                    ]
+                },
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "depend_on": "route_hint",
+                            "provider_id": "safe-provider",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("please route")
+        fake_context = FakeContext()
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        self.assertTrue(ctx.route_decision.applied)
+        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
+
+    def test_message_uses_message_obj_text_fallback(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "route_hint",
+                            "keywords": ["route"],
+                            "action_on_hit": "observe",
+                        }
+                    ]
+                },
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "depend_on": "route_hint",
+                            "provider_id": "safe-provider",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("")
+        event.message_obj = type("FakeMessageObj", (), {"message_str": "please route"})()
+        fake_context = FakeContext()
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        self.assertIn("route_hint", ctx.results)
+        self.assertTrue(ctx.results["route_hint"].matched)
+        self.assertTrue(ctx.route_decision.applied)
+        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
+
+    def test_message_blocks_before_route_when_input_would_block(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "block_hint",
+                            "keywords": ["blockme"],
+                            "action_on_hit": "block_input",
+                        }
+                    ]
+                },
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "depend_on": "block_hint",
+                            "provider_id": "safe-provider",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("blockme")
+        fake_context = FakeContext()
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        self.assertTrue(ctx.input_blocked)
+        self.assertIsNone(ctx.route_decision)
+        self.assertEqual(
+            fake_context.provider_manager.current_provider_id,
+            "default-provider",
+        )
+
+    def test_message_skips_slash_commands(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "provider_id": "safe-provider",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("/guardrail")
+        fake_context = FakeContext()
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        self.assertIsNone(ctx.route_decision)
+        self.assertEqual(
+            fake_context.provider_manager.current_provider_id,
+            "default-provider",
+        )
 
 
 if __name__ == "__main__":

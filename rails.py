@@ -59,9 +59,12 @@ class GuardrailPipeline:
         self.adapter = adapter or AstrBotAdapter()
         self.scheduler = RuleScheduler()
 
-    def run_request(self, event: Any, request: Any) -> RailContext:
-        context = self._make_request_context(event, request)
+    async def run_message(self, event: Any) -> RailContext:
+        context = self._make_request_context(event, request=None)
         if not self._in_scope(event, context):
+            self._store_context(event, context)
+            return context
+        if not self.adapter.is_llm_candidate_event(event):
             self._store_context(event, context)
             return context
 
@@ -70,14 +73,22 @@ class GuardrailPipeline:
             self._run_input_rail(input_rail, context)
 
         if not context.input_blocked:
-            prompt_rail = self.config.rails["prompt_rail"]
-            if prompt_rail.enabled:
-                self._run_prompt_rail(prompt_rail, context)
-
-        if not context.input_blocked:
             routing_rail = self.config.rails["routing_rail"]
             if routing_rail.enabled:
-                self._run_routing_rail(routing_rail, context)
+                await self._run_routing_rail(routing_rail, context)
+
+        self._store_context(event, context)
+        return context
+
+    async def run_request(self, event: Any, request: Any) -> RailContext:
+        context = self._make_request_context(event, request)
+        if not self._in_scope(event, context):
+            self._store_context(event, context)
+            return context
+
+        prompt_rail = self.config.rails["prompt_rail"]
+        if prompt_rail.enabled:
+            self._run_prompt_rail(prompt_rail, context)
 
         self._store_context(event, context)
         return context
@@ -99,6 +110,12 @@ class GuardrailPipeline:
         return context
 
     def _make_request_context(self, event: Any, request: Any) -> RailContext:
+        previous_results = self.adapter.get_event_extra(event, RESULTS_EXTRA_KEY, {})
+        if not isinstance(previous_results, dict):
+            previous_results = {}
+        previous_warnings = self.adapter.get_event_extra(event, WARNINGS_EXTRA_KEY, [])
+        if not isinstance(previous_warnings, list):
+            previous_warnings = []
         original_input = self.adapter.get_event_text(event)
         prompt = self.adapter.get_request_prompt(request)
         return RailContext(
@@ -109,6 +126,8 @@ class GuardrailPipeline:
             original_input=original_input,
             current_input=prompt or original_input,
             current_output="",
+            results=dict(previous_results),
+            warnings=list(previous_warnings),
         )
 
     def _make_response_context(self, event: Any, response: Any) -> RailContext:
@@ -197,12 +216,15 @@ class GuardrailPipeline:
                 inspected_text, result.hits, replacement
             )
             context.current_input = sanitized
-            prompt = self.adapter.get_request_prompt(context.request)
-            if prompt == inspected_text:
-                new_prompt = sanitized
+            if context.request is None:
+                adapter_result = self.adapter.set_event_text(context.event, sanitized)
             else:
-                new_prompt = apply_literal_replacements(prompt, result.hits, replacement)
-            adapter_result = self.adapter.set_request_prompt(context.request, new_prompt)
+                prompt = self.adapter.get_request_prompt(context.request)
+                if prompt == inspected_text:
+                    new_prompt = sanitized
+                else:
+                    new_prompt = apply_literal_replacements(prompt, result.hits, replacement)
+                adapter_result = self.adapter.set_request_prompt(context.request, new_prompt)
             context.warnings.extend(adapter_result.warnings)
             return
         if action == "block_input":
@@ -302,17 +324,17 @@ class GuardrailPipeline:
             metadata={"target": target, "text_length": len(insertion_text)},
         )
 
-    def _run_routing_rail(self, rail: NormalizedRail, context: RailContext) -> None:
-        def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+    async def _run_routing_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
             if rule.template_key == "route_policy":
-                return self._execute_route_policy(rule, ctx)
+                return await self._execute_route_policy(rule, ctx)
             return skipped_result(rule, "unsupported_template")
 
-        self.scheduler.run(rail, context, execute)
+        await self.scheduler.run_async(rail, context, execute)
 
-    def _execute_route_policy(
+    async def _execute_route_policy(
         self, rule: NormalizedRule, context: RailContext
     ) -> RuleResult:
         if context.route_decision is not None:
@@ -326,7 +348,9 @@ class GuardrailPipeline:
             context.warnings.append(f"{rule.rule_id}.provider_id is empty")
             return make_result(rule, matched=False, metadata={"reason": "empty_provider_id"})
 
-        adapter_result = self.adapter.apply_route(context.event, context.request, provider_id)
+        adapter_result = await self.adapter.apply_route(
+            context.event, context.request, provider_id
+        )
         context.warnings.extend(adapter_result.warnings)
         context.route_decision = RouteDecision(
             provider_id=provider_id,

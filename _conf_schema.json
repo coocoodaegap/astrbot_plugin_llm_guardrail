@@ -88,8 +88,8 @@
   },
   "input_rail": {
     "type": "object",
-    "description": "Step 1: 输入分析与拦截",
-    "hint": "最高输入分析规则库，插件面板的高级自定义配置内可以在此基础上增加或调整执行内容。",
+    "description": "Step 1 (on_message): 输入分析与拦截",
+    "hint": "在普通消息事件末尾执行。负责输入分析、输入阻断和输入净化；命中结果可供请求模型路由和后续提示词加工引用。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -783,8 +783,8 @@
   },
   "prompt_rail": {
     "type": "object",
-    "description": "Step 2: 提示词加工",
-    "hint": "根据 Step 1 得到的结果对提示词进行加工。",
+    "description": "Step 3 (on_llm_request): 提示词加工",
+    "hint": "在 AstrBot 构造 ProviderRequest 后执行。根据 Step 1/Step 2 得到的结果对提示词进行加工。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -934,8 +934,8 @@
   },
   "routing_rail": {
     "type": "object",
-    "description": "Step 3: 请求模型路由",
-    "hint": "根据 Step 1 得到的结果选择请求模型。",
+    "description": "Step 2 (on_message): 请求模型路由",
+    "hint": "在普通消息事件末尾、AstrBot 选择 Provider 前执行。根据 Step 1 得到的结果选择本轮请求模型。",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1072,8 +1072,8 @@
   },
   "output_rail": {
     "type": "object",
-    "description": "Step 4: 输出分析",
-    "hint": "最高输出分析规则库，插件面板的高级自定义配置内可以在此基础上增加或调整执行内容。",
+    "description": "Step 4 (on_llm_response): 输出分析",
+    "hint": "在主模型响应后、消息发送前执行。负责输出分析、输出阻断和输出净化。",
     "items": {
       "enabled": {
         "type": "bool",
