@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
+    from .actions import ActionPlan, resolve_action_plan
     from .adapters import AstrBotAdapter
     from .config import NormalizedConfig, NormalizedRail, NormalizedRule
     from .core import (
@@ -24,6 +25,7 @@ try:
         evaluate_text_rule,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
+    from actions import ActionPlan, resolve_action_plan
     from adapters import AstrBotAdapter
     from config import NormalizedConfig, NormalizedRail, NormalizedRule
     from core import (
@@ -232,8 +234,9 @@ class GuardrailPipeline:
         def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
-            self._apply_input_action(rail, ctx, result, current_text)
-            if result.matched and self._resolve_input_action(rail, result) == "sanitize_input":
+            plan = resolve_action_plan(rail, result)
+            self._apply_input_action(rail, ctx, result, current_text, plan)
+            if plan.action == "sanitize_input":
                 current_text = ctx.current_input
             return result
 
@@ -254,8 +257,9 @@ class GuardrailPipeline:
         def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
-            self._apply_input_action(rail, ctx, result, current_text)
-            if result.matched and self._resolve_input_action(rail, result) == "sanitize_input":
+            plan = resolve_action_plan(rail, result)
+            self._apply_input_action(rail, ctx, result, current_text, plan)
+            if plan.action == "sanitize_input":
                 current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
 
@@ -272,16 +276,13 @@ class GuardrailPipeline:
         context: RailContext,
         result: RuleResult,
         inspected_text: str,
+        plan: ActionPlan,
     ) -> None:
-        if not result.matched:
+        if plan.action in {"none", "observe"}:
             return
-        action = self._resolve_input_action(rail, result)
-        if action == "observe":
-            return
-        if action == "sanitize_input":
-            replacement = str(
-                self._rule_by_id(rail, result.rule_id).config.get("sanitizer", "")
-            )
+        if plan.action == "sanitize_input":
+            rule = self._rule_by_id(rail, result.rule_id)
+            replacement = str(rule.config.get("sanitizer", ""))
             sanitized = apply_span_replacements(
                 inspected_text, result.hits, replacement
             )
@@ -293,11 +294,13 @@ class GuardrailPipeline:
                 if prompt == inspected_text:
                     new_prompt = sanitized
                 else:
-                    new_prompt = apply_literal_replacements(prompt, result.hits, replacement)
+                    new_prompt = apply_literal_replacements(
+                        prompt, result.hits, replacement
+                    )
                 adapter_result = self.adapter.set_request_prompt(context.request, new_prompt)
             context.warnings.extend(adapter_result.warnings)
             return
-        if action == "block_input":
+        if plan.action == "block_input":
             context.input_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
@@ -451,8 +454,9 @@ class GuardrailPipeline:
         def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
-            self._apply_output_action(rail, ctx, result, current_text)
-            if result.matched and self._resolve_output_action(rail, result) == "sanitize_output":
+            plan = resolve_action_plan(rail, result)
+            self._apply_output_action(rail, ctx, result, current_text, plan)
+            if plan.action == "sanitize_output":
                 current_text = ctx.current_output
             return result
 
@@ -469,16 +473,13 @@ class GuardrailPipeline:
         context: RailContext,
         result: RuleResult,
         inspected_text: str,
+        plan: ActionPlan,
     ) -> None:
-        if not result.matched:
+        if plan.action in {"none", "observe"}:
             return
-        action = self._resolve_output_action(rail, result)
-        if action == "observe":
-            return
-        if action == "sanitize_output":
-            replacement = str(
-                self._rule_by_id(rail, result.rule_id).config.get("sanitizer", "")
-            )
+        if plan.action == "sanitize_output":
+            rule = self._rule_by_id(rail, result.rule_id)
+            replacement = str(rule.config.get("sanitizer", ""))
             sanitized = apply_span_replacements(
                 inspected_text, result.hits, replacement
             )
@@ -486,7 +487,7 @@ class GuardrailPipeline:
             adapter_result = self.adapter.set_response_text(context.response, sanitized)
             context.warnings.extend(adapter_result.warnings)
             return
-        if action == "block_output":
+        if plan.action == "block_output":
             context.output_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
@@ -496,20 +497,6 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
-
-    def _resolve_input_action(
-        self, rail: NormalizedRail, result: RuleResult
-    ) -> str:
-        if result.action_on_hit == "default":
-            return str(rail.settings.get("default_action_on_hit", "block_input"))
-        return result.action_on_hit
-
-    def _resolve_output_action(
-        self, rail: NormalizedRail, result: RuleResult
-    ) -> str:
-        if result.action_on_hit == "default":
-            return str(rail.settings.get("default_action_on_hit", "block_output"))
-        return result.action_on_hit
 
     @staticmethod
     def _rule_by_id(rail: NormalizedRail, rule_id: str) -> NormalizedRule:

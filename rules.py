@@ -1,4 +1,4 @@
-"""P0 rule evaluators and text mutation helpers."""
+"""P0 rule evaluators."""
 
 from __future__ import annotations
 
