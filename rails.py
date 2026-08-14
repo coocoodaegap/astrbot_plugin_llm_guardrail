@@ -12,6 +12,7 @@ try:
         RouteDecision,
         RuleResult,
         RuleScheduler,
+        build_graph_index,
         make_result,
         skipped_result,
     )
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         RouteDecision,
         RuleResult,
         RuleScheduler,
+        build_graph_index,
         make_result,
         skipped_result,
     )
@@ -58,7 +60,8 @@ class GuardrailPipeline:
     ) -> None:
         self.config = config
         self.adapter = adapter or AstrBotAdapter()
-        self.scheduler = RuleScheduler()
+        self.graph = build_graph_index(config)
+        self.scheduler = RuleScheduler(self.graph)
 
     async def run_message(self, event: Any) -> RailContext:
         context = await self.run_message_input(event)
@@ -399,7 +402,14 @@ class GuardrailPipeline:
                 return await self._execute_route_policy(rule, ctx)
             return skipped_result(rule, "unsupported_template")
 
-        await self.scheduler.run_async(rail, context, execute)
+        await self.scheduler.run_async(
+            rail,
+            context,
+            execute,
+            should_stop=lambda ctx: (
+                ctx.route_decision is not None and ctx.route_decision.applied
+            ),
+        )
 
     async def _execute_route_policy(
         self, rule: NormalizedRule, context: RailContext

@@ -387,7 +387,11 @@ def _validate_cross_references(
                 rail.warnings.append(message)
                 warnings.append(message)
                 continue
-            missing = [item for item in inputs if item not in stable_ids]
+            missing = [
+                item
+                for item in inputs
+                if _dependency_target(item) not in stable_ids
+            ]
             if missing:
                 message = (
                     f"{rule.rule_id}.inputs references missing rule(s): "

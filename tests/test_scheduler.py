@@ -8,7 +8,7 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from config import normalize_config
-from core import RailContext, RuleScheduler
+from core import RailContext, RuleScheduler, build_graph_index
 from rules import evaluate_text_rule
 
 
@@ -47,6 +47,46 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertEqual(order, ["first", "second"])
         self.assertTrue(ctx.results["second"].matched)
+
+    def test_newly_unlocked_higher_priority_rule_moves_to_heap_head(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "source",
+                            "priority": 10,
+                            "keywords": ["source"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "queued",
+                            "priority": 50,
+                            "keywords": ["queued"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "post",
+                            "priority": 1,
+                            "depend_on": "source",
+                            "keywords": ["post"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+        order = []
+
+        def execute(rule, context):
+            order.append(rule.rule_id)
+            return evaluate_text_rule(rule, context, "source queued post")
+
+        RuleScheduler(build_graph_index(cfg)).run(rail, ctx, execute)
+
+        self.assertEqual(order, ["source", "post", "queued"])
 
     def test_not_matched_dependency(self):
         cfg = normalize_config(
@@ -137,6 +177,110 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertEqual(ctx.results["a"].skipped_reason, "cyclic_dependency")
         self.assertEqual(ctx.results["b"].skipped_reason, "cyclic_dependency")
+
+    def test_logic_gate_inputs_support_not_and_executed_prefixes(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "a",
+                            "priority": 10,
+                            "keywords": ["missing"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "b",
+                            "priority": 20,
+                            "keywords": ["b"],
+                        },
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "gate",
+                            "priority": 1,
+                            "gate": "all",
+                            "inputs": ["!a", "?b"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        RuleScheduler(build_graph_index(cfg)).run(
+            rail, ctx, lambda rule, context: evaluate_text_rule(rule, context, "b")
+        )
+
+        self.assertTrue(ctx.results["gate"].matched)
+        self.assertEqual(ctx.results["gate"].metadata["inputs"], {"!a": True, "?b": True})
+
+    def test_current_step_dependency_on_future_step_expires(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "early",
+                            "depend_on": "future",
+                            "keywords": ["early"],
+                        }
+                    ]
+                },
+                "request_rail": {
+                    "enabled": True,
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "future",
+                            "keywords": ["future"],
+                        }
+                    ],
+                },
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        RuleScheduler(build_graph_index(cfg)).run(
+            rail, ctx, lambda rule, context: evaluate_text_rule(rule, context, "early")
+        )
+
+        self.assertFalse(ctx.results["early"].executed)
+        self.assertEqual(ctx.results["early"].skipped_reason, "expired")
+
+    def test_graph_metrics_record_cross_step_edges(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "input_hint",
+                            "keywords": ["hint"],
+                        }
+                    ]
+                },
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "strengthen_prompt",
+                            "rule_id": "prompt_hint",
+                            "depend_on": "input_hint",
+                            "insertion_text": "Be careful.",
+                        }
+                    ]
+                },
+            }
+        )
+
+        graph = build_graph_index(cfg)
+
+        self.assertTrue(graph.metrics.has_cross_step_edges)
+        self.assertEqual(graph.nodes["input_hint"].step, 1)
+        self.assertEqual(graph.nodes["prompt_hint"].step, 4)
 
 
 if __name__ == "__main__":

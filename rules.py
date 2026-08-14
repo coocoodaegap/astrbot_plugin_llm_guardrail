@@ -7,10 +7,22 @@ from typing import Any
 
 try:
     from .config import NormalizedRule
-    from .core import RailContext, RuleSignal, make_result
+    from .core import (
+        RailContext,
+        RuleSignal,
+        logic_gate_input_specs,
+        logic_input_value,
+        make_result,
+    )
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import NormalizedRule
-    from core import RailContext, RuleSignal, make_result
+    from core import (
+        RailContext,
+        RuleSignal,
+        logic_gate_input_specs,
+        logic_input_value,
+        make_result,
+    )
 
 
 def evaluate_text_rule(
@@ -124,17 +136,21 @@ def evaluate_regex_pattern(rule: NormalizedRule, text: str):
 
 
 def evaluate_logic_gate(rule: NormalizedRule, context: RailContext):
-    inputs = [
-        str(item).strip()
-        for item in rule.config.get("inputs", [])
-        if str(item).strip()
+    specs = logic_gate_input_specs(rule)
+    values = [
+        logic_input_value(spec, context.results[spec.target])
+        for spec in specs
     ]
-    values = [context.results[item].matched for item in inputs]
     gate = str(rule.config.get("gate", "all"))
     matched = all(values) if gate == "all" else any(values)
     if bool(rule.config.get("invert", False)):
         matched = not matched
-    payload = {"inputs": dict(zip(inputs, values, strict=False))}
+    payload = {
+        "inputs": {
+            spec.raw or spec.target: value
+            for spec, value in zip(specs, values, strict=False)
+        }
+    }
     return make_result(
         rule,
         matched=matched,
