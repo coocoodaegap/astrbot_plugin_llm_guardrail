@@ -17,13 +17,6 @@
     "hint": "如果只需要一套配置，通常只需要调整本组和下方全局默认配置。在插件面板中可以创建自定义配置来覆盖部分全局配置，并作用于特定的会话 UMO。",
     "obvious_hint": true,
     "items": {
-      "default_llm_provider": {
-        "type": "string",
-        "description": "插件默认辅助 Provider",
-        "_special": "select_provider",
-        "default": "",
-        "hint": "供 Guardrail 自身调用辅助 LLM 时使用，例如未来的 LLM 审查规则。不会作为主请求模型路由的兜底目标。留空则相关辅助调用尝试使用当前会话默认 Provider。建议预先设置可用性可以保证的快速小模型。"
-      },
       "reply_placeholder_on_block": {
         "type": "bool",
         "description": "拦截后发送提示",
@@ -114,6 +107,13 @@
         "description": "最大检查字符数",
         "hint": "超出部分会被截断后再检查，避免超长输入拖慢审核。",
         "default": 6000
+      },
+      "default_llm_provider": {
+        "type": "string",
+        "description": "默认辅助 Provider",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "仅供本 Step 的 LLM 审查类规则使用。留空则相关辅助调用尝试使用 AstrBot 当前会话默认 Provider。"
       },
       "default_action_on_hit": {
         "type": "string",
@@ -1118,6 +1118,13 @@
         "hint": "超出部分会被截断后再检查，避免超长请求拖慢审核。",
         "default": 6000
       },
+      "default_llm_provider": {
+        "type": "string",
+        "description": "默认辅助 Provider",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "仅供本 Step 的 LLM 审查类规则使用。留空则相关辅助调用尝试使用 AstrBot 当前会话默认 Provider。"
+      },
       "default_action_on_hit": {
         "type": "string",
         "description": "默认风险动作",
@@ -1655,6 +1662,13 @@
         "description": "最大检查字符数",
         "hint": "超出部分会被截断后再检查，避免超长输出拖慢审核。",
         "default": 6000
+      },
+      "default_llm_provider": {
+        "type": "string",
+        "description": "默认辅助 Provider",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "仅供本 Step 的 LLM 审查类规则使用。留空则相关辅助调用尝试使用 AstrBot 当前会话默认 Provider。"
       },
       "default_action_on_hit": {
         "type": "string",

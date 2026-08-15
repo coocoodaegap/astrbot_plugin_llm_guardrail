@@ -256,14 +256,8 @@ class GuardrailPipeline:
         context.warnings.extend(result.warnings)
 
     async def _run_input_rail(self, rail: NormalizedRail, context: RailContext) -> None:
-        check_original_only = bool(rail.settings.get("check_original_only", True))
         max_chars = int(rail.settings.get("max_text_chars", 6000))
-        current_text = clip_text(
-            context.original_input
-            if check_original_only
-            else self.adapter.get_request_prompt(context.request) or context.current_input,
-            max_chars,
-        )
+        current_text = clip_text(context.original_input, max_chars)
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text

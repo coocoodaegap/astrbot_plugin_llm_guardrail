@@ -108,7 +108,6 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
 
     global_default_settings = _merge_defaults(
         {
-            "default_llm_provider": "",
             "reply_placeholder_on_block": True,
             "enable_stats": True,
             "stats_max_records": 200,
@@ -127,9 +126,6 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     )
     global_default_settings["debug"] = _as_bool(
         global_default_settings.get("debug"), False
-    )
-    global_default_settings["default_llm_provider"] = _as_str(
-        global_default_settings.get("default_llm_provider")
     )
 
     raw_session_control = _as_dict(_config_get(raw_config, "session_control", {}))
@@ -494,22 +490,24 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
     defaults: dict[str, dict[str, Any]] = {
         "input_rail": {
             "enabled": True,
-            "check_original_only": True,
             "max_text_chars": 6000,
+            "default_llm_provider": "",
             "default_action_on_hit": "block",
             "block_message": "",
         },
         "prompt_rail": {"enabled": True},
-        "routing_rail": {"enabled": True},
         "request_rail": {
             "enabled": False,
             "max_text_chars": 6000,
+            "default_llm_provider": "",
             "default_action_on_hit": "observe",
             "block_message": "",
         },
+        "routing_rail": {"enabled": True},
         "output_rail": {
             "enabled": True,
             "max_text_chars": 6000,
+            "default_llm_provider": "",
             "default_action_on_hit": "block",
             "max_retries": 0,
             "block_message": "",
@@ -523,10 +521,10 @@ def _coerce_rail_settings(
 ) -> dict[str, Any]:
     settings["enabled"] = _as_bool(settings.get("enabled"), True)
     if rail_name == "input_rail":
-        settings["check_original_only"] = _as_bool(
-            settings.get("check_original_only"), True
-        )
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        settings["default_llm_provider"] = _as_str(
+            settings.get("default_llm_provider", "")
+        )
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
         action = _normalize_action_alias(raw_action)
         if action not in {"observe", "block"}:
@@ -536,6 +534,9 @@ def _coerce_rail_settings(
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "request_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        settings["default_llm_provider"] = _as_str(
+            settings.get("default_llm_provider", "")
+        )
         raw_action = _as_str(settings.get("default_action_on_hit", "observe"))
         action = _normalize_action_alias(raw_action)
         if action not in {"observe", "block"}:
@@ -545,6 +546,9 @@ def _coerce_rail_settings(
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "output_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        settings["default_llm_provider"] = _as_str(
+            settings.get("default_llm_provider", "")
+        )
         settings["max_retries"] = max(_as_int(settings.get("max_retries"), 0), 0)
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
         action = _normalize_action_alias(raw_action)

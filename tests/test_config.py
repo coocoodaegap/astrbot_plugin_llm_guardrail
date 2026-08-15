@@ -114,6 +114,35 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(rule.rule_id, "request_risk")
         self.assertEqual(rail.settings["default_action_on_hit"], "block")
 
+    def test_llm_provider_defaults_are_rail_scoped(self):
+        cfg = normalize_config(
+            {
+                "global_default_settings": {
+                    "default_llm_provider": "legacy-global-provider",
+                },
+                "input_rail": {"default_llm_provider": "input-provider"},
+                "request_rail": {"default_llm_provider": "request-provider"},
+                "output_rail": {"default_llm_provider": "output-provider"},
+            }
+        )
+
+        self.assertEqual(
+            cfg.global_default_settings["default_llm_provider"],
+            "legacy-global-provider",
+        )
+        self.assertEqual(
+            cfg.rails["input_rail"].settings["default_llm_provider"],
+            "input-provider",
+        )
+        self.assertEqual(
+            cfg.rails["request_rail"].settings["default_llm_provider"],
+            "request-provider",
+        )
+        self.assertEqual(
+            cfg.rails["output_rail"].settings["default_llm_provider"],
+            "output-provider",
+        )
+
     def test_legacy_risk_action_alias_is_normalized(self):
         cfg = normalize_config(
             {
