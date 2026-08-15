@@ -163,6 +163,52 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertTrue(rule.valid)
         self.assertEqual(rule.config["action_on_hit"], "sanitize")
 
+    def test_error_action_defaults_are_normalized(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "default_action_on_error": "record",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["risk"],
+                            "action_on_error": "block",
+                        }
+                    ],
+                }
+            }
+        )
+
+        rail = cfg.rails["input_rail"]
+        rule = rail.rules[0]
+        self.assertEqual(rail.settings["default_action_on_error"], "record")
+        self.assertEqual(rule.config["action_on_error"], "block")
+
+    def test_invalid_error_actions_fall_back(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "default_action_on_error": "explode",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["risk"],
+                            "action_on_error": "explode",
+                        }
+                    ],
+                }
+            }
+        )
+
+        rail = cfg.rails["input_rail"]
+        rule = rail.rules[0]
+        self.assertEqual(rail.settings["default_action_on_error"], "discard")
+        self.assertEqual(rule.config["action_on_error"], "default")
+        self.assertIn("default_action_on_error is invalid", " ".join(cfg.warnings))
+        self.assertIn("risk.action_on_error is invalid", " ".join(rule.warnings))
+
     def test_session_control_normalizes_group_and_private_modes(self):
         cfg = normalize_config(
             {

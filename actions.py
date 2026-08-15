@@ -23,6 +23,17 @@ class HitActionPlan:
     block: bool
 
 
+@dataclass(frozen=True)
+class ErrorActionPlan:
+    rule_id: str
+    rail: str
+    action: str
+    target: str
+    discard: bool
+    record: bool
+    block: bool
+
+
 def resolve_hit_action_plan(rail: NormalizedRail, result: RuleResult) -> HitActionPlan:
     action = _resolved_hit_action(rail, result)
     target = _hit_action_target(rail.rail, action)
@@ -34,6 +45,20 @@ def resolve_hit_action_plan(rail: NormalizedRail, result: RuleResult) -> HitActi
         stop_rail=action == "block",
         mutate_text=action == "sanitize",
         block=action == "block",
+    )
+
+
+def resolve_error_action_plan(rail: NormalizedRail, rule_id: str, action: str) -> ErrorActionPlan:
+    resolved_action = _resolved_error_action(rail, action)
+    target = _error_action_target(rail.rail, resolved_action)
+    return ErrorActionPlan(
+        rule_id=rule_id,
+        rail=rail.rail,
+        action=resolved_action,
+        target=target,
+        discard=resolved_action == "discard",
+        record=resolved_action == "record",
+        block=resolved_action == "block",
     )
 
 
@@ -53,6 +78,12 @@ def _resolved_hit_action(rail: NormalizedRail, result: RuleResult) -> str:
     return "observe"
 
 
+def _resolved_error_action(rail: NormalizedRail, action: str) -> str:
+    if action and action != "default":
+        return action
+    return str(rail.settings.get("default_action_on_error", "discard") or "discard")
+
+
 def _normalize_action_alias(action: str) -> str:
     if action in {"block_input", "sanitize_input"}:
         return action.removesuffix("_input")
@@ -63,6 +94,16 @@ def _normalize_action_alias(action: str) -> str:
 
 def _hit_action_target(rail_name: str, action: str) -> str:
     if action not in {"block", "sanitize"}:
+        return "none"
+    if rail_name in {"input_rail", "request_rail"}:
+        return "input"
+    if rail_name == "output_rail":
+        return "output"
+    return "none"
+
+
+def _error_action_target(rail_name: str, action: str) -> str:
+    if action != "block":
         return "none"
     if rail_name in {"input_rail", "request_rail"}:
         return "input"

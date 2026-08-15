@@ -40,6 +40,8 @@ OUTPUT_ACTIONS = {
     "block_output",
     "sanitize_output",
 }
+ERROR_ACTIONS = {"default", "discard", "record", "block"}
+DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 LOGIC_GATES = {"all", "any"}
 INSERTION_TARGETS = {
     "system_prefix",
@@ -280,6 +282,7 @@ def _normalize_rule(
     priority = _as_int(rule_dict.get("priority", 100), 100)
     config = dict(rule_dict)
     raw_action_on_hit = _as_str(config.get("action_on_hit", "default")) or "default"
+    raw_action_on_error = _as_str(config.get("action_on_error", "default")) or "default"
     valid = True
 
     if not template_key:
@@ -339,6 +342,13 @@ def _normalize_rule(
                 config["action_on_hit"] = "default"
         elif rail_name in {"prompt_rail", "routing_rail"}:
             config["action_on_hit"] = "observe"
+
+    if rail_name in {"input_rail", "request_rail", "output_rail"}:
+        action_on_error = raw_action_on_error.strip()
+        if action_on_error not in ERROR_ACTIONS:
+            warnings.append(f"{rule_id}.action_on_error is invalid; fallback to default")
+            action_on_error = "default"
+        config["action_on_error"] = action_on_error
 
     return NormalizedRule(
         rail=rail_name,
@@ -493,6 +503,7 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
             "max_text_chars": 6000,
             "default_llm_provider": "",
             "default_action_on_hit": "block",
+            "default_action_on_error": "discard",
             "block_message": "",
         },
         "prompt_rail": {"enabled": True},
@@ -501,6 +512,7 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
             "max_text_chars": 6000,
             "default_llm_provider": "",
             "default_action_on_hit": "observe",
+            "default_action_on_error": "discard",
             "block_message": "",
         },
         "routing_rail": {"enabled": True},
@@ -509,6 +521,7 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
             "max_text_chars": 6000,
             "default_llm_provider": "",
             "default_action_on_hit": "block",
+            "default_action_on_error": "discard",
             "max_retries": 0,
             "block_message": "",
         },
@@ -531,6 +544,15 @@ def _coerce_rail_settings(
             warnings.append("input_rail.default_action_on_hit is invalid; fallback to block")
             action = "block"
         settings["default_action_on_hit"] = action
+        error_action = _as_str(
+            settings.get("default_action_on_error", "discard")
+        ).strip()
+        if error_action not in DEFAULT_ERROR_ACTIONS:
+            warnings.append(
+                "input_rail.default_action_on_error is invalid; fallback to discard"
+            )
+            error_action = "discard"
+        settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "request_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
@@ -543,6 +565,15 @@ def _coerce_rail_settings(
             warnings.append("request_rail.default_action_on_hit is invalid; fallback to observe")
             action = "observe"
         settings["default_action_on_hit"] = action
+        error_action = _as_str(
+            settings.get("default_action_on_error", "discard")
+        ).strip()
+        if error_action not in DEFAULT_ERROR_ACTIONS:
+            warnings.append(
+                "request_rail.default_action_on_error is invalid; fallback to discard"
+            )
+            error_action = "discard"
+        settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "output_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
@@ -556,6 +587,15 @@ def _coerce_rail_settings(
             warnings.append("output_rail.default_action_on_hit is invalid; fallback to block")
             action = "block"
         settings["default_action_on_hit"] = action
+        error_action = _as_str(
+            settings.get("default_action_on_error", "discard")
+        ).strip()
+        if error_action not in DEFAULT_ERROR_ACTIONS:
+            warnings.append(
+                "output_rail.default_action_on_error is invalid; fallback to discard"
+            )
+            error_action = "discard"
+        settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     return settings
 

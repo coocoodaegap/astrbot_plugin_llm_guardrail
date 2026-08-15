@@ -126,6 +126,7 @@ class GraphIndex:
 
 RuleExecutor = Callable[[NormalizedRule, RailContext], RuleResult]
 AsyncRuleExecutor = Callable[[NormalizedRule, RailContext], Any]
+RuleErrorHandler = Callable[[NormalizedRule, RailContext, Exception], RuleResult | None]
 StopPredicate = Callable[[RailContext], bool]
 
 
@@ -146,11 +147,12 @@ class RuleScheduler:
         context: RailContext,
         executor: RuleExecutor,
         should_stop: StopPredicate | None = None,
+        error_handler: RuleErrorHandler | None = None,
     ) -> None:
         if self.strategy == "bruteforce":
-            self._run_bruteforce(rail, context, executor, should_stop)
+            self._run_bruteforce(rail, context, executor, should_stop, error_handler)
             return
-        self._run_graph(rail, context, executor, should_stop)
+        self._run_graph(rail, context, executor, should_stop, error_handler)
 
     async def run_async(
         self,
@@ -158,11 +160,14 @@ class RuleScheduler:
         context: RailContext,
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None = None,
+        error_handler: RuleErrorHandler | None = None,
     ) -> None:
         if self.strategy == "bruteforce":
-            await self._run_bruteforce_async(rail, context, executor, should_stop)
+            await self._run_bruteforce_async(
+                rail, context, executor, should_stop, error_handler
+            )
             return
-        await self._run_graph_async(rail, context, executor, should_stop)
+        await self._run_graph_async(rail, context, executor, should_stop, error_handler)
 
     def _run_graph(
         self,
@@ -170,6 +175,7 @@ class RuleScheduler:
         context: RailContext,
         executor: RuleExecutor,
         should_stop: StopPredicate | None,
+        error_handler: RuleErrorHandler | None,
     ) -> None:
         graph = self.graph or build_graph_index(rail)
         active_rules = self._collect_active_rules(rail, context)
@@ -185,8 +191,9 @@ class RuleScheduler:
             if rule_id not in pending:
                 continue
             rule = active_rules[rule_id]
-            result = self._execute_rule(rule, context, executor)
-            context.results[rule_id] = result
+            result = self._execute_rule(rule, context, executor, error_handler)
+            if result is not None:
+                context.results[rule_id] = result
             pending.remove(rule_id)
 
             if should_stop is not None and should_stop(context):
@@ -200,7 +207,7 @@ class RuleScheduler:
                 queued,
                 ready_heap,
                 context,
-                changed_sources=[rule_id],
+                changed_sources=[rule_id] if result is not None else [],
             )
 
         self._expire_pending(graph, active_rules, pending, context)
@@ -211,6 +218,7 @@ class RuleScheduler:
         context: RailContext,
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None,
+        error_handler: RuleErrorHandler | None,
     ) -> None:
         graph = self.graph or build_graph_index(rail)
         active_rules = self._collect_active_rules(rail, context)
@@ -226,8 +234,9 @@ class RuleScheduler:
             if rule_id not in pending:
                 continue
             rule = active_rules[rule_id]
-            result = await self._execute_rule_async(rule, context, executor)
-            context.results[rule_id] = result
+            result = await self._execute_rule_async(rule, context, executor, error_handler)
+            if result is not None:
+                context.results[rule_id] = result
             pending.remove(rule_id)
 
             if should_stop is not None and should_stop(context):
@@ -241,7 +250,7 @@ class RuleScheduler:
                 queued,
                 ready_heap,
                 context,
-                changed_sources=[rule_id],
+                changed_sources=[rule_id] if result is not None else [],
             )
 
         self._expire_pending(graph, active_rules, pending, context)
@@ -252,8 +261,10 @@ class RuleScheduler:
         context: RailContext,
         executor: RuleExecutor,
         should_stop: StopPredicate | None,
+        error_handler: RuleErrorHandler | None,
     ) -> None:
         pending: dict[str, NormalizedRule] = {}
+        expired_sources: set[str] = set()
         for rule in sorted(rail.rules, key=lambda item: (item.priority, item.index)):
             if not rule.enabled or not rule.valid:
                 result = skipped_result(
@@ -271,7 +282,9 @@ class RuleScheduler:
             skipped_now: list[tuple[str, NormalizedRule]] = []
 
             for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
-                state, reason = self._dependency_state(rule, context, pending)
+                state, reason = self._dependency_state(
+                    rule, context, pending, expired_sources
+                )
                 if state == "ready":
                     ready.append(rule)
                 elif state == "impossible":
@@ -285,7 +298,7 @@ class RuleScheduler:
 
             if not ready:
                 for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
-                    reason = self._blocked_reason(rule, pending)
+                    reason = self._blocked_reason(rule, pending, expired_sources)
                     context.results[rule.rule_id] = skipped_result(rule, reason)
                     if _skip_reason_is_warning(reason):
                         context.warnings.append(f"{rule.rule_id} skipped: {reason}")
@@ -299,18 +312,12 @@ class RuleScheduler:
                 try:
                     result = executor(rule, context)
                 except Exception as exc:  # Defensive boundary for user rules/config.
-                    result = make_result(
-                        rule,
-                        matched=False,
-                        executed=True,
-                        skipped_reason="",
-                        metadata={"error": f"{type(exc).__name__}: {exc}"},
-                    )
-                    context.warnings.append(
-                        f"{rule.rule_id} failed: {type(exc).__name__}: {exc}"
-                    )
-                result.latency_ms = int((time.perf_counter() - started) * 1000)
-                context.results[rule.rule_id] = result
+                    result = self._handle_rule_error(rule, context, exc, error_handler)
+                if result is not None:
+                    result.latency_ms = int((time.perf_counter() - started) * 1000)
+                    context.results[rule.rule_id] = result
+                else:
+                    expired_sources.add(rule.rule_id)
                 pending.pop(rule.rule_id, None)
                 if should_stop is not None and should_stop(context):
                     for remaining in sorted(
@@ -328,8 +335,10 @@ class RuleScheduler:
         context: RailContext,
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None,
+        error_handler: RuleErrorHandler | None,
     ) -> None:
         pending: dict[str, NormalizedRule] = {}
+        expired_sources: set[str] = set()
         for rule in sorted(rail.rules, key=lambda item: (item.priority, item.index)):
             if not rule.enabled or not rule.valid:
                 result = skipped_result(
@@ -347,7 +356,9 @@ class RuleScheduler:
             skipped_now: list[tuple[str, NormalizedRule]] = []
 
             for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
-                state, reason = self._dependency_state(rule, context, pending)
+                state, reason = self._dependency_state(
+                    rule, context, pending, expired_sources
+                )
                 if state == "ready":
                     ready.append(rule)
                 elif state == "impossible":
@@ -361,7 +372,7 @@ class RuleScheduler:
 
             if not ready:
                 for rule in sorted(pending.values(), key=lambda item: (item.priority, item.index)):
-                    reason = self._blocked_reason(rule, pending)
+                    reason = self._blocked_reason(rule, pending, expired_sources)
                     context.results[rule.rule_id] = skipped_result(rule, reason)
                     if _skip_reason_is_warning(reason):
                         context.warnings.append(f"{rule.rule_id} skipped: {reason}")
@@ -380,18 +391,12 @@ class RuleScheduler:
                         else maybe_result
                     )
                 except Exception as exc:  # Defensive boundary for user rules/config.
-                    result = make_result(
-                        rule,
-                        matched=False,
-                        executed=True,
-                        skipped_reason="",
-                        metadata={"error": f"{type(exc).__name__}: {exc}"},
-                    )
-                    context.warnings.append(
-                        f"{rule.rule_id} failed: {type(exc).__name__}: {exc}"
-                    )
-                result.latency_ms = int((time.perf_counter() - started) * 1000)
-                context.results[rule.rule_id] = result
+                    result = self._handle_rule_error(rule, context, exc, error_handler)
+                if result is not None:
+                    result.latency_ms = int((time.perf_counter() - started) * 1000)
+                    context.results[rule.rule_id] = result
+                else:
+                    expired_sources.add(rule.rule_id)
                 pending.pop(rule.rule_id, None)
                 if should_stop is not None and should_stop(context):
                     for remaining in sorted(
@@ -425,20 +430,15 @@ class RuleScheduler:
         rule: NormalizedRule,
         context: RailContext,
         executor: RuleExecutor,
-    ) -> RuleResult:
+        error_handler: RuleErrorHandler | None,
+    ) -> RuleResult | None:
         started = time.perf_counter()
         try:
             result = executor(rule, context)
         except Exception as exc:  # Defensive boundary for user rules/config.
-            result = make_result(
-                rule,
-                matched=False,
-                executed=True,
-                skipped_reason="",
-                metadata={"error": f"{type(exc).__name__}: {exc}"},
-            )
-            context.warnings.append(f"{rule.rule_id} failed: {type(exc).__name__}: {exc}")
-        result.latency_ms = int((time.perf_counter() - started) * 1000)
+            result = self._handle_rule_error(rule, context, exc, error_handler)
+        if result is not None:
+            result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
 
     async def _execute_rule_async(
@@ -446,22 +446,36 @@ class RuleScheduler:
         rule: NormalizedRule,
         context: RailContext,
         executor: AsyncRuleExecutor,
-    ) -> RuleResult:
+        error_handler: RuleErrorHandler | None,
+    ) -> RuleResult | None:
         started = time.perf_counter()
         try:
             maybe_result = executor(rule, context)
             result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
         except Exception as exc:  # Defensive boundary for user rules/config.
-            result = make_result(
-                rule,
-                matched=False,
-                executed=True,
-                skipped_reason="",
-                metadata={"error": f"{type(exc).__name__}: {exc}"},
-            )
-            context.warnings.append(f"{rule.rule_id} failed: {type(exc).__name__}: {exc}")
-        result.latency_ms = int((time.perf_counter() - started) * 1000)
+            result = self._handle_rule_error(rule, context, exc, error_handler)
+        if result is not None:
+            result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
+
+    @staticmethod
+    def _handle_rule_error(
+        rule: NormalizedRule,
+        context: RailContext,
+        exc: Exception,
+        error_handler: RuleErrorHandler | None,
+    ) -> RuleResult | None:
+        if error_handler is not None:
+            return error_handler(rule, context, exc)
+        error_text = f"{type(exc).__name__}: {exc}"
+        context.warnings.append(f"{rule.rule_id} failed: {error_text}")
+        return make_result(
+            rule,
+            matched=False,
+            executed=True,
+            skipped_reason="",
+            metadata={"error": error_text},
+        )
 
     def _refresh_ready(
         self,
@@ -621,13 +635,17 @@ class RuleScheduler:
         rule: NormalizedRule,
         context: RailContext,
         pending: dict[str, NormalizedRule],
+        expired_sources: set[str] | None = None,
     ) -> tuple[str, str]:
+        expired_sources = expired_sources or set()
         dep = parse_depend_on(rule.depend_on)
         if dep.target:
             result = context.results.get(dep.target)
             if result is None:
                 if dep.target in pending:
                     return "waiting", ""
+                if dep.target in expired_sources:
+                    return "impossible", "expired"
                 return "impossible", "dependency_missing"
             if not result.executed:
                 return "impossible", "dependency_not_executed"
@@ -639,6 +657,8 @@ class RuleScheduler:
             if result is None:
                 if input_spec.target in pending:
                     return "waiting", ""
+                if input_spec.target in expired_sources:
+                    return "impossible", "expired"
                 return "impossible", "logic_input_missing"
             if not result.executed:
                 return "impossible", "logic_input_not_executed"
@@ -647,8 +667,11 @@ class RuleScheduler:
 
     @staticmethod
     def _blocked_reason(
-        rule: NormalizedRule, pending: dict[str, NormalizedRule]
+        rule: NormalizedRule,
+        pending: dict[str, NormalizedRule],
+        expired_sources: set[str] | None = None,
     ) -> str:
+        expired_sources = expired_sources or set()
         dependencies = []
         dep = parse_depend_on(rule.depend_on)
         if dep.target:
@@ -656,6 +679,8 @@ class RuleScheduler:
         dependencies.extend(input_spec.target for input_spec in logic_gate_input_specs(rule))
         if any(item in pending for item in dependencies):
             return "cyclic_dependency"
+        if any(item in expired_sources for item in dependencies):
+            return "expired"
         return "dependency_unresolved"
 
 

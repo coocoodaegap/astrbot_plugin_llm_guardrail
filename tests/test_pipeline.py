@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1]
@@ -356,6 +357,85 @@ class PipelineTests(unittest.TestCase):
         asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertEqual(response.completion_text, "the [x] is out")
+
+    def test_input_error_block_stops_event(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "block_message": "rule failed closed",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "boom",
+                            "keywords": ["hello"],
+                            "action_on_error": "block",
+                        }
+                    ],
+                },
+                "routing_rail": {"enabled": False},
+            }
+        )
+        event = FakeEvent("hello")
+
+        with patch("rails.evaluate_text_rule", side_effect=RuntimeError("simulated")):
+            ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertTrue(ctx.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(event.result, {"plain": "rule failed closed"})
+        self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
+        self.assertIn("RuntimeError: simulated", ctx.results["boom"].metadata["error"])
+
+    def test_input_error_discard_omits_failed_result(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "boom",
+                            "keywords": ["hello"],
+                            "action_on_error": "discard",
+                        }
+                    ],
+                },
+                "routing_rail": {"enabled": False},
+            }
+        )
+        event = FakeEvent("hello")
+
+        with patch("rails.evaluate_text_rule", side_effect=RuntimeError("simulated")):
+            ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertFalse(ctx.input_blocked)
+        self.assertNotIn("boom", ctx.results)
+        self.assertIn("boom failed: RuntimeError: simulated", " ".join(ctx.warnings))
+
+    def test_output_error_block_replaces_response(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "block_message": "output failed closed",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "boom",
+                            "keywords": ["hello"],
+                            "action_on_error": "block",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("hello")
+
+        with patch("rails.evaluate_text_rule", side_effect=RuntimeError("simulated")):
+            ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(response.completion_text, "output failed closed")
+        self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
 
     def test_route_sets_event_extra_without_changing_provider_manager(self):
         cfg = normalize_config(

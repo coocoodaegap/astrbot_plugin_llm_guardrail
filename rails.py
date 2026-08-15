@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from .actions import HitActionPlan, resolve_hit_action_plan
+    from .actions import (
+        ErrorActionPlan,
+        HitActionPlan,
+        resolve_error_action_plan,
+        resolve_hit_action_plan,
+    )
     from .adapters import AstrBotAdapter
     from .config import (
         NormalizedConfig,
@@ -17,6 +22,7 @@ try:
         RailContext,
         RouteDecision,
         RuleResult,
+        RuleSignal,
         RuleScheduler,
         build_graph_index,
         make_result,
@@ -30,7 +36,12 @@ try:
         evaluate_text_rule,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from actions import HitActionPlan, resolve_hit_action_plan
+    from actions import (
+        ErrorActionPlan,
+        HitActionPlan,
+        resolve_error_action_plan,
+        resolve_hit_action_plan,
+    )
     from adapters import AstrBotAdapter
     from config import (
         NormalizedConfig,
@@ -42,6 +53,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         RailContext,
         RouteDecision,
         RuleResult,
+        RuleSignal,
         RuleScheduler,
         build_graph_index,
         make_result,
@@ -273,6 +285,9 @@ class GuardrailPipeline:
             context,
             execute,
             should_stop=lambda ctx: ctx.input_blocked,
+            error_handler=lambda rule, ctx, exc: self._handle_rule_error(
+                rail, rule, ctx, exc
+            ),
         )
 
     async def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
@@ -296,6 +311,9 @@ class GuardrailPipeline:
             context,
             execute,
             should_stop=lambda ctx: ctx.input_blocked,
+            error_handler=lambda rule, ctx, exc: self._handle_rule_error(
+                rail, rule, ctx, exc
+            ),
         )
 
     def _apply_input_action(
@@ -495,6 +513,9 @@ class GuardrailPipeline:
             context,
             execute,
             should_stop=lambda ctx: ctx.output_blocked,
+            error_handler=lambda rule, ctx, exc: self._handle_rule_error(
+                rail, rule, ctx, exc
+            ),
         )
 
     def _apply_output_action(
@@ -518,6 +539,71 @@ class GuardrailPipeline:
             context.warnings.extend(adapter_result.warnings)
             return
         if hit_plan.block:
+            context.output_blocked = True
+            message = str(rail.settings.get("block_message", "")).strip()
+            if not message:
+                message = DEFAULT_OUTPUT_BLOCK_MESSAGE
+            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+                adapter_result = self.adapter.set_response_text(context.response, message)
+            else:
+                adapter_result = self.adapter.stop_event(context.event)
+            context.warnings.extend(adapter_result.warnings)
+
+    def _handle_rule_error(
+        self,
+        rail: NormalizedRail,
+        rule: NormalizedRule,
+        context: RailContext,
+        exc: Exception,
+    ) -> RuleResult | None:
+        error_text = f"{type(exc).__name__}: {exc}"
+        error_action = str(rule.config.get("action_on_error", "default") or "default")
+        error_plan = resolve_error_action_plan(rail, rule.rule_id, error_action)
+        context.warnings.append(f"{rule.rule_id} failed: {error_text}")
+        if error_plan.discard:
+            return None
+        result = make_result(
+            rule,
+            matched=False,
+            executed=True,
+            skipped_reason="",
+            action_on_hit="observe",
+            metadata={
+                "error": error_text,
+                "error_action": error_plan.action,
+                "error_kind": type(exc).__name__,
+            },
+            signal=RuleSignal(
+                value=False,
+                truthy=False,
+                payload={
+                    "error": error_text,
+                    "error_action": error_plan.action,
+                    "error_kind": type(exc).__name__,
+                },
+            ),
+        )
+        if error_plan.block:
+            self._apply_error_block(rail, context, error_plan)
+        return result
+
+    def _apply_error_block(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        error_plan: ErrorActionPlan,
+    ) -> None:
+        if error_plan.target == "input":
+            context.input_blocked = True
+            message = str(rail.settings.get("block_message", "")).strip()
+            if not message:
+                message = DEFAULT_INPUT_BLOCK_MESSAGE
+            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+                adapter_result = self.adapter.set_block_result(context.event, message)
+            else:
+                adapter_result = self.adapter.stop_event(context.event)
+            context.warnings.extend(adapter_result.warnings)
+        elif error_plan.target == "output":
             context.output_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:

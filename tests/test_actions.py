@@ -7,7 +7,7 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from actions import resolve_hit_action_plan
+from actions import resolve_error_action_plan, resolve_hit_action_plan
 from config import normalize_config
 from rules import evaluate_plain_keywords
 
@@ -107,6 +107,54 @@ class HitActionPlanTests(unittest.TestCase):
         self.assertEqual(plan.action, "none")
         self.assertFalse(plan.block)
         self.assertFalse(plan.mutate_text)
+
+
+class ErrorActionPlanTests(unittest.TestCase):
+    def test_input_default_error_action_targets_input_when_blocking(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "default_action_on_error": "block",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["risk"],
+                        }
+                    ],
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+
+        plan = resolve_error_action_plan(rail, "risk", "default")
+
+        self.assertEqual(plan.action, "block")
+        self.assertEqual(plan.target, "input")
+        self.assertTrue(plan.block)
+
+    def test_output_error_record_has_no_mutation_target(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["risk"],
+                        }
+                    ],
+                }
+            }
+        )
+        rail = cfg.rails["output_rail"]
+
+        plan = resolve_error_action_plan(rail, "risk", "record")
+
+        self.assertEqual(plan.action, "record")
+        self.assertEqual(plan.target, "none")
+        self.assertTrue(plan.record)
+        self.assertFalse(plan.block)
 
 
 if __name__ == "__main__":

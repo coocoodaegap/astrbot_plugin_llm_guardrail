@@ -9,7 +9,7 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from config import normalize_config
-from core import RailContext, RuleScheduler, build_graph_index
+from core import RailContext, RuleScheduler, build_graph_index, make_result
 from rules import evaluate_text_rule
 
 
@@ -148,6 +148,127 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertFalse(ctx.results["second"].executed)
         self.assertEqual(ctx.results["second"].skipped_reason, "dependency_not_satisfied")
+
+    def test_error_discard_does_not_unlock_dependencies(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "boom",
+                            "keywords": ["boom"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "after",
+                            "depend_on": "?boom",
+                            "keywords": ["after"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        def execute(rule, context):
+            if rule.rule_id == "boom":
+                raise RuntimeError("simulated")
+            return evaluate_text_rule(rule, context, "after")
+
+        RuleScheduler(build_graph_index(cfg)).run(
+            rail,
+            ctx,
+            execute,
+            error_handler=lambda rule, context, exc: None,
+        )
+
+        self.assertNotIn("boom", ctx.results)
+        self.assertFalse(ctx.results["after"].executed)
+        self.assertEqual(ctx.results["after"].skipped_reason, "expired")
+
+    def test_bruteforce_error_discard_expires_dependencies(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "boom",
+                            "keywords": ["boom"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "after",
+                            "depend_on": "?boom",
+                            "keywords": ["after"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        def execute(rule, context):
+            if rule.rule_id == "boom":
+                raise RuntimeError("simulated")
+            return evaluate_text_rule(rule, context, "after")
+
+        RuleScheduler(strategy="bruteforce").run(
+            rail,
+            ctx,
+            execute,
+            error_handler=lambda rule, context, exc: None,
+        )
+
+        self.assertNotIn("boom", ctx.results)
+        self.assertFalse(ctx.results["after"].executed)
+        self.assertEqual(ctx.results["after"].skipped_reason, "expired")
+
+    def test_error_record_unlocks_executed_dependencies(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "boom",
+                            "keywords": ["boom"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "after",
+                            "depend_on": "?boom",
+                            "keywords": ["after"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        def execute(rule, context):
+            if rule.rule_id == "boom":
+                raise RuntimeError("simulated")
+            return evaluate_text_rule(rule, context, "after")
+
+        RuleScheduler(build_graph_index(cfg)).run(
+            rail,
+            ctx,
+            execute,
+            error_handler=lambda rule, context, exc: make_result(
+                rule,
+                matched=False,
+                metadata={"error": f"{type(exc).__name__}: {exc}"},
+            ),
+        )
+
+        self.assertTrue(ctx.results["boom"].executed)
+        self.assertFalse(ctx.results["boom"].matched)
+        self.assertTrue(ctx.results["after"].matched)
 
     def test_cyclic_dependency_is_skipped(self):
         cfg = normalize_config(
