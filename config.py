@@ -41,6 +41,7 @@ INSERTION_TARGETS = {
 SESSION_SCOPE_MODES = {
     "all_run",
     "all_pass",
+    "all_block",
     "enabled_or_pass",
     "enabled_or_block",
 }
@@ -98,7 +99,6 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
 
     global_default_settings = _merge_defaults(
         {
-            "group_only": False,
             "default_llm_provider": "",
             "reply_placeholder_on_block": True,
             "enable_stats": True,
@@ -106,9 +106,6 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
             "debug": False,
         },
         _config_get(raw_config, "global_default_settings", {}),
-    )
-    global_default_settings["group_only"] = _as_bool(
-        global_default_settings.get("group_only"), False
     )
     global_default_settings["reply_placeholder_on_block"] = _as_bool(
         global_default_settings.get("reply_placeholder_on_block"), True
@@ -129,7 +126,6 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     raw_session_control = _as_dict(_config_get(raw_config, "session_control", {}))
     session_control = _normalize_session_control(
         raw_session_control,
-        legacy_group_only=global_default_settings["group_only"],
         warnings=warnings,
     )
 
@@ -195,7 +191,6 @@ def _normalize_rail(
 
 def _normalize_session_control(
     raw_session_control: dict[str, Any],
-    legacy_group_only: bool,
     warnings: list[str],
 ) -> dict[str, Any]:
     legacy_enabled = _clean_string_list(raw_session_control.get("whitelist", []))
@@ -229,10 +224,6 @@ def _normalize_session_control(
         private_mode = "enabled_or_pass"
         group_enabled = list(legacy_enabled)
         private_enabled = list(legacy_enabled)
-
-    if legacy_group_only and "private_chat_mode" not in raw_session_control:
-        private_mode = "all_pass"
-        private_enabled = []
 
     return {
         "group_chat_mode": group_mode,
@@ -269,6 +260,8 @@ def resolve_session_scope(
         return SessionScopeDecision("run", f"{chat_type}_all_run", chat_type, mode)
     if mode == "all_pass":
         return SessionScopeDecision("pass", f"{chat_type}_all_pass", chat_type, mode)
+    if mode == "all_block":
+        return SessionScopeDecision("block", f"{chat_type}_all_block", chat_type, mode)
     if umo and umo in enabled:
         return SessionScopeDecision("run", f"{chat_type}_enabled", chat_type, mode)
     if mode == "enabled_or_block":

@@ -664,6 +664,36 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("risk", ctx.results)
         self.assertEqual(ctx.session_scope_decision.action, "block")
 
+    def test_all_block_blocks_group_before_rails(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "group_chat_mode": "all_block",
+                },
+                "input_rail": {
+                    "block_message": "rail blocked",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("secret", umo="platform:message:any")
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertTrue(ctx.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertNotIn("risk", ctx.results)
+        self.assertEqual(ctx.session_scope_decision.action, "block")
+        self.assertEqual(ctx.session_scope_decision.reason, "group_all_block")
+
     def test_private_all_pass_skips_private_chat_before_rails(self):
         cfg = normalize_config(
             {

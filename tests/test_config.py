@@ -150,16 +150,19 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(cfg.session_control["private_chat_mode"], "enabled_or_pass")
         self.assertEqual(cfg.session_control["private_chat_enabled"], ["legacy-session"])
 
-    def test_group_only_maps_private_chat_to_all_pass(self):
+    def test_session_control_accepts_all_block(self):
         cfg = normalize_config(
             {
-                "global_default_settings": {"group_only": True},
-                "session_control": {},
+                "session_control": {
+                    "group_chat_mode": "all_block",
+                    "private_chat_mode": "all_block",
+                }
             }
         )
 
-        self.assertEqual(cfg.session_control["group_chat_mode"], "all_run")
-        self.assertEqual(cfg.session_control["private_chat_mode"], "all_pass")
+        self.assertEqual(cfg.session_control["group_chat_mode"], "all_block")
+        self.assertEqual(cfg.session_control["private_chat_mode"], "all_block")
+        self.assertEqual(cfg.warnings, [])
 
     def test_invalid_session_mode_falls_back_to_all_run(self):
         cfg = normalize_config(

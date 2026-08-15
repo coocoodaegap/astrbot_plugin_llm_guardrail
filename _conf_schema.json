@@ -17,12 +17,6 @@
     "hint": "如果只需要一套配置，通常只需要调整本组和下方全局默认配置。在插件面板中可以创建自定义配置来覆盖部分全局配置，并作用于特定的会话 UMO。",
     "obvious_hint": true,
     "items": {
-      "group_only": {
-        "type": "bool",
-        "description": "（旧版）仅群聊生效",
-        "hint": "开启后私聊不会进入本插件的 guardrail 流程。",
-        "default": false
-      },
       "default_llm_provider": {
         "type": "string",
         "description": "插件默认辅助 Provider",
@@ -71,10 +65,11 @@
       "group_chat_mode": {
         "type": "string",
         "description": "群聊处理范围",
-        "hint": "all_run=所有群聊都进入 Guardrail rails；all_pass=所有群聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定群聊进入 rails，其他群聊跳过并放行；enabled_or_block=只有指定群聊进入 rails，其他群聊跳过并拦截。",
+        "hint": "all_run=所有群聊都进入 Guardrail rails；all_pass=所有群聊都跳过 Guardrail 并放行；all_block=所有群聊都跳过 Guardrail 并拦截；enabled_or_pass=只有指定群聊进入 rails，其他群聊跳过并放行；enabled_or_block=只有指定群聊进入 rails，其他群聊跳过并拦截。",
         "options": [
           "all_run",
           "all_pass",
+          "all_block",
           "enabled_or_pass",
           "enabled_or_block"
         ],
@@ -92,10 +87,11 @@
       "private_chat_mode": {
         "type": "string",
         "description": "私聊处理范围",
-        "hint": "all_run=所有私聊都进入 Guardrail rails；all_pass=所有私聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定私聊进入 rails，其他私聊跳过并放行；enabled_or_block=只有指定私聊进入 rails，其他私聊跳过并拦截。",
+        "hint": "all_run=所有私聊都进入 Guardrail rails；all_pass=所有私聊都跳过 Guardrail 并放行；all_block=所有私聊都跳过 Guardrail 并拦截；enabled_or_pass=只有指定私聊进入 rails，其他私聊跳过并放行；enabled_or_block=只有指定私聊进入 rails，其他私聊跳过并拦截。",
         "options": [
           "all_run",
           "all_pass",
+          "all_block",
           "enabled_or_pass",
           "enabled_or_block"
         ],
