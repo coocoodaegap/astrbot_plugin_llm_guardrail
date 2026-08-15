@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from .actions import ActionPlan, resolve_action_plan
+    from .actions import HitActionPlan, resolve_hit_action_plan
     from .adapters import AstrBotAdapter
     from .config import (
         NormalizedConfig,
@@ -30,7 +30,7 @@ try:
         evaluate_text_rule,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from actions import ActionPlan, resolve_action_plan
+    from actions import HitActionPlan, resolve_hit_action_plan
     from adapters import AstrBotAdapter
     from config import (
         NormalizedConfig,
@@ -262,9 +262,9 @@ class GuardrailPipeline:
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
-            plan = resolve_action_plan(rail, result)
-            self._apply_input_action(rail, ctx, result, current_text, plan)
-            if plan.mutate_text:
+            hit_plan = resolve_hit_action_plan(rail, result)
+            self._apply_input_action(rail, ctx, result, current_text, hit_plan)
+            if hit_plan.mutate_text:
                 current_text = ctx.current_input
             return result
 
@@ -285,9 +285,9 @@ class GuardrailPipeline:
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
-            plan = resolve_action_plan(rail, result)
-            self._apply_input_action(rail, ctx, result, current_text, plan)
-            if plan.mutate_text:
+            hit_plan = resolve_hit_action_plan(rail, result)
+            self._apply_input_action(rail, ctx, result, current_text, hit_plan)
+            if hit_plan.mutate_text:
                 current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
 
@@ -304,11 +304,11 @@ class GuardrailPipeline:
         context: RailContext,
         result: RuleResult,
         inspected_text: str,
-        plan: ActionPlan,
+        hit_plan: HitActionPlan,
     ) -> None:
-        if plan.action in {"none", "observe"}:
+        if hit_plan.action in {"none", "observe"}:
             return
-        if plan.mutate_text:
+        if hit_plan.mutate_text:
             rule = self._rule_by_id(rail, result.rule_id)
             replacement = str(rule.config.get("sanitizer", ""))
             sanitized = apply_span_replacements(
@@ -328,7 +328,7 @@ class GuardrailPipeline:
                 adapter_result = self.adapter.set_request_prompt(context.request, new_prompt)
             context.warnings.extend(adapter_result.warnings)
             return
-        if plan.block:
+        if hit_plan.block:
             context.input_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
@@ -484,9 +484,9 @@ class GuardrailPipeline:
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
-            plan = resolve_action_plan(rail, result)
-            self._apply_output_action(rail, ctx, result, current_text, plan)
-            if plan.mutate_text:
+            hit_plan = resolve_hit_action_plan(rail, result)
+            self._apply_output_action(rail, ctx, result, current_text, hit_plan)
+            if hit_plan.mutate_text:
                 current_text = ctx.current_output
             return result
 
@@ -503,11 +503,11 @@ class GuardrailPipeline:
         context: RailContext,
         result: RuleResult,
         inspected_text: str,
-        plan: ActionPlan,
+        hit_plan: HitActionPlan,
     ) -> None:
-        if plan.action in {"none", "observe"}:
+        if hit_plan.action in {"none", "observe"}:
             return
-        if plan.mutate_text:
+        if hit_plan.mutate_text:
             rule = self._rule_by_id(rail, result.rule_id)
             replacement = str(rule.config.get("sanitizer", ""))
             sanitized = apply_span_replacements(
@@ -517,7 +517,7 @@ class GuardrailPipeline:
             adapter_result = self.adapter.set_response_text(context.response, sanitized)
             context.warnings.extend(adapter_result.warnings)
             return
-        if plan.block:
+        if hit_plan.block:
             context.output_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:

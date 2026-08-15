@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 @dataclass(frozen=True)
-class ActionPlan:
+class HitActionPlan:
     rule_id: str
     rail: str
     action: str
@@ -23,10 +23,10 @@ class ActionPlan:
     block: bool
 
 
-def resolve_action_plan(rail: NormalizedRail, result: RuleResult) -> ActionPlan:
-    action = _resolved_action(rail, result)
-    target = _action_target(rail.rail, action)
-    return ActionPlan(
+def resolve_hit_action_plan(rail: NormalizedRail, result: RuleResult) -> HitActionPlan:
+    action = _resolved_hit_action(rail, result)
+    target = _hit_action_target(rail.rail, action)
+    return HitActionPlan(
         rule_id=result.rule_id,
         rail=rail.rail,
         action=action,
@@ -37,7 +37,7 @@ def resolve_action_plan(rail: NormalizedRail, result: RuleResult) -> ActionPlan:
     )
 
 
-def _resolved_action(rail: NormalizedRail, result: RuleResult) -> str:
+def _resolved_hit_action(rail: NormalizedRail, result: RuleResult) -> str:
     if not result.matched:
         return "none"
     if result.action_on_hit != "default":
@@ -61,7 +61,7 @@ def _normalize_action_alias(action: str) -> str:
     return action
 
 
-def _action_target(rail_name: str, action: str) -> str:
+def _hit_action_target(rail_name: str, action: str) -> str:
     if action not in {"block", "sanitize"}:
         return "none"
     if rail_name in {"input_rail", "request_rail"}:

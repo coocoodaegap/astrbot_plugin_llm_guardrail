@@ -7,12 +7,12 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from actions import resolve_action_plan
+from actions import resolve_hit_action_plan
 from config import normalize_config
 from rules import evaluate_plain_keywords
 
 
-class ActionPlanTests(unittest.TestCase):
+class HitActionPlanTests(unittest.TestCase):
     def test_input_default_action_resolves_to_block_targeting_input(self):
         cfg = normalize_config(
             {
@@ -31,7 +31,7 @@ class ActionPlanTests(unittest.TestCase):
         rail = cfg.rails["input_rail"]
         result = evaluate_plain_keywords(rail.rules[0], "risk")
 
-        plan = resolve_action_plan(rail, result)
+        plan = resolve_hit_action_plan(rail, result)
 
         self.assertEqual(plan.action, "block")
         self.assertEqual(plan.target, "input")
@@ -55,7 +55,7 @@ class ActionPlanTests(unittest.TestCase):
         rail = cfg.rails["output_rail"]
         result = evaluate_plain_keywords(rail.rules[0], "risk")
 
-        plan = resolve_action_plan(rail, result)
+        plan = resolve_hit_action_plan(rail, result)
 
         self.assertEqual(plan.action, "block")
         self.assertEqual(plan.target, "output")
@@ -79,7 +79,7 @@ class ActionPlanTests(unittest.TestCase):
         rail = cfg.rails["input_rail"]
         result = evaluate_plain_keywords(rail.rules[0], "risk")
 
-        plan = resolve_action_plan(rail, result)
+        plan = resolve_hit_action_plan(rail, result)
 
         self.assertEqual(plan.action, "sanitize")
         self.assertEqual(plan.target, "input")
@@ -102,7 +102,7 @@ class ActionPlanTests(unittest.TestCase):
         rail = cfg.rails["input_rail"]
         result = evaluate_plain_keywords(rail.rules[0], "safe")
 
-        plan = resolve_action_plan(rail, result)
+        plan = resolve_hit_action_plan(rail, result)
 
         self.assertEqual(plan.action, "none")
         self.assertFalse(plan.block)
