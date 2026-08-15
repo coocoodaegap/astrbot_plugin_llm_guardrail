@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -82,9 +83,43 @@ class AstrBotAdapter:
                 return False
         return False
 
+    def is_admin(self, event: Any) -> bool:
+        checker = getattr(event, "is_admin", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except (AttributeError, TypeError, ValueError):
+                return False
+        return False
+
+    def is_command_event(self, event: Any) -> bool:
+        for text in self._event_text_candidates(event):
+            if self._looks_like_slash_command(text):
+                return True
+
+        for key in ("command_name", "matched_command", "cmd"):
+            value = getattr(event, key, None)
+            if isinstance(value, str) and value.strip():
+                return True
+
+        getter = getattr(event, "get_extra", None)
+        if callable(getter):
+            for key in ("command_name", "matched_command", "cmd"):
+                try:
+                    value = getter(key, "")
+                except (AttributeError, TypeError, ValueError):
+                    value = ""
+                if isinstance(value, str) and value.strip():
+                    return True
+
+        text = self.get_event_text(event).strip().lower()
+        return self.is_admin(event) and text == "guardrail"
+
     def is_llm_candidate_event(self, event: Any) -> bool:
+        if self.is_command_event(event):
+            return False
         text = self.get_event_text(event).strip()
-        if text.startswith("/"):
+        if not text:
             return False
         marker = getattr(event, "is_at_or_wake_command", None)
         if marker is not None:
@@ -96,6 +131,34 @@ class AstrBotAdapter:
             except (AttributeError, TypeError, ValueError):
                 return True
         return True
+
+    def _event_text_candidates(self, event: Any) -> list[str]:
+        candidates: list[str] = []
+
+        for method_name in ("get_message_str", "get_message_outline"):
+            getter = getattr(event, method_name, None)
+            if callable(getter):
+                try:
+                    candidates.append(str(getter() or ""))
+                except (AttributeError, TypeError, ValueError):
+                    pass
+
+        for attr_name in ("message_str", "raw_message"):
+            candidates.append(str(getattr(event, attr_name, "") or ""))
+
+        message_obj = getattr(event, "message_obj", None)
+        if message_obj is not None:
+            for attr_name in ("message_str", "raw_message"):
+                candidates.append(str(getattr(message_obj, attr_name, "") or ""))
+
+        return candidates
+
+    @staticmethod
+    def _looks_like_slash_command(text: str) -> bool:
+        if not text:
+            return False
+        normalized = re.sub(r"^(?:\s|\[At:[^\]]+\])+", "", str(text))
+        return normalized.startswith("/")
 
     def get_request_prompt(self, request: Any) -> str:
         if request is None:

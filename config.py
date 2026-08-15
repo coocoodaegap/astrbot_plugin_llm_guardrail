@@ -38,6 +38,20 @@ INSERTION_TARGETS = {
     "temp_user_context",
     "input_wrapper",
 }
+SESSION_SCOPE_MODES = {
+    "all_run",
+    "all_pass",
+    "enabled_or_pass",
+    "enabled_or_block",
+}
+
+
+@dataclass(frozen=True)
+class SessionScopeDecision:
+    action: str
+    reason: str
+    chat_type: str
+    mode: str
 
 
 @dataclass
@@ -113,9 +127,11 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     )
 
     raw_session_control = _as_dict(_config_get(raw_config, "session_control", {}))
-    session_control = {
-        "whitelist": _clean_string_list(raw_session_control.get("whitelist", [])),
-    }
+    session_control = _normalize_session_control(
+        raw_session_control,
+        legacy_group_only=global_default_settings["group_only"],
+        warnings=warnings,
+    )
 
     rails: dict[str, NormalizedRail] = {}
     seen_rule_ids: set[str] = set()
@@ -175,6 +191,91 @@ def _normalize_rail(
         rules=rules,
         warnings=warnings,
     )
+
+
+def _normalize_session_control(
+    raw_session_control: dict[str, Any],
+    legacy_group_only: bool,
+    warnings: list[str],
+) -> dict[str, Any]:
+    legacy_enabled = _clean_string_list(raw_session_control.get("whitelist", []))
+    has_new_scope = any(
+        key in raw_session_control
+        for key in (
+            "group_chat_mode",
+            "group_chat_enabled",
+            "private_chat_mode",
+            "private_chat_enabled",
+        )
+    )
+
+    group_mode = _normalize_session_mode(
+        "session_control.group_chat_mode",
+        raw_session_control.get("group_chat_mode", "all_run"),
+        warnings,
+    )
+    private_mode = _normalize_session_mode(
+        "session_control.private_chat_mode",
+        raw_session_control.get("private_chat_mode", "all_run"),
+        warnings,
+    )
+    group_enabled = _clean_string_list(raw_session_control.get("group_chat_enabled", []))
+    private_enabled = _clean_string_list(
+        raw_session_control.get("private_chat_enabled", [])
+    )
+
+    if legacy_enabled and not has_new_scope:
+        group_mode = "enabled_or_pass"
+        private_mode = "enabled_or_pass"
+        group_enabled = list(legacy_enabled)
+        private_enabled = list(legacy_enabled)
+
+    if legacy_group_only and "private_chat_mode" not in raw_session_control:
+        private_mode = "all_pass"
+        private_enabled = []
+
+    return {
+        "group_chat_mode": group_mode,
+        "group_chat_enabled": group_enabled,
+        "private_chat_mode": private_mode,
+        "private_chat_enabled": private_enabled,
+    }
+
+
+def _normalize_session_mode(
+    label: str,
+    value: Any,
+    warnings: list[str],
+) -> str:
+    mode = _as_str(value, "all_run").strip()
+    if mode not in SESSION_SCOPE_MODES:
+        warnings.append(f"{label} is invalid; fallback to all_run")
+        return "all_run"
+    return mode
+
+
+def resolve_session_scope(
+    session_control: dict[str, Any],
+    umo: str,
+    is_private_chat: bool,
+) -> SessionScopeDecision:
+    chat_type = "private" if is_private_chat else "group"
+    mode_key = "private_chat_mode" if is_private_chat else "group_chat_mode"
+    enabled_key = "private_chat_enabled" if is_private_chat else "group_chat_enabled"
+    mode = str(session_control.get(mode_key, "all_run"))
+    enabled = set(_clean_string_list(session_control.get(enabled_key, [])))
+
+    if mode == "all_run":
+        return SessionScopeDecision("run", f"{chat_type}_all_run", chat_type, mode)
+    if mode == "all_pass":
+        return SessionScopeDecision("pass", f"{chat_type}_all_pass", chat_type, mode)
+    if umo and umo in enabled:
+        return SessionScopeDecision("run", f"{chat_type}_enabled", chat_type, mode)
+    if mode == "enabled_or_block":
+        return SessionScopeDecision(
+            "block", f"{chat_type}_not_enabled", chat_type, mode
+        )
+    return SessionScopeDecision("pass", f"{chat_type}_not_enabled", chat_type, mode)
 
 
 def _normalize_rule(

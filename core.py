@@ -10,9 +10,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 try:
-    from .config import NormalizedConfig, NormalizedRail, NormalizedRule
+    from .config import (
+        NormalizedConfig,
+        NormalizedRail,
+        NormalizedRule,
+        SessionScopeDecision,
+    )
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from config import NormalizedConfig, NormalizedRail, NormalizedRule
+    from config import (
+        NormalizedConfig,
+        NormalizedRail,
+        NormalizedRule,
+        SessionScopeDecision,
+    )
 
 
 RAIL_STEPS = {
@@ -72,6 +82,7 @@ class RailContext:
     output_blocked: bool = False
     prompt_mutations: list[dict[str, Any]] = field(default_factory=list)
     route_decision: RouteDecision | None = None
+    session_scope_decision: SessionScopeDecision | None = None
 
 
 @dataclass(frozen=True)

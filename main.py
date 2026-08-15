@@ -7,11 +7,11 @@ from astrbot.api.star import Context, Star, register
 
 try:
     from .adapters import AstrBotAdapter
-    from .config import normalize_config
+    from .config import normalize_config, resolve_session_scope
     from .rails import GuardrailPipeline
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import AstrBotAdapter
-    from config import normalize_config
+    from config import normalize_config, resolve_session_scope
     from rails import GuardrailPipeline
 
 
@@ -104,14 +104,17 @@ class LlmGuardrailPlugin(Star):
             return
         self._log_context_summary("response", rail_context)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("guardrail")
     async def guardrail_status(self, event: AstrMessageEvent):
         """Show the current LLM Guardrail P0 status."""
         cfg = self.normalized_config
         current_umo = self.adapter.get_umo(event)
-        current_session_active = self._session_active_for_umo(current_umo)
-        group_only = cfg.global_default_settings.get("group_only", False)
-        private_skipped = group_only and self.adapter.is_private_chat(event)
+        session_decision = resolve_session_scope(
+            cfg.session_control,
+            current_umo,
+            self.adapter.is_private_chat(event),
+        )
         rail_lines = []
         for rail_name in (
             "input_rail",
@@ -131,10 +134,11 @@ class LlmGuardrailPlugin(Star):
             f"- version: {PLUGIN_VERSION}",
             f"- schema: {cfg.schema_version}",
             f"- enabled: {cfg.enabled}",
-            f"- session scope: enabled UMO list",
+            "- session scope: "
+            f"group={cfg.session_control.get('group_chat_mode', 'all_run')}, "
+            f"private={cfg.session_control.get('private_chat_mode', 'all_run')}",
             f"- current UMO: {current_umo or '(empty)'}",
-            f"- current session active: {current_session_active and not private_skipped}",
-            f"- group_only private skipped: {private_skipped}",
+            f"- current session action: {session_decision.action} ({session_decision.reason})",
             f"- debug: {cfg.global_default_settings.get('debug', False)}",
             f"- warnings: {len(cfg.warnings)}",
             *rail_lines,
@@ -161,11 +165,6 @@ class LlmGuardrailPlugin(Star):
         prompt = str(getattr(req, "prompt", "") or "")
         return INTERNAL_MARKER in system_prompt or INTERNAL_MARKER in prompt
 
-    def _session_active_for_umo(self, umo: str) -> bool:
-        session_control = self.normalized_config.session_control
-        whitelist = set(session_control.get("whitelist", []))
-        return not whitelist or bool(umo and umo in whitelist)
-
     def _log_context_summary(self, phase: str, rail_context) -> None:
         if not self.normalized_config.global_default_settings.get("debug", False):
             return
@@ -178,6 +177,11 @@ class LlmGuardrailPlugin(Star):
             rail_context.route_decision.provider_id
             if rail_context.route_decision
             else self.adapter.get_active_route_target(rail_context.event)
+        )
+        session_action = (
+            rail_context.session_scope_decision.action
+            if rail_context.session_scope_decision
+            else "-"
         )
         mutations = [
             ":".join(
@@ -192,9 +196,10 @@ class LlmGuardrailPlugin(Star):
             for item in rail_context.prompt_mutations
         ]
         logger.info(
-            "[LLMGuardrail] %s | umo=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | first_warning=%s",
+            "[LLMGuardrail] %s | umo=%s | session=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | first_warning=%s",
             phase,
             rail_context.umo,
+            session_action,
             ",".join(matched[:10]) or "-",
             rail_context.input_blocked,
             rail_context.output_blocked,

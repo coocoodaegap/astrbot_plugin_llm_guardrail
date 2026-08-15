@@ -29,19 +29,28 @@ sys.modules["astrbot.core.provider.entities"] = fake_entities
 class FakeEvent:
     def __init__(self, text="hello", umo="platform:message:session"):
         self.message_str = text
+        self.message_outline = ""
+        self.command_name = ""
         self.unified_msg_origin = umo
         self.extras = {}
         self.result = None
         self.stopped = False
         self.private = False
+        self.admin = False
         self.is_at_or_wake_command = True
         self.message_obj = None
 
     def get_message_str(self):
         return self.message_str
 
+    def get_message_outline(self):
+        return self.message_outline
+
     def is_private_chat(self):
         return self.private
+
+    def is_admin(self):
+        return self.admin
 
     def set_result(self, value):
         self.result = value
@@ -501,10 +510,107 @@ class PipelineTests(unittest.TestCase):
             "default-provider",
         )
 
-    def test_enabled_session_list_skips_unlisted_umo(self):
+    def test_message_skips_mentioned_slash_commands(self):
         cfg = normalize_config(
             {
-                "session_control": {"whitelist": ["platform:message:allowed"]},
+                "session_control": {
+                    "group_chat_mode": "enabled_or_block",
+                    "group_chat_enabled": ["platform:message:allowed"],
+                },
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("", umo="platform:message:blocked")
+        event.message_outline = "[At:123456] /guardrail"
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertFalse(ctx.input_blocked)
+        self.assertFalse(event.stopped)
+        self.assertIsNone(ctx.session_scope_decision)
+        self.assertNotIn("risk", ctx.results)
+
+    def test_admin_command_bypasses_session_block_before_rails(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "group_chat_mode": "enabled_or_block",
+                    "group_chat_enabled": ["platform:message:allowed"],
+                },
+                "input_rail": {
+                    "block_message": "rail blocked",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("", umo="platform:message:blocked")
+        event.admin = True
+        event.command_name = "guardrail"
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertFalse(ctx.input_blocked)
+        self.assertFalse(event.stopped)
+        self.assertIsNone(ctx.session_scope_decision)
+        self.assertNotIn("risk", ctx.results)
+
+    def test_admin_command_bypasses_request_session_block(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "group_chat_mode": "enabled_or_block",
+                    "group_chat_enabled": ["platform:message:allowed"],
+                },
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {
+                    "enabled": True,
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("", umo="platform:message:blocked")
+        event.admin = True
+        event.command_name = "guardrail"
+        request = FakeRequest("secret")
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_request(event, request))
+
+        self.assertFalse(ctx.input_blocked)
+        self.assertFalse(event.stopped)
+        self.assertIsNone(ctx.session_scope_decision)
+        self.assertNotIn("risk", ctx.results)
+
+    def test_enabled_or_pass_skips_unlisted_group_before_rails(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "group_chat_mode": "enabled_or_pass",
+                    "group_chat_enabled": ["platform:message:allowed"],
+                },
                 "input_rail": {
                     "block_message": "blocked",
                     "rule_list": [
@@ -526,6 +632,63 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(event.stopped)
         self.assertEqual(event.result, None)
         self.assertNotIn("risk", ctx.results)
+        self.assertEqual(ctx.session_scope_decision.action, "pass")
+
+    def test_enabled_or_block_blocks_unlisted_group_before_rails(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "group_chat_mode": "enabled_or_block",
+                    "group_chat_enabled": ["platform:message:allowed"],
+                },
+                "input_rail": {
+                    "block_message": "rail blocked",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("secret", umo="platform:message:other")
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertTrue(ctx.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertNotIn("risk", ctx.results)
+        self.assertEqual(ctx.session_scope_decision.action, "block")
+
+    def test_private_all_pass_skips_private_chat_before_rails(self):
+        cfg = normalize_config(
+            {
+                "session_control": {"private_chat_mode": "all_pass"},
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("secret")
+        event.private = True
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertFalse(ctx.input_blocked)
+        self.assertFalse(event.stopped)
+        self.assertNotIn("risk", ctx.results)
+        self.assertEqual(ctx.session_scope_decision.action, "pass")
 
 
 if __name__ == "__main__":

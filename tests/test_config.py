@@ -113,17 +113,65 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertTrue(rule.valid)
         self.assertEqual(rule.rule_id, "request_risk")
 
-    def test_session_control_uses_enabled_session_list_only(self):
+    def test_session_control_normalizes_group_and_private_modes(self):
         cfg = normalize_config(
             {
                 "session_control": {
-                    "whitelist": ["allowed"],
+                    "group_chat_mode": "enabled_or_block",
+                    "group_chat_enabled": ["group-1"],
+                    "private_chat_mode": "all_pass",
+                    "private_chat_enabled": ["private-1"],
                 }
             }
         )
 
-        self.assertEqual(cfg.session_control, {"whitelist": ["allowed"]})
+        self.assertEqual(
+            cfg.session_control,
+            {
+                "group_chat_mode": "enabled_or_block",
+                "group_chat_enabled": ["group-1"],
+                "private_chat_mode": "all_pass",
+                "private_chat_enabled": ["private-1"],
+            },
+        )
         self.assertEqual(cfg.warnings, [])
+
+    def test_legacy_session_whitelist_maps_to_enabled_or_pass(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "whitelist": ["legacy-session"],
+                }
+            }
+        )
+
+        self.assertEqual(cfg.session_control["group_chat_mode"], "enabled_or_pass")
+        self.assertEqual(cfg.session_control["group_chat_enabled"], ["legacy-session"])
+        self.assertEqual(cfg.session_control["private_chat_mode"], "enabled_or_pass")
+        self.assertEqual(cfg.session_control["private_chat_enabled"], ["legacy-session"])
+
+    def test_group_only_maps_private_chat_to_all_pass(self):
+        cfg = normalize_config(
+            {
+                "global_default_settings": {"group_only": True},
+                "session_control": {},
+            }
+        )
+
+        self.assertEqual(cfg.session_control["group_chat_mode"], "all_run")
+        self.assertEqual(cfg.session_control["private_chat_mode"], "all_pass")
+
+    def test_invalid_session_mode_falls_back_to_all_run(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "group_chat_mode": "bad_mode",
+                }
+            }
+        )
+
+        self.assertEqual(cfg.session_control["group_chat_mode"], "all_run")
+        self.assertIn("group_chat_mode is invalid", " ".join(cfg.warnings))
 
 
 if __name__ == "__main__":

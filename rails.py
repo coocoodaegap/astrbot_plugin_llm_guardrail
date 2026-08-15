@@ -7,7 +7,12 @@ from typing import Any
 try:
     from .actions import ActionPlan, resolve_action_plan
     from .adapters import AstrBotAdapter
-    from .config import NormalizedConfig, NormalizedRail, NormalizedRule
+    from .config import (
+        NormalizedConfig,
+        NormalizedRail,
+        NormalizedRule,
+        resolve_session_scope,
+    )
     from .core import (
         RailContext,
         RouteDecision,
@@ -27,7 +32,12 @@ try:
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from actions import ActionPlan, resolve_action_plan
     from adapters import AstrBotAdapter
-    from config import NormalizedConfig, NormalizedRail, NormalizedRule
+    from config import (
+        NormalizedConfig,
+        NormalizedRail,
+        NormalizedRule,
+        resolve_session_scope,
+    )
     from core import (
         RailContext,
         RouteDecision,
@@ -73,10 +83,10 @@ class GuardrailPipeline:
 
     async def run_message_input(self, event: Any) -> RailContext:
         context = self._make_request_context(event, request=None)
-        if not self._in_scope(event, context):
+        if not self.adapter.is_llm_candidate_event(event):
             self._store_context(event, context)
             return context
-        if not self.adapter.is_llm_candidate_event(event):
+        if not self._admit_session(event, context):
             self._store_context(event, context)
             return context
 
@@ -89,10 +99,10 @@ class GuardrailPipeline:
 
     async def run_message_route(self, event: Any) -> RailContext:
         context = self._make_request_context(event, request=None)
-        if not self._in_scope(event, context):
+        if not self.adapter.is_llm_candidate_event(event):
             self._store_context(event, context)
             return context
-        if not self.adapter.is_llm_candidate_event(event):
+        if not self._admit_session(event, context):
             self._store_context(event, context)
             return context
         if context.input_blocked:
@@ -108,7 +118,10 @@ class GuardrailPipeline:
 
     async def run_request(self, event: Any, request: Any) -> RailContext:
         context = self._make_request_context(event, request)
-        if not self._in_scope(event, context):
+        if self._bypass_admin_command(event):
+            self._store_context(event, context)
+            return context
+        if not self._admit_session(event, context):
             self._store_context(event, context)
             return context
 
@@ -132,7 +145,10 @@ class GuardrailPipeline:
         if getattr(response, "is_chunk", False):
             self._store_context(event, context)
             return context
-        if not self._in_scope(event, context):
+        if self._bypass_admin_command(event):
+            self._store_context(event, context)
+            return context
+        if not self._admit_session(event, context):
             self._store_context(event, context)
             return context
 
@@ -194,16 +210,38 @@ class GuardrailPipeline:
         )
         return context
 
-    def _in_scope(self, event: Any, context: RailContext) -> bool:
+    def _admit_session(self, event: Any, context: RailContext) -> bool:
         if not self.config.enabled:
             return False
-        if self.config.global_default_settings.get("group_only", False):
-            if self.adapter.is_private_chat(event):
-                return False
-        session_control = self.config.session_control
-        umo = context.umo
-        whitelist = set(session_control.get("whitelist", []))
-        return not whitelist or bool(umo and umo in whitelist)
+        decision = resolve_session_scope(
+            self.config.session_control,
+            context.umo,
+            self.adapter.is_private_chat(event),
+        )
+        context.session_scope_decision = decision
+        if decision.action == "run":
+            return True
+        if decision.action == "block":
+            self._apply_session_control_block(context)
+        return False
+
+    def _bypass_admin_command(self, event: Any) -> bool:
+        return self.adapter.is_admin(event) and self.adapter.is_command_event(event)
+
+    def _apply_session_control_block(self, context: RailContext) -> None:
+        context.input_blocked = True
+        message = DEFAULT_INPUT_BLOCK_MESSAGE
+        if context.response is not None:
+            context.output_blocked = True
+            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+                adapter_result = self.adapter.set_response_text(context.response, message)
+            else:
+                adapter_result = self.adapter.stop_event(context.event)
+        elif self.config.global_default_settings.get("reply_placeholder_on_block", True):
+            adapter_result = self.adapter.set_block_result(context.event, message)
+        else:
+            adapter_result = self.adapter.stop_event(context.event)
+        context.warnings.extend(adapter_result.warnings)
 
     def _store_context(self, event: Any, context: RailContext) -> None:
         result = self.adapter.set_event_extra(event, RESULTS_EXTRA_KEY, context.results)
