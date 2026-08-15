@@ -94,9 +94,17 @@ class FakeProviderManager:
 class FakeContext:
     def __init__(self):
         self.provider_manager = FakeProviderManager()
+        self.providers = {
+            "safe-provider": object(),
+            "safe-provider/safe-model": object(),
+            "default-provider": object(),
+        }
 
     async def get_current_chat_provider_id(self, umo):
         return self.provider_manager.current_provider_id
+
+    def get_provider_by_id(self, provider_id):
+        return self.providers.get(provider_id)
 
 
 class PipelineTests(unittest.TestCase):
@@ -264,7 +272,7 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("should_not_wrap", ctx.results)
         self.assertNotIn("<untrusted_user_input>", request.prompt)
 
-    def test_empty_route_policy_does_not_block_later_route(self):
+    def test_empty_route_policy_selects_default_request_route(self):
         cfg = normalize_config(
             {
                 "input_rail": {"enabled": False},
@@ -292,9 +300,15 @@ class PipelineTests(unittest.TestCase):
             GuardrailPipeline(cfg, AstrBotAdapter(fake_context)).run_message(event)
         )
 
-        self.assertFalse(ctx.results["empty_route"].matched)
-        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
-        self.assertEqual(ctx.route_decision.source_rule_id, "route")
+        self.assertTrue(ctx.results["empty_route"].matched)
+        self.assertEqual(
+            fake_context.provider_manager.current_provider_id,
+            "default-provider",
+        )
+        self.assertIsNone(event.get_extra("selected_provider"))
+        self.assertEqual(ctx.route_decision.source_rule_id, "empty_route")
+        self.assertEqual(ctx.route_decision.provider_id, "")
+        self.assertTrue(ctx.results["empty_route"].metadata["default_route"])
 
     def test_output_block_replaces_response(self):
         cfg = normalize_config(
@@ -343,7 +357,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(response.completion_text, "the [x] is out")
 
-    def test_route_restore_restores_previous_provider(self):
+    def test_route_sets_event_extra_without_changing_provider_manager(self):
         cfg = normalize_config(
             {
                 "input_rail": {"enabled": False},
@@ -353,7 +367,7 @@ class PipelineTests(unittest.TestCase):
                         {
                             "__template_key": "route_policy",
                             "rule_id": "route",
-                            "provider_id": "safe-provider",
+                            "provider_id": "safe-provider/safe-model",
                         }
                     ]
                 },
@@ -364,15 +378,57 @@ class PipelineTests(unittest.TestCase):
         adapter = AstrBotAdapter(fake_context)
 
         asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
-        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
 
-        result = asyncio.run(adapter.restore_route(event))
-
-        self.assertTrue(result.success)
         self.assertEqual(
             fake_context.provider_manager.current_provider_id,
             "default-provider",
         )
+        self.assertEqual(
+            event.get_extra("selected_provider"),
+            "safe-provider/safe-model",
+        )
+        self.assertIsNone(event.get_extra("selected_model"))
+        self.assertEqual(
+            event.get_extra("_llm_guardrail_target_provider"),
+            "safe-provider/safe-model",
+        )
+        self.assertEqual(fake_context.provider_manager.calls, [])
+
+    def test_unavailable_route_provider_falls_back_to_default_request_route(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "provider_id": "missing-provider/missing-model",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        fake_context = FakeContext()
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        self.assertTrue(ctx.route_decision.applied)
+        self.assertIsNone(event.get_extra("selected_provider"))
+        self.assertIsNone(event.get_extra("selected_model"))
+        self.assertEqual(
+            event.get_extra("_llm_guardrail_target_provider"),
+            "missing-provider/missing-model",
+        )
+        self.assertTrue(ctx.results["route"].metadata["default_route"])
+        self.assertEqual(
+            ctx.results["route"].metadata["unavailable_provider_id"],
+            "missing-provider/missing-model",
+        )
+        self.assertIn("missing-provider/missing-model", ctx.warnings[0])
 
     def test_message_sets_provider_before_request(self):
         cfg = normalize_config(
@@ -406,7 +462,11 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.route_decision.applied)
-        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
+        self.assertEqual(
+            fake_context.provider_manager.current_provider_id,
+            "default-provider",
+        )
+        self.assertEqual(event.get_extra("selected_provider"), "safe-provider")
 
     def test_message_uses_message_obj_text_fallback(self):
         cfg = normalize_config(
@@ -443,7 +503,11 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("route_hint", ctx.results)
         self.assertTrue(ctx.results["route_hint"].matched)
         self.assertTrue(ctx.route_decision.applied)
-        self.assertEqual(fake_context.provider_manager.current_provider_id, "safe-provider")
+        self.assertEqual(
+            fake_context.provider_manager.current_provider_id,
+            "default-provider",
+        )
+        self.assertEqual(event.get_extra("selected_provider"), "safe-provider")
 
     def test_message_blocks_before_route_when_input_would_block(self):
         cfg = normalize_config(
@@ -482,6 +546,7 @@ class PipelineTests(unittest.TestCase):
             fake_context.provider_manager.current_provider_id,
             "default-provider",
         )
+        self.assertIsNone(event.get_extra("selected_provider"))
 
     def test_message_skips_slash_commands(self):
         cfg = normalize_config(
@@ -509,6 +574,7 @@ class PipelineTests(unittest.TestCase):
             fake_context.provider_manager.current_provider_id,
             "default-provider",
         )
+        self.assertIsNone(event.get_extra("selected_provider"))
 
     def test_message_skips_mentioned_slash_commands(self):
         cfg = normalize_config(

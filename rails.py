@@ -454,30 +454,32 @@ class GuardrailPipeline:
         if context.route_decision is not None:
             return skipped_result(rule, "route_already_selected")
         provider_id = str(rule.config.get("provider_id", "")).strip()
-        if not provider_id:
-            provider_id = str(
-                self.config.global_default_settings.get("default_llm_provider", "")
-            ).strip()
-        if not provider_id:
-            context.warnings.append(f"{rule.rule_id}.provider_id is empty")
-            return make_result(rule, matched=False, metadata={"reason": "empty_provider_id"})
-
-        adapter_result = await self.adapter.apply_route(
-            context.event, context.request, provider_id
-        )
-        context.warnings.extend(adapter_result.warnings)
+        adapter_success = True
+        adapter_warnings: list[str] = []
+        adapter_metadata: dict[str, Any] = {}
+        if provider_id:
+            adapter_result = await self.adapter.apply_route(
+                context.event, context.request, provider_id
+            )
+            adapter_success = adapter_result.success
+            adapter_warnings = list(adapter_result.warnings)
+            adapter_metadata = dict(adapter_result.metadata)
+            context.warnings.extend(adapter_warnings)
         context.route_decision = RouteDecision(
             provider_id=provider_id,
             source_rule_id=rule.rule_id,
-            applied=adapter_result.success,
-            reason="" if adapter_result.success else "; ".join(adapter_result.warnings),
+            applied=adapter_success,
+            reason="" if adapter_success else "; ".join(adapter_warnings),
         )
         return make_result(
             rule,
-            matched=adapter_result.success,
+            matched=adapter_success,
             metadata={
                 "provider_id": provider_id,
-                "applied": adapter_result.success,
+                "applied": adapter_success,
+                "default_route": (not bool(provider_id))
+                or bool(adapter_metadata.get("default_route")),
+                **adapter_metadata,
             },
         )
 

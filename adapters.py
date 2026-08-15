@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import inspect
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 
-ROUTE_PREVIOUS_PROVIDER_EXTRA = "_llm_guardrail_previous_provider"
 ROUTE_TARGET_PROVIDER_EXTRA = "_llm_guardrail_target_provider"
+ROUTE_SELECTED_PROVIDER_EXTRA = "selected_provider"
 
 
 @dataclass
 class AdapterResult:
     success: bool
     warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class AstrBotAdapter:
@@ -227,77 +227,35 @@ class AstrBotAdapter:
 
     async def apply_route(self, event: Any, request: Any, provider_id: str) -> AdapterResult:
         warnings: list[str] = []
-        if self.context is None:
-            return AdapterResult(False, ["AstrBot context is unavailable for routing"])
+        route_target = str(provider_id or "").strip()
+        if not route_target:
+            return AdapterResult(False, ["route target provider is empty"])
 
-        umo = self.get_umo(event)
-        previous_provider_id = await self._get_current_chat_provider_id(umo)
-        if previous_provider_id:
-            previous_result = self.set_event_extra(
-                event, ROUTE_PREVIOUS_PROVIDER_EXTRA, previous_provider_id
-            )
-            warnings.extend(previous_result.warnings)
         target_result = self.set_event_extra(
-            event, ROUTE_TARGET_PROVIDER_EXTRA, provider_id
+            event,
+            ROUTE_TARGET_PROVIDER_EXTRA,
+            route_target,
         )
         warnings.extend(target_result.warnings)
-
-        provider_manager = getattr(self.context, "provider_manager", None)
-        setter = getattr(provider_manager, "set_provider", None)
-        if not callable(setter):
-            warnings.append("context.provider_manager.set_provider is unavailable")
-            return AdapterResult(False, warnings)
-
-        try:
-            from astrbot.core.provider.entities import ProviderType
-        except ImportError as exc:
-            warnings.append(f"ProviderType import failed: {exc}")
-            return AdapterResult(False, warnings)
-
-        try:
-            result = setter(provider_id, ProviderType.CHAT_COMPLETION, umo=umo)
-            if inspect.isawaitable(result):
-                await result
-        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
-            warnings.append(f"provider_manager.set_provider failed: {exc}")
-            return AdapterResult(False, warnings)
-
-        return AdapterResult(True, warnings)
-
-    async def restore_route(self, event: Any) -> AdapterResult:
-        previous_provider_id = self.get_event_extra(
-            event, ROUTE_PREVIOUS_PROVIDER_EXTRA, ""
-        )
-        target_provider_id = self.get_event_extra(event, ROUTE_TARGET_PROVIDER_EXTRA, "")
-        if not previous_provider_id or not target_provider_id:
-            return AdapterResult(True)
-        if previous_provider_id == target_provider_id:
-            return AdapterResult(True)
-        if self.context is None:
-            return AdapterResult(False, ["AstrBot context is unavailable for route restore"])
-
-        warnings: list[str] = []
-        provider_manager = getattr(self.context, "provider_manager", None)
-        setter = getattr(provider_manager, "set_provider", None)
-        if not callable(setter):
-            return AdapterResult(False, ["context.provider_manager.set_provider is unavailable"])
-
-        try:
-            from astrbot.core.provider.entities import ProviderType
-        except ImportError as exc:
-            return AdapterResult(False, [f"ProviderType import failed: {exc}"])
-
-        try:
-            result = setter(
-                str(previous_provider_id),
-                ProviderType.CHAT_COMPLETION,
-                umo=self.get_umo(event),
+        provider_exists = self._provider_exists(route_target)
+        if provider_exists is False:
+            warnings.append(
+                f"route target provider {route_target!r} is unavailable; use default request provider"
             )
-            if inspect.isawaitable(result):
-                await result
-        except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
-            warnings.append(f"provider_manager route restore failed: {exc}")
-            return AdapterResult(False, warnings)
+            return AdapterResult(
+                True,
+                warnings,
+                {
+                    "default_route": True,
+                    "route_target": route_target,
+                    "unavailable_provider_id": route_target,
+                },
+            )
+
+        provider_result = self.set_event_extra(
+            event, ROUTE_SELECTED_PROVIDER_EXTRA, route_target
+        )
+        warnings.extend(provider_result.warnings)
         return AdapterResult(True, warnings)
 
     def has_active_route(self, event: Any) -> bool:
@@ -306,26 +264,16 @@ class AstrBotAdapter:
     def get_active_route_target(self, event: Any) -> str:
         return str(self.get_event_extra(event, ROUTE_TARGET_PROVIDER_EXTRA, "") or "")
 
-    async def _get_current_chat_provider_id(self, umo: str) -> str:
-        getter = getattr(self.context, "get_current_chat_provider_id", None)
-        if callable(getter):
-            try:
-                result = getter(umo)
-                if inspect.isawaitable(result):
-                    result = await result
-                return str(result or "")
-            except (AttributeError, TypeError, ValueError, RuntimeError):
-                return ""
-
-        provider_getter = getattr(self.context, "get_using_provider", None)
-        if callable(provider_getter):
-            try:
-                provider = provider_getter(umo)
-                meta = provider.meta() if provider and callable(getattr(provider, "meta", None)) else None
-                return str(getattr(meta, "id", "") or "")
-            except (AttributeError, TypeError, ValueError, RuntimeError):
-                return ""
-        return ""
+    def _provider_exists(self, provider_id: str) -> bool | None:
+        if self.context is None:
+            return None
+        getter = getattr(self.context, "get_provider_by_id", None)
+        if not callable(getter):
+            return None
+        try:
+            return bool(getter(provider_id))
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return None
 
     def get_response_text(self, response: Any) -> str:
         return str(getattr(response, "completion_text", "") or "")

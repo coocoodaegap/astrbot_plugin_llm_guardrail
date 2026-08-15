@@ -22,7 +22,7 @@
         "description": "插件默认辅助 Provider",
         "_special": "select_provider",
         "default": "",
-        "hint": "作为 LLM 审查和模型路由的兜底模型，留空则尝试使用当前会话默认 Provider。建议预先设置可用性可以保证的快速小模型。"
+        "hint": "供 Guardrail 自身调用辅助 LLM 时使用，例如未来的 LLM 审查规则。不会作为主请求模型路由的兜底目标。留空则相关辅助调用尝试使用当前会话默认 Provider。建议预先设置可用性可以保证的快速小模型。"
       },
       "reply_placeholder_on_block": {
         "type": "bool",
@@ -1012,7 +1012,7 @@
                 "description": "目标 Provider",
                 "_special": "select_provider",
                 "default": "",
-                "hint": "此路由的目标 Provider。留空则尝试使用插件默认 Provider。"
+                "hint": "此路由的目标 Provider。当前配置控件只选择 Provider；留空表示不切换模型，使用 AstrBot 本轮默认请求模型。"
               }
             }
           },

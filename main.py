@@ -97,8 +97,6 @@ class LlmGuardrailPlugin(Star):
             return
         try:
             rail_context = await self.pipeline.run_response(event, resp)
-            restore_result = await self.adapter.restore_route(event)
-            rail_context.warnings.extend(restore_result.warnings)
         except Exception as exc:
             logger.error("[LLMGuardrail] response pipeline failed: %s", exc, exc_info=True)
             return
