@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -281,6 +282,43 @@ class SchedulerTests(unittest.TestCase):
         self.assertTrue(graph.metrics.has_cross_step_edges)
         self.assertEqual(graph.nodes["input_hint"].step, 1)
         self.assertEqual(graph.nodes["prompt_hint"].step, 4)
+
+    def test_run_async_awaits_ready_rules_serially(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "a",
+                            "priority": 1,
+                            "keywords": ["a"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "b",
+                            "priority": 2,
+                            "keywords": ["b"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+        order = []
+
+        async def execute(rule, context):
+            order.append(f"start:{rule.rule_id}")
+            await asyncio.sleep(0.001)
+            order.append(f"end:{rule.rule_id}")
+            return evaluate_text_rule(rule, context, "a b")
+
+        asyncio.run(RuleScheduler(build_graph_index(cfg)).run_async(rail, ctx, execute))
+
+        self.assertEqual(order, ["start:a", "end:a", "start:b", "end:b"])
+        self.assertTrue(ctx.results["a"].matched)
+        self.assertTrue(ctx.results["b"].matched)
 
 
 if __name__ == "__main__":

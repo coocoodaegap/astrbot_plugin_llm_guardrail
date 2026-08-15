@@ -306,7 +306,7 @@ class PipelineTests(unittest.TestCase):
         event = FakeEvent("hello")
         response = FakeResponse("token leaked")
 
-        ctx = GuardrailPipeline(cfg).run_response(event, response)
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
         self.assertEqual(response.completion_text, "safe fallback")
@@ -330,7 +330,7 @@ class PipelineTests(unittest.TestCase):
         event = FakeEvent("hello")
         response = FakeResponse("the secret is out")
 
-        GuardrailPipeline(cfg).run_response(event, response)
+        asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertEqual(response.completion_text, "the [x] is out")
 

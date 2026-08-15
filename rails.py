@@ -82,7 +82,7 @@ class GuardrailPipeline:
 
         input_rail = self.config.rails["input_rail"]
         if input_rail.enabled:
-            self._run_input_rail(input_rail, context)
+            await self._run_input_rail(input_rail, context)
 
         self._store_context(event, context)
         return context
@@ -114,7 +114,7 @@ class GuardrailPipeline:
 
         request_rail = self.config.rails["request_rail"]
         if request_rail.enabled:
-            self._run_request_rail(request_rail, context)
+            await self._run_request_rail(request_rail, context)
 
         if context.input_blocked:
             self._store_context(event, context)
@@ -122,12 +122,12 @@ class GuardrailPipeline:
 
         prompt_rail = self.config.rails["prompt_rail"]
         if prompt_rail.enabled:
-            self._run_prompt_rail(prompt_rail, context)
+            await self._run_prompt_rail(prompt_rail, context)
 
         self._store_context(event, context)
         return context
 
-    def run_response(self, event: Any, response: Any) -> RailContext:
+    async def run_response(self, event: Any, response: Any) -> RailContext:
         context = self._make_response_context(event, response)
         if getattr(response, "is_chunk", False):
             self._store_context(event, context)
@@ -138,7 +138,7 @@ class GuardrailPipeline:
 
         output_rail = self.config.rails["output_rail"]
         if output_rail.enabled:
-            self._run_output_rail(output_rail, context)
+            await self._run_output_rail(output_rail, context)
 
         self._store_context(event, context)
         return context
@@ -221,7 +221,7 @@ class GuardrailPipeline:
         result = self.adapter.set_event_extra(event, STATE_EXTRA_KEY, state)
         context.warnings.extend(result.warnings)
 
-    def _run_input_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+    async def _run_input_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         check_original_only = bool(rail.settings.get("check_original_only", True))
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(
@@ -231,7 +231,7 @@ class GuardrailPipeline:
             max_chars,
         )
 
-        def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
             plan = resolve_action_plan(rail, result)
@@ -240,21 +240,21 @@ class GuardrailPipeline:
                 current_text = ctx.current_input
             return result
 
-        self.scheduler.run(
+        await self.scheduler.run_async(
             rail,
             context,
             execute,
             should_stop=lambda ctx: ctx.input_blocked,
         )
 
-    def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+    async def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(
             self.adapter.get_request_prompt(context.request) or context.current_input,
             max_chars,
         )
 
-        def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
             plan = resolve_action_plan(rail, result)
@@ -263,7 +263,7 @@ class GuardrailPipeline:
                 current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
 
-        self.scheduler.run(
+        await self.scheduler.run_async(
             rail,
             context,
             execute,
@@ -311,8 +311,8 @@ class GuardrailPipeline:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
 
-    def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
-        def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+    async def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
             if rule.template_key == "replace_input":
@@ -321,7 +321,7 @@ class GuardrailPipeline:
                 return self._execute_strengthen_prompt(rule, ctx)
             return skipped_result(rule, "unsupported_template")
 
-        self.scheduler.run(rail, context, execute)
+        await self.scheduler.run_async(rail, context, execute)
 
     def _execute_replace_input(
         self, rule: NormalizedRule, context: RailContext
@@ -447,11 +447,11 @@ class GuardrailPipeline:
             },
         )
 
-    def _run_output_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+    async def _run_output_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.current_output, max_chars)
 
-        def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             result = evaluate_text_rule(rule, ctx, current_text)
             plan = resolve_action_plan(rail, result)
@@ -460,7 +460,7 @@ class GuardrailPipeline:
                 current_text = ctx.current_output
             return result
 
-        self.scheduler.run(
+        await self.scheduler.run_async(
             rail,
             context,
             execute,

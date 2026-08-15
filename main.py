@@ -96,7 +96,7 @@ class LlmGuardrailPlugin(Star):
         if not self.normalized_config.enabled:
             return
         try:
-            rail_context = self.pipeline.run_response(event, resp)
+            rail_context = await self.pipeline.run_response(event, resp)
             restore_result = await self.adapter.restore_route(event)
             rail_context.warnings.extend(restore_result.warnings)
         except Exception as exc:
