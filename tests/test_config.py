@@ -157,20 +157,6 @@ class ConfigNormalizerTests(unittest.TestCase):
         )
         self.assertEqual(cfg.warnings, [])
 
-    def test_legacy_session_whitelist_maps_to_enabled_or_pass(self):
-        cfg = normalize_config(
-            {
-                "session_control": {
-                    "whitelist": ["legacy-session"],
-                }
-            }
-        )
-
-        self.assertEqual(cfg.session_control["group_chat_mode"], "enabled_or_pass")
-        self.assertEqual(cfg.session_control["group_chat_enabled"], ["legacy-session"])
-        self.assertEqual(cfg.session_control["private_chat_mode"], "enabled_or_pass")
-        self.assertEqual(cfg.session_control["private_chat_enabled"], ["legacy-session"])
-
     def test_session_control_accepts_all_block(self):
         cfg = normalize_config(
             {

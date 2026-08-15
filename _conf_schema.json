@@ -53,15 +53,6 @@
     "description": "生效会话",
     "hint": "用于决定哪些会话会进入 LLM Guardrail 流程。未纳入生效范围的会话可以选择放行或拦截。可在目标会话发送 /guardrail 查看当前 UMO。",
     "items": {
-      "whitelist": {
-        "type": "list",
-        "description": "（旧版）生效会话 UMO",
-        "hint": "旧版字段，仅用于兼容旧配置。后续请改用下方群聊/私聊生效会话设置。",
-        "items": {
-          "type": "string"
-        },
-        "default": []
-      },
       "group_chat_mode": {
         "type": "string",
         "description": "群聊处理范围",

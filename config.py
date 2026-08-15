@@ -202,17 +202,6 @@ def _normalize_session_control(
     raw_session_control: dict[str, Any],
     warnings: list[str],
 ) -> dict[str, Any]:
-    legacy_enabled = _clean_string_list(raw_session_control.get("whitelist", []))
-    has_new_scope = any(
-        key in raw_session_control
-        for key in (
-            "group_chat_mode",
-            "group_chat_enabled",
-            "private_chat_mode",
-            "private_chat_enabled",
-        )
-    )
-
     group_mode = _normalize_session_mode(
         "session_control.group_chat_mode",
         raw_session_control.get("group_chat_mode", "all_run"),
@@ -227,12 +216,6 @@ def _normalize_session_control(
     private_enabled = _clean_string_list(
         raw_session_control.get("private_chat_enabled", [])
     )
-
-    if legacy_enabled and not has_new_scope:
-        group_mode = "enabled_or_pass"
-        private_mode = "enabled_or_pass"
-        group_enabled = list(legacy_enabled)
-        private_enabled = list(legacy_enabled)
 
     return {
         "group_chat_mode": group_mode,
