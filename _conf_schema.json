@@ -56,33 +56,17 @@
   },
   "session_control": {
     "type": "object",
-    "description": "会话过滤",
-    "hint": "用于决定哪些会话 UMO 启用本插件。可在目标会话发送 /guardrail 查看 current UMO 后复制填写。",
+    "description": "生效会话",
+    "hint": "用于决定本插件在哪些会话 UMO 中启用。列表为空时不限制会话；填写后仅列表内 UMO 会执行 Guardrail。可在目标会话发送 /guardrail 查看 current UMO 后复制填写。",
     "items": {
-      "filter_type": {
-        "type": "string",
-        "description": "过滤模式",
-        "hint": "blacklist=除了黑名单都启用；whitelist=只有白名单启用。",
-        "options": ["blacklist", "whitelist"],
-        "default": "blacklist"
-      },
       "whitelist": {
         "type": "list",
-        "description": "白名单 UMO",
+        "description": "启用会话 UMO",
         "items": {
           "type": "string"
         },
         "default": [],
-        "hint": "whitelist 模式下，仅这些 UMO 对应的会话启用本插件。UMO 格式通常为 platform_id:message_type:session_id。"
-      },
-      "blacklist": {
-        "type": "list",
-        "description": "黑名单 UMO",
-        "items": {
-          "type": "string"
-        },
-        "default": [],
-        "hint": "blacklist 模式下，这些 UMO 对应的会话跳过本插件。UMO 格式通常为 platform_id:message_type:session_id。"
+        "hint": "仅这些 UMO 对应的会话会执行本插件；留空表示不按会话限制。这里不是 Guardrail 豁免列表。UMO 格式通常为 platform_id:message_type:session_id。"
       }
     }
   },

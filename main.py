@@ -131,7 +131,7 @@ class LlmGuardrailPlugin(Star):
             f"- version: {PLUGIN_VERSION}",
             f"- schema: {cfg.schema_version}",
             f"- enabled: {cfg.enabled}",
-            f"- session filter: {cfg.session_control.get('filter_type', 'blacklist')}",
+            f"- session scope: enabled UMO list",
             f"- current UMO: {current_umo or '(empty)'}",
             f"- current session active: {current_session_active and not private_skipped}",
             f"- group_only private skipped: {private_skipped}",
@@ -163,12 +163,8 @@ class LlmGuardrailPlugin(Star):
 
     def _session_active_for_umo(self, umo: str) -> bool:
         session_control = self.normalized_config.session_control
-        filter_type = session_control.get("filter_type", "blacklist")
         whitelist = set(session_control.get("whitelist", []))
-        blacklist = set(session_control.get("blacklist", []))
-        if filter_type == "whitelist":
-            return bool(umo and umo in whitelist)
-        return not (umo and umo in blacklist)
+        return not whitelist or bool(umo and umo in whitelist)
 
     def _log_context_summary(self, phase: str, rail_context) -> None:
         if not self.normalized_config.global_default_settings.get("debug", False):

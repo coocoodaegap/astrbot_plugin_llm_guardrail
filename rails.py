@@ -202,12 +202,8 @@ class GuardrailPipeline:
                 return False
         session_control = self.config.session_control
         umo = context.umo
-        filter_type = session_control.get("filter_type", "blacklist")
         whitelist = set(session_control.get("whitelist", []))
-        blacklist = set(session_control.get("blacklist", []))
-        if filter_type == "whitelist":
-            return bool(umo and umo in whitelist)
-        return not (umo and umo in blacklist)
+        return not whitelist or bool(umo and umo in whitelist)
 
     def _store_context(self, event: Any, context: RailContext) -> None:
         result = self.adapter.set_event_extra(event, RESULTS_EXTRA_KEY, context.results)

@@ -113,6 +113,18 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertTrue(rule.valid)
         self.assertEqual(rule.rule_id, "request_risk")
 
+    def test_session_control_uses_enabled_session_list_only(self):
+        cfg = normalize_config(
+            {
+                "session_control": {
+                    "whitelist": ["allowed"],
+                }
+            }
+        )
+
+        self.assertEqual(cfg.session_control, {"whitelist": ["allowed"]})
+        self.assertEqual(cfg.warnings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -501,6 +501,32 @@ class PipelineTests(unittest.TestCase):
             "default-provider",
         )
 
+    def test_enabled_session_list_skips_unlisted_umo(self):
+        cfg = normalize_config(
+            {
+                "session_control": {"whitelist": ["platform:message:allowed"]},
+                "input_rail": {
+                    "block_message": "blocked",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "block_input",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("secret", umo="platform:message:other")
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertFalse(ctx.input_blocked)
+        self.assertFalse(event.stopped)
+        self.assertEqual(event.result, None)
+        self.assertNotIn("risk", ctx.results)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,19 +112,10 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
         global_default_settings.get("default_llm_provider")
     )
 
-    session_control = _merge_defaults(
-        {"filter_type": "blacklist", "whitelist": [], "blacklist": []},
-        _config_get(raw_config, "session_control", {}),
-    )
-    if session_control.get("filter_type") not in ("blacklist", "whitelist"):
-        warnings.append("session_control.filter_type is invalid; fallback to blacklist")
-        session_control["filter_type"] = "blacklist"
-    session_control["whitelist"] = _clean_string_list(
-        session_control.get("whitelist", [])
-    )
-    session_control["blacklist"] = _clean_string_list(
-        session_control.get("blacklist", [])
-    )
+    raw_session_control = _as_dict(_config_get(raw_config, "session_control", {}))
+    session_control = {
+        "whitelist": _clean_string_list(raw_session_control.get("whitelist", [])),
+    }
 
     rails: dict[str, NormalizedRail] = {}
     seen_rule_ids: set[str] = set()
