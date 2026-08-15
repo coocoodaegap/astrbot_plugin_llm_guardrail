@@ -50,6 +50,58 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertFalse(second.valid)
         self.assertIn("duplicate rule_id", " ".join(second.warnings))
 
+    def test_logic_gate_reports_disabled_reference_reason(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "rule1",
+                            "enabled": False,
+                        },
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "rule3",
+                            "inputs": ["rule1"],
+                        },
+                    ]
+                }
+            }
+        )
+
+        warning_text = " ".join(cfg.warnings)
+        self.assertIn("rule3.inputs references unavailable rule(s)", warning_text)
+        self.assertIn("input_rail.rule1 is disabled", warning_text)
+
+    def test_logic_gate_reports_duplicate_reference_reason(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "future_template",
+                            "rule_id": "rule1",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "rule1",
+                        },
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "rule3",
+                            "inputs": ["rule1"],
+                        },
+                    ]
+                }
+            }
+        )
+
+        warning_text = " ".join(cfg.warnings)
+        self.assertIn("input_rail.rule1 is disabled/invalid", warning_text)
+        self.assertIn("unsupported template future_template", warning_text)
+        self.assertIn("duplicate rule_id rule1", warning_text)
+
     def test_regex_compile_error_disables_rule(self):
         cfg = normalize_config(
             {

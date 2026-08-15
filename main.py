@@ -194,7 +194,7 @@ class LlmGuardrailPlugin(Star):
             for item in rail_context.prompt_mutations
         ]
         logger.info(
-            "[LLMGuardrail] %s | umo=%s | session=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | first_warning=%s",
+            "[LLMGuardrail] %s | umo=%s | session=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s",
             phase,
             rail_context.umo,
             session_action,
@@ -204,7 +204,7 @@ class LlmGuardrailPlugin(Star):
             route_label or "-",
             ",".join(mutations[:10]) or "-",
             len(rail_context.warnings),
-            self._clip_text(rail_context.warnings[0], 180)
+            self._clip_text(rail_context.warnings[-1], 180)
             if rail_context.warnings
             else "-",
         )

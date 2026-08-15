@@ -454,6 +454,12 @@ def _normalize_strengthen_prompt(
 def _validate_cross_references(
     rails: dict[str, NormalizedRail], warnings: list[str]
 ) -> None:
+    rule_index: dict[str, list[NormalizedRule]] = {}
+    for rail in rails.values():
+        for rule in rail.rules:
+            if rule.user_rule_id:
+                rule_index.setdefault(rule.user_rule_id, []).append(rule)
+
     stable_ids = {
         rule.user_rule_id
         for rail in rails.values()
@@ -464,7 +470,10 @@ def _validate_cross_references(
         for rule in rail.rules:
             dep_id = _dependency_target(rule.depend_on)
             if dep_id and dep_id not in stable_ids:
-                message = f"{rule.rule_id}.depend_on references missing rule {dep_id}"
+                message = (
+                    f"{rule.rule_id}.depend_on references unavailable rule "
+                    f"{dep_id}: {_reference_problem(dep_id, rule_index)}"
+                )
                 rule.warnings.append(message)
                 rail.warnings.append(message)
                 warnings.append(message)
@@ -479,21 +488,46 @@ def _validate_cross_references(
                 rail.warnings.append(message)
                 warnings.append(message)
                 continue
-            missing = [
-                item
+            unavailable = [
+                f"{item} ({_reference_problem(_dependency_target(item), rule_index)})"
                 for item in inputs
                 if _dependency_target(item) not in stable_ids
             ]
-            if missing:
+            if unavailable:
                 message = (
-                    f"{rule.rule_id}.inputs references missing rule(s): "
-                    + ", ".join(missing)
+                    f"{rule.rule_id}.inputs references unavailable rule(s): "
+                    + ", ".join(unavailable)
                 )
                 rule.valid = False
                 rule.enabled = False
                 rule.warnings.append(message)
                 rail.warnings.append(message)
                 warnings.append(message)
+
+
+def _reference_problem(
+    rule_id: str, rule_index: dict[str, list[NormalizedRule]]
+) -> str:
+    if not rule_id:
+        return "empty rule id"
+    candidates = rule_index.get(rule_id, [])
+    if not candidates:
+        return "rule id was not found in configured rules"
+    return "; ".join(_rule_availability_problem(rule) for rule in candidates)
+
+
+def _rule_availability_problem(rule: NormalizedRule) -> str:
+    state = []
+    if not rule.enabled:
+        state.append("disabled")
+    if not rule.valid:
+        state.append("invalid")
+    if not state:
+        state.append("unavailable")
+    detail = f"{rule.rail}.{rule.rule_id} is {'/'.join(state)}"
+    if rule.warnings:
+        detail += f" ({rule.warnings[-1]})"
+    return detail
 
 
 def _rail_defaults(rail_name: str) -> dict[str, Any]:
