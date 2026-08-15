@@ -19,7 +19,7 @@
     "items": {
       "group_only": {
         "type": "bool",
-        "description": "仅群聊生效",
+        "description": "（旧版）仅群聊生效",
         "hint": "开启后私聊不会进入本插件的 guardrail 流程。",
         "default": false
       },
@@ -57,16 +57,58 @@
   "session_control": {
     "type": "object",
     "description": "生效会话",
-    "hint": "用于决定本插件在哪些会话 UMO 中启用。列表为空时不限制会话；填写后仅列表内 UMO 会执行 Guardrail。可在目标会话发送 /guardrail 查看 current UMO 后复制填写。",
+    "hint": "用于决定哪些会话会进入 LLM Guardrail 流程。未纳入生效范围的会话可以选择放行或拦截。可在目标会话发送 /guardrail 查看当前 UMO。",
     "items": {
       "whitelist": {
         "type": "list",
-        "description": "启用会话 UMO",
+        "description": "（旧版）生效会话 UMO",
+        "hint": "旧版字段，仅用于兼容旧配置。后续请改用下方群聊/私聊生效会话设置。",
         "items": {
           "type": "string"
         },
-        "default": [],
-        "hint": "仅这些 UMO 对应的会话会执行本插件；留空表示不按会话限制。这里不是 Guardrail 豁免列表。UMO 格式通常为 platform_id:message_type:session_id。"
+        "default": []
+      },
+      "group_chat_mode": {
+        "type": "string",
+        "description": "群聊处理范围",
+        "hint": "all_on=所有群聊都进入 Guardrail；all_off=所有群聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定群聊进入 Guardrail，其他群聊跳过并放行；enabled_or_block=只有指定群聊进入 Guardrail，其他群聊跳过并拦截。",
+        "options": [
+          "all_on",
+          "all_off",
+          "enabled_or_pass",
+          "enabled_or_block"
+        ],
+        "default": "all_on"
+      },
+      "group_chat_enabled": {
+        "type": "list",
+        "description": "指定群聊 UMO",
+        "hint": "当群聊处理范围为 enabled_or_pass 或 enabled_or_block 时，只有这里列出的群聊会进入 Guardrail。这里不是豁免列表。",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "private_chat_mode": {
+        "type": "string",
+        "description": "私聊处理范围",
+        "hint": "all_on=所有私聊都进入 Guardrail；all_off=所有私聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定私聊进入 Guardrail，其他私聊跳过并放行；enabled_or_block=只有指定私聊进入 Guardrail，其他私聊跳过并拦截。",
+        "options": [
+          "all_on",
+          "all_off",
+          "enabled_or_pass",
+          "enabled_or_block"
+        ],
+        "default": "all_on"
+      },
+      "private_chat_enabled": {
+        "type": "list",
+        "description": "指定私聊 UMO",
+        "hint": "当私聊处理范围为 enabled_or_pass 或 enabled_or_block 时，只有这里列出的私聊会进入 Guardrail。这里不是豁免列表。",
+        "items": {
+          "type": "string"
+        },
+        "default": []
       }
     }
   },
@@ -983,7 +1025,12 @@
                 "type": "string",
                 "description": "命中动作",
                 "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize_input=净化 req.prompt；block_input=阻断本轮请求。",
-                "options": ["default", "observe", "sanitize_input", "block_input"],
+                "options": [
+                  "default",
+                  "observe",
+                  "sanitize_input",
+                  "block_input"
+                ],
                 "default": "default"
               },
               "sanitizer": {
@@ -1031,7 +1078,12 @@
                 "type": "string",
                 "description": "命中动作",
                 "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize_input=净化 req.prompt；block_input=阻断本轮请求。",
-                "options": ["default", "observe", "sanitize_input", "block_input"],
+                "options": [
+                  "default",
+                  "observe",
+                  "sanitize_input",
+                  "block_input"
+                ],
                 "default": "default"
               },
               "sanitizer": {
