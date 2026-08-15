@@ -71,14 +71,14 @@
       "group_chat_mode": {
         "type": "string",
         "description": "群聊处理范围",
-        "hint": "all_on=所有群聊都进入 Guardrail；all_off=所有群聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定群聊进入 Guardrail，其他群聊跳过并放行；enabled_or_block=只有指定群聊进入 Guardrail，其他群聊跳过并拦截。",
+        "hint": "all_run=所有群聊都进入 Guardrail rails；all_pass=所有群聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定群聊进入 rails，其他群聊跳过并放行；enabled_or_block=只有指定群聊进入 rails，其他群聊跳过并拦截。",
         "options": [
-          "all_on",
-          "all_off",
+          "all_run",
+          "all_pass",
           "enabled_or_pass",
           "enabled_or_block"
         ],
-        "default": "all_on"
+        "default": "all_run"
       },
       "group_chat_enabled": {
         "type": "list",
@@ -92,14 +92,14 @@
       "private_chat_mode": {
         "type": "string",
         "description": "私聊处理范围",
-        "hint": "all_on=所有私聊都进入 Guardrail；all_off=所有私聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定私聊进入 Guardrail，其他私聊跳过并放行；enabled_or_block=只有指定私聊进入 Guardrail，其他私聊跳过并拦截。",
+        "hint": "all_run=所有私聊都进入 Guardrail rails；all_pass=所有私聊都跳过 Guardrail 并放行；enabled_or_pass=只有指定私聊进入 rails，其他私聊跳过并放行；enabled_or_block=只有指定私聊进入 rails，其他私聊跳过并拦截。",
         "options": [
-          "all_on",
-          "all_off",
+          "all_run",
+          "all_pass",
           "enabled_or_pass",
           "enabled_or_block"
         ],
-        "default": "all_on"
+        "default": "all_run"
       },
       "private_chat_enabled": {
         "type": "list",
