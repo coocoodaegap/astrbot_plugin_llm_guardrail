@@ -127,9 +127,9 @@
       "default_action_on_hit": {
         "type": "string",
         "description": "默认风险动作",
-        "hint": "observe=只记录；block_input=阻断请求。",
-        "options": ["observe", "block_input"],
-        "default": "block_input"
+        "hint": "observe=只记录；block=阻断请求。",
+        "options": ["observe", "block"],
+        "default": "block"
       },
       "block_message": {
         "type": "string",
@@ -191,19 +191,19 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求；sanitize_input=净化输入。",
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求；sanitize=净化输入。",
                 "options": [
                   "default",
                   "observe",
-                  "block_input",
-                  "sanitize_input"
+                  "block",
+                  "sanitize"
                 ],
                 "default": "default"
               },
               "sanitizer": {
                 "type": "string",
                 "description": "净化文本",
-                "hint": "仅当 action_on_hit=sanitize_input 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
+                "hint": "仅当 action_on_hit=sanitize 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
                 "default": ""
               }
             }
@@ -245,19 +245,19 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求；sanitize_input=净化输入。",
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求；sanitize=净化输入。",
                 "options": [
                   "default",
                   "observe",
-                  "block_input",
-                  "sanitize_input"
+                  "block",
+                  "sanitize"
                 ],
                 "default": "default"
               },
               "sanitizer": {
                 "type": "string",
                 "description": "净化文本",
-                "hint": "仅当 action_on_hit=sanitize_input 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
+                "hint": "仅当 action_on_hit=sanitize 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
                 "default": ""
               }
             }
@@ -311,8 +311,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -361,8 +361,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -398,8 +398,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -435,8 +435,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -472,8 +472,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -509,8 +509,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -546,8 +546,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -583,8 +583,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -620,8 +620,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -661,8 +661,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -717,8 +717,8 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；block_input=阻断请求。",
-                "options": ["default", "observe", "block_input"],
+                "hint": "default=跟随默认风险动作；observe=只记录；block=阻断请求。",
+                "options": ["default", "observe", "block"],
                 "default": "default"
               }
             }
@@ -955,8 +955,8 @@
       "default_action_on_hit": {
         "type": "string",
         "description": "默认风险动作",
-        "hint": "observe=只记录；block_input=阻断本轮请求。局部净化请在单条规则中选择 sanitize_input。",
-        "options": ["observe", "block_input"],
+        "hint": "observe=只记录；block=阻断本轮请求。局部净化请在单条规则中选择 sanitize。",
+        "options": ["observe", "block"],
         "default": "observe"
       },
       "block_message": {
@@ -1020,19 +1020,19 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中动作",
-                "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize_input=净化 req.prompt；block_input=阻断本轮请求。",
+                "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize=净化 req.prompt；block=阻断本轮请求。",
                 "options": [
                   "default",
                   "observe",
-                  "sanitize_input",
-                  "block_input"
+                  "sanitize",
+                  "block"
                 ],
                 "default": "default"
               },
               "sanitizer": {
                 "type": "string",
                 "description": "净化替换文本",
-                "hint": "当 action_on_hit=sanitize_input 时，将命中的关键词替换为此文本；留空表示删除命中文本。",
+                "hint": "当 action_on_hit=sanitize 时，将命中的关键词替换为此文本；留空表示删除命中文本。",
                 "default": ""
               }
             }
@@ -1073,19 +1073,19 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中动作",
-                "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize_input=净化 req.prompt；block_input=阻断本轮请求。",
+                "hint": "default=使用本 rail 默认动作；observe=只记录；sanitize=净化 req.prompt；block=阻断本轮请求。",
                 "options": [
                   "default",
                   "observe",
-                  "sanitize_input",
-                  "block_input"
+                  "sanitize",
+                  "block"
                 ],
                 "default": "default"
               },
               "sanitizer": {
                 "type": "string",
                 "description": "净化替换文本",
-                "hint": "当 action_on_hit=sanitize_input 时，将命中的正则片段替换为此文本；留空表示删除命中文本。",
+                "hint": "当 action_on_hit=sanitize 时，将命中的正则片段替换为此文本；留空表示删除命中文本。",
                 "default": ""
               }
             }
@@ -1313,9 +1313,9 @@
       "default_action_on_hit": {
         "type": "string",
         "description": "默认风险动作",
-        "hint": "observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
-        "options": ["observe", "retry_generation", "block_output"],
-        "default": "block_output"
+        "hint": "observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
+        "options": ["observe", "retry_generation", "block"],
+        "default": "block"
       },
       "max_retries": {
         "type": "int",
@@ -1382,20 +1382,20 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出；sanitize_output=净化输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出；sanitize=净化输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output",
-                  "sanitize_output"
+                  "block",
+                  "sanitize"
                 ],
                 "default": "default"
               },
               "sanitizer": {
                 "type": "string",
                 "description": "净化文本",
-                "hint": "仅当 action_on_hit=sanitize_output 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
+                "hint": "仅当 action_on_hit=sanitize 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
                 "default": ""
               }
             }
@@ -1437,20 +1437,20 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出；sanitize_output=净化输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出；sanitize=净化输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output",
-                  "sanitize_output"
+                  "block",
+                  "sanitize"
                 ],
                 "default": "default"
               },
               "sanitizer": {
                 "type": "string",
                 "description": "净化文本",
-                "hint": "仅当 action_on_hit=sanitize_output 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
+                "hint": "仅当 action_on_hit=sanitize 时有效。用于替代匹配内容的文本，如留空则移除匹配内容。",
                 "default": ""
               }
             }
@@ -1504,12 +1504,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1559,12 +1559,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1601,12 +1601,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1643,12 +1643,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1685,12 +1685,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1727,12 +1727,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1769,12 +1769,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1811,12 +1811,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1853,12 +1853,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1899,12 +1899,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }
@@ -1960,12 +1960,12 @@
               "action_on_hit": {
                 "type": "string",
                 "description": "命中时执行动作",
-                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block_output=阻断输出。",
+                "hint": "default=跟随默认风险动作；observe=只记录；retry_generation=重试 LLM 生成请求；block=阻断输出。",
                 "options": [
                   "default",
                   "observe",
                   "retry_generation",
-                  "block_output"
+                  "block"
                 ],
                 "default": "default"
               }

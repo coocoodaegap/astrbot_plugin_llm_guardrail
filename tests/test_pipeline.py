@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import sys
 import types
 import unittest
@@ -111,7 +111,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -135,7 +135,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize_input",
+                            "action_on_hit": "sanitize",
                             "sanitizer": "[redacted]",
                         }
                     ],
@@ -237,7 +237,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "request_block",
                             "keywords": ["plugin-added"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -306,7 +306,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "regex_pattern",
                             "rule_id": "leak",
                             "pattern": "token",
-                            "action_on_hit": "block_output",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -329,7 +329,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "word",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize_output",
+                            "action_on_hit": "sanitize",
                             "sanitizer": "[x]",
                         }
                     ],
@@ -454,7 +454,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "block_hint",
                             "keywords": ["blockme"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ]
                 },
@@ -523,7 +523,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -553,7 +553,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -586,7 +586,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -618,7 +618,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -648,7 +648,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -677,7 +677,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },
@@ -704,7 +704,7 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "block_input",
+                            "action_on_hit": "block",
                         }
                     ],
                 },

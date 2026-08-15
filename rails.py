@@ -270,7 +270,7 @@ class GuardrailPipeline:
             result = evaluate_text_rule(rule, ctx, current_text)
             plan = resolve_action_plan(rail, result)
             self._apply_input_action(rail, ctx, result, current_text, plan)
-            if plan.action == "sanitize_input":
+            if plan.mutate_text:
                 current_text = ctx.current_input
             return result
 
@@ -293,7 +293,7 @@ class GuardrailPipeline:
             result = evaluate_text_rule(rule, ctx, current_text)
             plan = resolve_action_plan(rail, result)
             self._apply_input_action(rail, ctx, result, current_text, plan)
-            if plan.action == "sanitize_input":
+            if plan.mutate_text:
                 current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
 
@@ -314,7 +314,7 @@ class GuardrailPipeline:
     ) -> None:
         if plan.action in {"none", "observe"}:
             return
-        if plan.action == "sanitize_input":
+        if plan.mutate_text:
             rule = self._rule_by_id(rail, result.rule_id)
             replacement = str(rule.config.get("sanitizer", ""))
             sanitized = apply_span_replacements(
@@ -334,7 +334,7 @@ class GuardrailPipeline:
                 adapter_result = self.adapter.set_request_prompt(context.request, new_prompt)
             context.warnings.extend(adapter_result.warnings)
             return
-        if plan.action == "block_input":
+        if plan.block:
             context.input_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
@@ -490,7 +490,7 @@ class GuardrailPipeline:
             result = evaluate_text_rule(rule, ctx, current_text)
             plan = resolve_action_plan(rail, result)
             self._apply_output_action(rail, ctx, result, current_text, plan)
-            if plan.action == "sanitize_output":
+            if plan.mutate_text:
                 current_text = ctx.current_output
             return result
 
@@ -511,7 +511,7 @@ class GuardrailPipeline:
     ) -> None:
         if plan.action in {"none", "observe"}:
             return
-        if plan.action == "sanitize_output":
+        if plan.mutate_text:
             rule = self._rule_by_id(rail, result.rule_id)
             replacement = str(rule.config.get("sanitizer", ""))
             sanitized = apply_span_replacements(
@@ -521,7 +521,7 @@ class GuardrailPipeline:
             adapter_result = self.adapter.set_response_text(context.response, sanitized)
             context.warnings.extend(adapter_result.warnings)
             return
-        if plan.action == "block_output":
+        if plan.block:
             context.output_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:

@@ -94,7 +94,7 @@ class ConfigNormalizerTests(unittest.TestCase):
             {
                 "request_rail": {
                     "enabled": True,
-                    "default_action_on_hit": "block_input",
+                    "default_action_on_hit": "block",
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
@@ -112,6 +112,27 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertTrue(rail.enabled)
         self.assertTrue(rule.valid)
         self.assertEqual(rule.rule_id, "request_risk")
+        self.assertEqual(rail.settings["default_action_on_hit"], "block")
+
+    def test_legacy_risk_action_alias_is_normalized(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "legacy_action",
+                            "keywords": ["secret"],
+                            "action_on_hit": "sanitize_input",
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertTrue(rule.valid)
+        self.assertEqual(rule.config["action_on_hit"], "sanitize")
 
     def test_session_control_normalizes_group_and_private_modes(self):
         cfg = normalize_config(

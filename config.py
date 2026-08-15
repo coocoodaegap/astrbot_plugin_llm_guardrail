@@ -23,11 +23,20 @@ SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     "output_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
 }
 
-INPUT_ACTIONS = {"default", "observe", "block_input", "sanitize_input"}
+INPUT_ACTIONS = {
+    "default",
+    "observe",
+    "block",
+    "sanitize",
+    "block_input",
+    "sanitize_input",
+}
 OUTPUT_ACTIONS = {
     "default",
     "observe",
     "retry_generation",
+    "block",
+    "sanitize",
     "block_output",
     "sanitize_output",
 }
@@ -291,6 +300,7 @@ def _normalize_rule(
     depend_on = _as_str(rule_dict.get("depend_on", "")).strip()
     priority = _as_int(rule_dict.get("priority", 100), 100)
     config = dict(rule_dict)
+    raw_action_on_hit = _as_str(config.get("action_on_hit", "default")) or "default"
     valid = True
 
     if not template_key:
@@ -330,7 +340,9 @@ def _normalize_rule(
         config["provider_id"] = _as_str(config.get("provider_id", "")).strip()
 
     if template_key in {"plain_keywords", "regex_pattern", "logic_gate"}:
-        action = _as_str(config.get("action_on_hit", "default")) or "default"
+        raw_action = raw_action_on_hit
+        action = _normalize_action_alias(raw_action)
+        config["action_on_hit"] = action
         if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
             warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
             config["action_on_hit"] = "default"
@@ -397,7 +409,9 @@ def _normalize_plain_keywords(
         weight_map[key] = weight
     config["_keyword_weight_map"] = weight_map
     config["sanitizer"] = _as_str(config.get("sanitizer", ""))
-    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+    config["action_on_hit"] = _normalize_action_alias(
+        _as_str(config.get("action_on_hit", "default")) or "default"
+    )
 
 
 def _normalize_regex_pattern(
@@ -406,7 +420,9 @@ def _normalize_regex_pattern(
     pattern = _as_str(config.get("pattern", ""))
     config["pattern"] = pattern
     config["sanitizer"] = _as_str(config.get("sanitizer", ""))
-    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+    config["action_on_hit"] = _normalize_action_alias(
+        _as_str(config.get("action_on_hit", "default")) or "default"
+    )
     if not pattern:
         config["_compiled_pattern"] = None
         warnings.append(f"{rule_id}.pattern is empty; rule skipped")
@@ -428,7 +444,9 @@ def _normalize_logic_gate(
     config["gate"] = gate
     config["inputs"] = _clean_string_list(config.get("inputs", []))
     config["invert"] = _as_bool(config.get("invert", False), False)
-    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+    config["action_on_hit"] = _normalize_action_alias(
+        _as_str(config.get("action_on_hit", "default")) or "default"
+    )
 
 
 def _normalize_strengthen_prompt(
@@ -495,7 +513,7 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
             "enabled": True,
             "check_original_only": True,
             "max_text_chars": 6000,
-            "default_action_on_hit": "block_input",
+            "default_action_on_hit": "block",
             "block_message": "",
         },
         "prompt_rail": {"enabled": True},
@@ -509,7 +527,7 @@ def _rail_defaults(rail_name: str) -> dict[str, Any]:
         "output_rail": {
             "enabled": True,
             "max_text_chars": 6000,
-            "default_action_on_hit": "block_output",
+            "default_action_on_hit": "block",
             "max_retries": 0,
             "block_message": "",
         },
@@ -526,16 +544,18 @@ def _coerce_rail_settings(
             settings.get("check_original_only"), True
         )
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
-        action = _as_str(settings.get("default_action_on_hit", "block_input"))
-        if action not in {"observe", "block_input"}:
-            warnings.append("input_rail.default_action_on_hit is invalid; fallback to block_input")
-            action = "block_input"
+        raw_action = _as_str(settings.get("default_action_on_hit", "block"))
+        action = _normalize_action_alias(raw_action)
+        if action not in {"observe", "block"}:
+            warnings.append("input_rail.default_action_on_hit is invalid; fallback to block")
+            action = "block"
         settings["default_action_on_hit"] = action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "request_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
-        action = _as_str(settings.get("default_action_on_hit", "observe"))
-        if action not in {"observe", "block_input"}:
+        raw_action = _as_str(settings.get("default_action_on_hit", "observe"))
+        action = _normalize_action_alias(raw_action)
+        if action not in {"observe", "block"}:
             warnings.append("request_rail.default_action_on_hit is invalid; fallback to observe")
             action = "observe"
         settings["default_action_on_hit"] = action
@@ -543,13 +563,22 @@ def _coerce_rail_settings(
     elif rail_name == "output_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
         settings["max_retries"] = max(_as_int(settings.get("max_retries"), 0), 0)
-        action = _as_str(settings.get("default_action_on_hit", "block_output"))
-        if action != "block_output":
-            warnings.append("output_rail.default_action_on_hit is invalid; fallback to block_output")
-            action = "block_output"
+        raw_action = _as_str(settings.get("default_action_on_hit", "block"))
+        action = _normalize_action_alias(raw_action)
+        if action != "block":
+            warnings.append("output_rail.default_action_on_hit is invalid; fallback to block")
+            action = "block"
         settings["default_action_on_hit"] = action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     return settings
+
+
+def _normalize_action_alias(action: str) -> str:
+    if action in {"block_input", "block_output"}:
+        return "block"
+    if action in {"sanitize_input", "sanitize_output"}:
+        return "sanitize"
+    return action
 
 
 def _dependency_target(value: str) -> str:
