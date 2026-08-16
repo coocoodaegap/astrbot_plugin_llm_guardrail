@@ -166,6 +166,51 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(rule.rule_id, "request_risk")
         self.assertEqual(rail.settings["default_action_on_hit"], "block")
 
+    def test_llm_review_rule_is_supported_and_normalized(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "review",
+                            "provider_id": "audit-provider",
+                            "timeout_seconds": -1,
+                            "audit_prompt": " Judge risk. ",
+                            "action_on_hit": "block",
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertTrue(rule.valid)
+        self.assertTrue(rule.enabled)
+        self.assertEqual(rule.config["provider_id"], "audit-provider")
+        self.assertEqual(rule.config["timeout_seconds"], 0.0)
+        self.assertEqual(rule.config["audit_prompt"], "Judge risk.")
+
+    def test_llm_review_empty_prompt_disables_rule(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "review",
+                            "audit_prompt": "",
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertFalse(rule.valid)
+        self.assertFalse(rule.enabled)
+        self.assertIn("audit_prompt is empty", " ".join(rule.warnings))
+
     def test_llm_provider_defaults_are_rail_scoped(self):
         cfg = normalize_config(
             {

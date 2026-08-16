@@ -12,6 +12,7 @@ from core import RailContext
 from rules import (
     apply_literal_replacements,
     apply_span_replacements,
+    evaluate_llm_review_response,
     evaluate_logic_gate,
     evaluate_plain_keywords,
     evaluate_regex_pattern,
@@ -107,6 +108,57 @@ class RuleEvaluatorTests(unittest.TestCase):
             apply_literal_replacements("SECRET secret", hits, ""),
             " ",
         )
+
+    def test_llm_review_response_parses_matched_payload(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "review",
+                            "audit_prompt": "Judge risk.",
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        result = evaluate_llm_review_response(
+            rule,
+            ctx,
+            '```json\n{"matched": true, "payload": {"reason": "risk"}}\n```',
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.signal.payload["reason"], "risk")
+        self.assertEqual(result.metadata["payload"]["reason"], "risk")
+
+    def test_llm_review_response_requires_boolean_matched(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "review",
+                            "audit_prompt": "Judge risk.",
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        with self.assertRaises(ValueError):
+            evaluate_llm_review_response(
+                rule,
+                ctx,
+                '{"matched": "true", "payload": {}}',
+            )
 
 
 if __name__ == "__main__":

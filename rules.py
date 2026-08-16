@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -158,6 +159,51 @@ def evaluate_logic_gate(rule: NormalizedRule, context: RailContext):
         metadata=payload,
         signal=RuleSignal(value=matched, truthy=matched, payload=payload),
     )
+
+
+def evaluate_llm_review_response(
+    rule: NormalizedRule, context: RailContext, response_text: str
+):
+    parsed = _parse_llm_review_json(response_text)
+    matched = parsed.get("matched")
+    if not isinstance(matched, bool):
+        raise ValueError("llm_review response matched must be boolean")
+
+    payload = parsed.get("payload", {})
+    if not isinstance(payload, dict):
+        context.warnings.append(
+            f"{rule.rule_id}.payload is not an object; stored as raw_payload"
+        )
+        payload = {"raw_payload": payload}
+
+    metadata = {
+        "payload": payload,
+        "raw_response": clip_text(response_text, 2000),
+    }
+    return make_result(
+        rule,
+        matched=matched,
+        action_on_hit=str(rule.config.get("action_on_hit", "default")),
+        metadata=metadata,
+        signal=RuleSignal(value=matched, truthy=matched, payload=payload),
+    )
+
+
+def _parse_llm_review_json(response_text: str) -> dict[str, Any]:
+    text = (response_text or "").strip()
+    if not text:
+        raise ValueError("llm_review response is empty")
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("llm_review response has no JSON object")
+    decoder = json.JSONDecoder()
+    try:
+        value, _ = decoder.raw_decode(text[start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"llm_review response JSON parse failed: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("llm_review response JSON must be an object")
+    return value
 
 
 def apply_span_replacements(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -118,7 +120,7 @@ class AstrBotAdapter:
     def is_llm_candidate_event(self, event: Any) -> bool:
         if self.is_command_event(event):
             return False
-        text = self.get_event_text(event).strip()
+        text = self._get_event_content_text(event).strip()
         if not text:
             return False
         marker = getattr(event, "is_at_or_wake_command", None)
@@ -152,6 +154,44 @@ class AstrBotAdapter:
                 candidates.append(str(getattr(message_obj, attr_name, "") or ""))
 
         return candidates
+
+    def _get_event_content_text(self, event: Any) -> str:
+        getter = getattr(event, "get_message_str", None)
+        if callable(getter):
+            try:
+                text = str(getter() or "")
+                if text:
+                    return text
+            except (AttributeError, TypeError, ValueError):
+                pass
+        text = str(getattr(event, "message_str", "") or "")
+        if text:
+            return text
+
+        message_obj = getattr(event, "message_obj", None)
+        text = str(getattr(message_obj, "message_str", "") or "")
+        if text:
+            return text
+
+        messages_getter = getattr(event, "get_messages", None)
+        components = None
+        if callable(messages_getter):
+            try:
+                components = messages_getter()
+            except (AttributeError, TypeError, ValueError):
+                components = None
+        if components is None:
+            components = getattr(message_obj, "message", None)
+        if isinstance(components, list):
+            parts = []
+            for component in components:
+                value = getattr(component, "text", None)
+                if value:
+                    parts.append(str(value))
+            if parts:
+                return "".join(parts)
+
+        return ""
 
     @staticmethod
     def _looks_like_slash_command(text: str) -> bool:
@@ -258,6 +298,79 @@ class AstrBotAdapter:
         warnings.extend(provider_result.warnings)
         return AdapterResult(True, warnings)
 
+    async def request_llm_text(
+        self,
+        event: Any,
+        provider_id: str,
+        prompt: str,
+        system_prompt: str,
+        timeout_seconds: float = 0.0,
+    ) -> AdapterResult:
+        if self.context is None:
+            return AdapterResult(False, ["llm context is unavailable"])
+
+        target_provider_id = await self._resolve_chat_provider_id(event, provider_id)
+        if not target_provider_id:
+            return AdapterResult(False, ["llm review provider is unavailable"])
+
+        provider_exists = self._provider_exists(target_provider_id)
+        if provider_exists is False:
+            return AdapterResult(
+                False,
+                [f"llm review provider {target_provider_id!r} is unavailable"],
+            )
+
+        async def call() -> Any:
+            generator = getattr(self.context, "llm_generate", None)
+            if callable(generator):
+                return await generator(
+                    chat_provider_id=target_provider_id,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                )
+            provider = self._get_provider_by_id(target_provider_id)
+            if provider is None:
+                return AdapterResult(
+                    False,
+                    [f"llm review provider {target_provider_id!r} is unavailable"],
+                )
+            text_chat = getattr(provider, "text_chat", None)
+            if not callable(text_chat):
+                return AdapterResult(
+                    False,
+                    [f"llm review provider {target_provider_id!r} has no text_chat"],
+                )
+            return await text_chat(prompt=prompt, system_prompt=system_prompt, contexts=[])
+
+        try:
+            response = (
+                await asyncio.wait_for(call(), timeout_seconds)
+                if timeout_seconds > 0
+                else await call()
+            )
+        except TimeoutError:
+            return AdapterResult(
+                False,
+                [f"llm review timed out after {timeout_seconds:g}s"],
+                {"provider_id": target_provider_id},
+            )
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"llm review call failed: {type(exc).__name__}: {exc}"],
+                {"provider_id": target_provider_id},
+            )
+
+        if isinstance(response, AdapterResult):
+            response.metadata.setdefault("provider_id", target_provider_id)
+            return response
+
+        text = str(getattr(response, "completion_text", "") or "")
+        return AdapterResult(
+            True,
+            metadata={"provider_id": target_provider_id, "text": text},
+        )
+
     def has_active_route(self, event: Any) -> bool:
         return bool(self.get_event_extra(event, ROUTE_TARGET_PROVIDER_EXTRA, ""))
 
@@ -273,6 +386,83 @@ class AstrBotAdapter:
         try:
             return bool(getter(provider_id))
         except (AttributeError, TypeError, ValueError, RuntimeError):
+            return None
+
+    async def _resolve_chat_provider_id(self, event: Any, provider_id: str) -> str:
+        configured = str(provider_id or "").strip()
+        if configured:
+            return configured
+        if self.context is None:
+            return ""
+        umo = self.get_umo(event)
+        getter = getattr(self.context, "get_current_chat_provider_id", None)
+        if callable(getter):
+            try:
+                value = getter(umo)
+            except TypeError:
+                try:
+                    value = getter(umo=umo)
+                except TypeError:
+                    try:
+                        value = getter()
+                    except (AttributeError, TypeError, ValueError, RuntimeError):
+                        value = ""
+                except (AttributeError, ValueError, RuntimeError):
+                    value = ""
+            except (AttributeError, ValueError, RuntimeError):
+                value = ""
+            try:
+                if inspect.isawaitable(value):
+                    value = await value
+                provider = str(value or "").strip()
+                if provider:
+                    return provider
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                pass
+        provider = self._get_using_provider(umo)
+        if provider is None:
+            return ""
+        meta = getattr(provider, "meta", None)
+        if callable(meta):
+            try:
+                metadata = meta()
+                provider_id_value = str(getattr(metadata, "id", "") or "").strip()
+                if provider_id_value:
+                    return provider_id_value
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                return ""
+        return ""
+
+    def _get_provider_by_id(self, provider_id: str) -> Any | None:
+        if self.context is None:
+            return None
+        getter = getattr(self.context, "get_provider_by_id", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(provider_id)
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return None
+
+    def _get_using_provider(self, umo: str) -> Any | None:
+        if self.context is None:
+            return None
+        getter = getattr(self.context, "get_using_provider", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(umo=umo)
+        except TypeError:
+            try:
+                return getter(umo)
+            except TypeError:
+                try:
+                    return getter()
+                except (AttributeError, TypeError, ValueError, RuntimeError):
+                    return None
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                return None
+        except (AttributeError, ValueError, RuntimeError):
             return None
 
     def get_response_text(self, response: Any) -> str:

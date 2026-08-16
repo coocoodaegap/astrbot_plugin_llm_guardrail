@@ -16,11 +16,11 @@ RAIL_NAMES = (
 )
 
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
-    "input_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
-    "request_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
+    "input_rail": {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"},
+    "request_rail": {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"},
     "prompt_rail": {"replace_input", "strengthen_prompt", "logic_gate"},
     "routing_rail": {"route_policy", "logic_gate"},
-    "output_rail": {"plain_keywords", "regex_pattern", "logic_gate"},
+    "output_rail": {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"},
 }
 
 INPUT_ACTIONS = {
@@ -320,8 +320,13 @@ def _normalize_rule(
         _normalize_strengthen_prompt(rule_id, config, warnings)
     elif template_key == "route_policy":
         config["provider_id"] = _as_str(config.get("provider_id", "")).strip()
+    elif template_key == "llm_review":
+        _normalize_llm_review(rule_id, config, warnings)
+        if not config.get("audit_prompt"):
+            valid = False
+            enabled = False
 
-    if template_key in {"plain_keywords", "regex_pattern", "logic_gate"}:
+    if template_key in {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"}:
         raw_action = raw_action_on_hit
         action = _normalize_action_alias(raw_action)
         config["action_on_hit"] = action
@@ -449,6 +454,21 @@ def _normalize_strengthen_prompt(
         target = "temp_user_context"
     config["insertion_target"] = target
     config["insertion_text"] = _as_str(config.get("insertion_text", ""))
+
+
+def _normalize_llm_review(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    config["provider_id"] = _as_str(config.get("provider_id", "")).strip()
+    config["timeout_seconds"] = max(
+        _as_float(config.get("timeout_seconds", 8), 8.0), 0.0
+    )
+    config["audit_prompt"] = _as_str(config.get("audit_prompt", "")).strip()
+    if not config["audit_prompt"]:
+        warnings.append(f"{rule_id}.audit_prompt is empty; rule skipped")
+    config["action_on_hit"] = _normalize_action_alias(
+        _as_str(config.get("action_on_hit", "default")) or "default"
+    )
 
 
 def _validate_cross_references(

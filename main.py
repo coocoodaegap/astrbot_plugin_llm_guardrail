@@ -8,16 +8,17 @@ from astrbot.api.star import Context, Star, register
 try:
     from .adapters import AstrBotAdapter
     from .config import normalize_config, resolve_session_scope
+    from .constants import INTERNAL_MARKER
     from .rails import GuardrailPipeline
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import AstrBotAdapter
     from config import normalize_config, resolve_session_scope
+    from constants import INTERNAL_MARKER
     from rails import GuardrailPipeline
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
 PLUGIN_VERSION = "0.1.0"
-INTERNAL_MARKER = "__astrbot_plugin_llm_guardrail_internal__"
 
 
 @register(
@@ -171,6 +172,16 @@ class LlmGuardrailPlugin(Star):
             for result in rail_context.results.values()
             if result.executed and result.matched
         ]
+        executed = [
+            result.rule_id
+            for result in rail_context.results.values()
+            if result.executed
+        ]
+        errors = [
+            result.rule_id
+            for result in rail_context.results.values()
+            if result.executed and result.metadata.get("error")
+        ]
         route_label = (
             rail_context.route_decision.provider_id
             if rail_context.route_decision
@@ -194,11 +205,13 @@ class LlmGuardrailPlugin(Star):
             for item in rail_context.prompt_mutations
         ]
         logger.info(
-            "[LLMGuardrail] %s | umo=%s | session=%s | matched=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s",
+            "[LLMGuardrail] %s | umo=%s | session=%s | executed=%s | matched=%s | errors=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s",
             phase,
             rail_context.umo,
             session_action,
+            ",".join(executed[:10]) or "-",
             ",".join(matched[:10]) or "-",
+            ",".join(errors[:10]) or "-",
             rail_context.input_blocked,
             rail_context.output_blocked,
             route_label or "-",
