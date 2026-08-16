@@ -41,6 +41,7 @@ try:
         clip_text,
         evaluate_llm_review_response,
         evaluate_logic_gate,
+        evaluate_rag_judge_evidence,
         evaluate_text_rule,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
@@ -74,6 +75,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         clip_text,
         evaluate_llm_review_response,
         evaluate_logic_gate,
+        evaluate_rag_judge_evidence,
         evaluate_text_rule,
     )
 
@@ -291,6 +293,8 @@ class GuardrailPipeline:
             nonlocal current_text
             if rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
+            elif rule.template_key == "rag_judge":
+                result = await self._execute_rag_judge(rule, ctx, current_text)
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
@@ -320,6 +324,8 @@ class GuardrailPipeline:
             nonlocal current_text
             if rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
+            elif rule.template_key == "rag_judge":
+                result = await self._execute_rag_judge(rule, ctx, current_text)
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
@@ -525,6 +531,8 @@ class GuardrailPipeline:
             nonlocal current_text
             if rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
+            elif rule.template_key == "rag_judge":
+                result = await self._execute_rag_judge(rule, ctx, current_text)
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
@@ -607,6 +615,31 @@ class GuardrailPipeline:
         self._log_llm_review_result(rule, result)
         return result
 
+    async def _execute_rag_judge(
+        self, rule: NormalizedRule, context: RailContext, inspected_text: str
+    ) -> RuleResult:
+        adapter_result = await self.adapter.search_knowledge_base(
+            list(rule.config.get("knowledge_bases", []) or []),
+            query=inspected_text,
+            top_k=int(rule.config.get("top_k", 5) or 5),
+            timeout_seconds=float(rule.config.get("timeout_seconds", 0.0) or 0.0),
+        )
+        context.warnings.extend(adapter_result.warnings)
+        if not adapter_result.success:
+            raise RuntimeError("; ".join(adapter_result.warnings) or "rag search failed")
+        evidence = adapter_result.metadata.get("evidence", [])
+        if not isinstance(evidence, list):
+            evidence = []
+        result = evaluate_rag_judge_evidence(rule, evidence)
+        result.metadata["knowledge_bases"] = adapter_result.metadata.get(
+            "knowledge_bases", []
+        )
+        result.metadata["raw_result_type"] = adapter_result.metadata.get(
+            "raw_result_type", ""
+        )
+        self._log_rag_judge_result(rule, result)
+        return result
+
     def _log_llm_review_result(
         self, rule: NormalizedRule, result: RuleResult
     ) -> None:
@@ -628,6 +661,32 @@ class GuardrailPipeline:
     def _log_summary(value: object, limit: int) -> str:
         text = str(value or "").replace("\r", "\\r").replace("\n", "\\n").strip()
         return clip_text(text, limit)
+
+    def _log_rag_judge_result(
+        self, rule: NormalizedRule, result: RuleResult
+    ) -> None:
+        if not self.config.global_default_settings.get("debug", False):
+            return
+        evidence = result.metadata.get("evidence", [])
+        top_text = ""
+        if isinstance(evidence, list) and evidence:
+            top = evidence[0]
+            if isinstance(top, dict):
+                top_text = str(top.get("text", "") or "")
+        logger.info(
+            "[LLMGuardrail] rag_judge result | rail=%s | rule=%s | kb=%s | matched=%s | evidence=%s | max_score=%s | top=%s",
+            rule.rail,
+            rule.rule_id,
+            ",".join(
+                str(item)
+                for item in (result.metadata.get("knowledge_bases", []) or [])
+            )
+            or "-",
+            result.matched,
+            result.metadata.get("evidence_count", 0),
+            result.metadata.get("max_score"),
+            self._log_summary(top_text, 500),
+        )
 
     @staticmethod
     def _build_llm_review_system_prompt(audit_prompt: str) -> str:

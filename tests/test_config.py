@@ -211,6 +211,53 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertFalse(rule.enabled)
         self.assertIn("audit_prompt is empty", " ".join(rule.warnings))
 
+    def test_rag_judge_rule_is_supported_and_normalized(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": [" policy ", ""],
+                            "top_k": 0,
+                            "min_score": -1,
+                            "timeout_seconds": -1,
+                            "action_on_hit": "block",
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertTrue(rule.valid)
+        self.assertTrue(rule.enabled)
+        self.assertEqual(rule.config["knowledge_bases"], ["policy"])
+        self.assertEqual(rule.config["top_k"], 1)
+        self.assertEqual(rule.config["min_score"], 0.0)
+        self.assertEqual(rule.config["timeout_seconds"], 0.0)
+
+    def test_rag_judge_empty_knowledge_bases_disables_rule(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": [],
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertFalse(rule.valid)
+        self.assertFalse(rule.enabled)
+        self.assertIn("knowledge_bases is empty", " ".join(rule.warnings))
+
     def test_llm_provider_defaults_are_rail_scoped(self):
         cfg = normalize_config(
             {

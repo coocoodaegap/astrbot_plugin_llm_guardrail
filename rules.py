@@ -206,6 +206,63 @@ def _parse_llm_review_json(response_text: str) -> dict[str, Any]:
     return value
 
 
+def evaluate_rag_judge_evidence(
+    rule: NormalizedRule, evidence: list[dict[str, Any]]
+):
+    try:
+        min_score = float(rule.config.get("min_score", 0.72))
+    except (TypeError, ValueError):
+        min_score = 0.72
+    score_values = [
+        float(item["score"])
+        for item in evidence
+        if isinstance(item.get("score"), (int, float))
+    ]
+    score_available = bool(score_values)
+    max_score = max(score_values) if score_values else None
+    matched = bool(evidence) and (
+        max_score is None or max_score >= min_score
+    )
+    evidence_payload = [
+        {
+            "text": clip_text(str(item.get("text", "") or ""), 500),
+            "score": item.get("score"),
+            "metadata": item.get("metadata", {}),
+        }
+        for item in evidence[:5]
+    ]
+    payload = {
+        "evidence_count": len(evidence),
+        "evidence": evidence_payload,
+        "matched_text": " ".join(item["text"] for item in evidence_payload[:3]),
+        "score_available": score_available,
+        "max_score": max_score,
+        "min_score": min_score,
+    }
+    hits = [
+        {
+            "kind": "rag_evidence",
+            "value": item["text"],
+            "score": item.get("score"),
+            "metadata": item.get("metadata", {}),
+        }
+        for item in evidence_payload
+    ]
+    signal_value = max_score if max_score is not None else len(evidence)
+    return make_result(
+        rule,
+        matched=matched,
+        action_on_hit=str(rule.config.get("action_on_hit", "default")),
+        hits=hits,
+        metadata=payload,
+        signal=RuleSignal(
+            value=signal_value,
+            truthy=matched,
+            payload=payload,
+        ),
+    )
+
+
 def apply_span_replacements(
     text: str, hits: list[dict[str, Any]], replacement: str
 ) -> str:

@@ -16,11 +16,29 @@ RAIL_NAMES = (
 )
 
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
-    "input_rail": {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"},
-    "request_rail": {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"},
+    "input_rail": {
+        "plain_keywords",
+        "regex_pattern",
+        "logic_gate",
+        "rag_judge",
+        "llm_review",
+    },
+    "request_rail": {
+        "plain_keywords",
+        "regex_pattern",
+        "logic_gate",
+        "rag_judge",
+        "llm_review",
+    },
     "prompt_rail": {"replace_input", "strengthen_prompt", "logic_gate"},
     "routing_rail": {"route_policy", "logic_gate"},
-    "output_rail": {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"},
+    "output_rail": {
+        "plain_keywords",
+        "regex_pattern",
+        "logic_gate",
+        "rag_judge",
+        "llm_review",
+    },
 }
 
 INPUT_ACTIONS = {
@@ -320,13 +338,24 @@ def _normalize_rule(
         _normalize_strengthen_prompt(rule_id, config, warnings)
     elif template_key == "route_policy":
         config["provider_id"] = _as_str(config.get("provider_id", "")).strip()
+    elif template_key == "rag_judge":
+        _normalize_rag_judge(rule_id, config, warnings)
+        if not config.get("knowledge_bases"):
+            valid = False
+            enabled = False
     elif template_key == "llm_review":
         _normalize_llm_review(rule_id, config, warnings)
         if not config.get("audit_prompt"):
             valid = False
             enabled = False
 
-    if template_key in {"plain_keywords", "regex_pattern", "logic_gate", "llm_review"}:
+    if template_key in {
+        "plain_keywords",
+        "regex_pattern",
+        "logic_gate",
+        "rag_judge",
+        "llm_review",
+    }:
         raw_action = raw_action_on_hit
         action = _normalize_action_alias(raw_action)
         config["action_on_hit"] = action
@@ -466,6 +495,23 @@ def _normalize_llm_review(
     config["audit_prompt"] = _as_str(config.get("audit_prompt", "")).strip()
     if not config["audit_prompt"]:
         warnings.append(f"{rule_id}.audit_prompt is empty; rule skipped")
+    config["action_on_hit"] = _normalize_action_alias(
+        _as_str(config.get("action_on_hit", "default")) or "default"
+    )
+
+
+def _normalize_rag_judge(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    knowledge_bases = _clean_string_list(config.get("knowledge_bases", []))
+    config["knowledge_bases"] = knowledge_bases
+    if not knowledge_bases:
+        warnings.append(f"{rule_id}.knowledge_bases is empty; rule skipped")
+    config["top_k"] = max(_as_int(config.get("top_k", 5), 5), 1)
+    config["min_score"] = max(_as_float(config.get("min_score", 0.72), 0.72), 0.0)
+    config["timeout_seconds"] = max(
+        _as_float(config.get("timeout_seconds", 8), 8.0), 0.0
+    )
     config["action_on_hit"] = _normalize_action_alias(
         _as_str(config.get("action_on_hit", "default")) or "default"
     )

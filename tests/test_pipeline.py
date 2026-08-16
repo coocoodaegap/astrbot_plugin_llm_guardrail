@@ -93,6 +93,25 @@ class FakeProviderManager:
         self.current_provider_id = provider_id
 
 
+class FakeKBManager:
+    def __init__(self):
+        self.retrieve_result = {
+            "results": [
+                {"text": "default evidence", "score": 0.0},
+            ]
+        }
+        self.retrieve_calls = []
+
+    async def get_kb_by_name(self, kb_name):
+        return types.SimpleNamespace(
+            kb=types.SimpleNamespace(kb_id=kb_name, kb_name=kb_name)
+        )
+
+    async def retrieve(self, **kwargs):
+        self.retrieve_calls.append(kwargs)
+        return self.retrieve_result
+
+
 class FakeContext:
     def __init__(self):
         self.provider_manager = FakeProviderManager()
@@ -103,6 +122,7 @@ class FakeContext:
         }
         self.llm_responses = ['{"matched": false, "payload": {}}']
         self.llm_calls = []
+        self.kb_manager = FakeKBManager()
 
     async def get_current_chat_provider_id(self, umo):
         return self.provider_manager.current_provider_id
@@ -523,6 +543,149 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             fake_context.llm_calls[0]["chat_provider_id"], "default-provider"
         )
+
+    def test_input_rag_judge_blocks_with_evidence(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "block_message": "rag blocked",
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "top_k": 3,
+                            "min_score": 0.7,
+                            "action_on_hit": "block",
+                        }
+                    ],
+                },
+                "routing_rail": {"enabled": False},
+            }
+        )
+        event = FakeEvent("hello policy")
+        fake_context = FakeContext()
+        fake_context.kb_manager.retrieve_result = {
+            "results": [
+                {
+                    "text": "Policy says hello is risky here.",
+                    "score": 0.91,
+                    "doc_name": "policy.txt",
+                }
+            ]
+        }
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        self.assertTrue(ctx.input_blocked)
+        self.assertEqual(event.result, {"plain": "rag blocked"})
+        self.assertTrue(ctx.results["rag"].matched)
+        self.assertEqual(ctx.results["rag"].signal.payload["evidence_count"], 1)
+        self.assertIn("Policy says hello", ctx.results["rag"].signal.payload["matched_text"])
+        self.assertEqual(
+            fake_context.kb_manager.retrieve_calls[0]["kb_names"], ["policy"]
+        )
+        self.assertEqual(fake_context.kb_manager.retrieve_calls[0]["top_m_final"], 3)
+
+    def test_request_rag_judge_without_scores_matches_when_evidence_exists(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {
+                    "enabled": True,
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.99,
+                            "action_on_hit": "observe",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("final prompt")
+        fake_context = FakeContext()
+        fake_context.kb_manager.retrieve_result = {
+            "results": [
+                {"text": "Evidence without score."},
+            ]
+        }
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_request(event, request))
+
+        self.assertTrue(ctx.results["rag"].matched)
+        self.assertFalse(ctx.results["rag"].signal.payload["score_available"])
+        self.assertEqual(fake_context.kb_manager.retrieve_calls[0]["query"], "final prompt")
+
+    def test_request_rag_judge_uses_context_text_when_results_empty(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {
+                    "enabled": True,
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "action_on_hit": "observe",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("final prompt")
+        fake_context = FakeContext()
+        fake_context.kb_manager.retrieve_result = {
+            "results": [],
+            "context_text": "Context text fallback evidence.",
+        }
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_request(event, request))
+
+        self.assertTrue(ctx.results["rag"].matched)
+        self.assertIn(
+            "Context text fallback",
+            ctx.results["rag"].signal.payload["matched_text"],
+        )
+
+    def test_output_rag_judge_error_action_block(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "block_message": "rag failed closed",
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "action_on_error": "block",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("model output")
+        fake_context = FakeContext()
+        fake_context.kb_manager = None
+        adapter = AstrBotAdapter(fake_context)
+
+        ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(response.completion_text, "rag failed closed")
+        self.assertEqual(ctx.results["rag"].metadata["error_action"], "block")
+        self.assertIn("knowledge base manager is unavailable", " ".join(ctx.warnings))
 
     def test_output_error_block_replaces_response(self):
         cfg = normalize_config(

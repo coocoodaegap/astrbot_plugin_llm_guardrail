@@ -15,6 +15,7 @@ from rules import (
     evaluate_llm_review_response,
     evaluate_logic_gate,
     evaluate_plain_keywords,
+    evaluate_rag_judge_evidence,
     evaluate_regex_pattern,
 )
 
@@ -159,6 +160,83 @@ class RuleEvaluatorTests(unittest.TestCase):
                 ctx,
                 '{"matched": "true", "payload": {}}',
             )
+
+    def test_rag_judge_evidence_uses_min_score(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        result = evaluate_rag_judge_evidence(
+            rule,
+            [{"text": "matched evidence", "score": 0.8, "metadata": {}}],
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.signal.payload["max_score"], 0.8)
+        self.assertEqual(result.signal.payload["evidence_count"], 1)
+
+    def test_rag_judge_evidence_allows_zero_min_score(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0,
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        result = evaluate_rag_judge_evidence(
+            rule,
+            [{"text": "low score evidence", "score": 0.1, "metadata": {}}],
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.signal.payload["min_score"], 0.0)
+
+    def test_rag_judge_evidence_without_score_is_still_visible(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.99,
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        result = evaluate_rag_judge_evidence(
+            rule,
+            [{"text": "scoreless evidence", "score": None, "metadata": {}}],
+        )
+
+        self.assertTrue(result.matched)
+        self.assertFalse(result.signal.payload["score_available"])
+        self.assertIsNone(result.signal.payload["max_score"])
 
 
 if __name__ == "__main__":

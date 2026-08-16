@@ -371,6 +371,62 @@ class AstrBotAdapter:
             metadata={"provider_id": target_provider_id, "text": text},
         )
 
+    async def search_knowledge_base(
+        self,
+        knowledge_bases: list[str],
+        query: str,
+        top_k: int,
+        timeout_seconds: float = 0.0,
+    ) -> AdapterResult:
+        if self.context is None:
+            return AdapterResult(False, ["knowledge base context is unavailable"])
+        kb_manager = getattr(self.context, "kb_manager", None)
+        if kb_manager is None:
+            return AdapterResult(False, ["knowledge base manager is unavailable"])
+
+        kb_refs = [str(item).strip() for item in knowledge_bases if str(item).strip()]
+        if not kb_refs:
+            return AdapterResult(False, ["knowledge_bases is empty"])
+
+        try:
+            kb_names, helpers = await self._resolve_knowledge_bases(kb_manager, kb_refs)
+
+            async def call() -> Any:
+                retriever = getattr(kb_manager, "retrieve", None)
+                if callable(retriever):
+                    return await self._call_kb_manager_retrieve(
+                        retriever, query, kb_names, top_k
+                    )
+                return await self._call_kb_helpers_retrieve(helpers, query, top_k)
+
+            raw_result = (
+                await asyncio.wait_for(call(), timeout_seconds)
+                if timeout_seconds > 0
+                else await call()
+            )
+        except TimeoutError:
+            return AdapterResult(
+                False,
+                [f"rag search timed out after {timeout_seconds:g}s"],
+                {"knowledge_bases": kb_refs},
+            )
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"rag search failed: {type(exc).__name__}: {exc}"],
+                {"knowledge_bases": kb_refs},
+            )
+
+        evidence = self._normalize_kb_evidence(raw_result, top_k)
+        return AdapterResult(
+            True,
+            metadata={
+                "evidence": evidence,
+                "knowledge_bases": kb_names or kb_refs,
+                "raw_result_type": type(raw_result).__name__,
+            },
+        )
+
     def has_active_route(self, event: Any) -> bool:
         return bool(self.get_event_extra(event, ROUTE_TARGET_PROVIDER_EXTRA, ""))
 
@@ -385,7 +441,7 @@ class AstrBotAdapter:
             return None
         try:
             return bool(getter(provider_id))
-        except (AttributeError, TypeError, ValueError, RuntimeError):
+        except Exception:
             return None
 
     async def _resolve_chat_provider_id(self, event: Any, provider_id: str) -> str:
@@ -441,7 +497,7 @@ class AstrBotAdapter:
             return None
         try:
             return getter(provider_id)
-        except (AttributeError, TypeError, ValueError, RuntimeError):
+        except Exception:
             return None
 
     def _get_using_provider(self, umo: str) -> Any | None:
@@ -464,6 +520,172 @@ class AstrBotAdapter:
                 return None
         except (AttributeError, ValueError, RuntimeError):
             return None
+
+    async def _resolve_knowledge_bases(
+        self, kb_manager: Any, kb_refs: list[str]
+    ) -> tuple[list[str], list[Any]]:
+        kb_names: list[str] = []
+        helpers: list[Any] = []
+        for ref in kb_refs:
+            helper = await self._maybe_get_kb_by_name(kb_manager, ref)
+            if helper is None:
+                helper = await self._maybe_get_kb(kb_manager, ref)
+            if helper is not None:
+                helpers.append(helper)
+                name = self._kb_helper_name(helper) or ref
+            else:
+                name = ref
+            if name not in kb_names:
+                kb_names.append(name)
+        return kb_names, helpers
+
+    async def _maybe_get_kb_by_name(self, kb_manager: Any, kb_name: str) -> Any | None:
+        getter = getattr(kb_manager, "get_kb_by_name", None)
+        if not callable(getter):
+            return None
+        try:
+            value = getter(kb_name)
+            return await value if inspect.isawaitable(value) else value
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return None
+
+    async def _maybe_get_kb(self, kb_manager: Any, kb_id: str) -> Any | None:
+        getter = getattr(kb_manager, "get_kb", None)
+        if not callable(getter):
+            return None
+        try:
+            value = getter(kb_id)
+            return await value if inspect.isawaitable(value) else value
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return None
+
+    @staticmethod
+    def _kb_helper_name(helper: Any) -> str:
+        kb = getattr(helper, "kb", None)
+        return str(getattr(kb, "kb_name", "") or getattr(helper, "kb_name", "") or "")
+
+    async def _call_kb_manager_retrieve(
+        self, retriever: Any, query: str, kb_names: list[str], top_k: int
+    ) -> Any:
+        attempts = (
+            {"query": query, "kb_names": kb_names, "top_m_final": top_k},
+            {"query": query, "kb_names": kb_names, "top_k": top_k},
+            {"query": query, "kb_names": kb_names},
+        )
+        last_error: Exception | None = None
+        for kwargs in attempts:
+            try:
+                value = retriever(**kwargs)
+                return await value if inspect.isawaitable(value) else value
+            except TypeError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        return None
+
+    async def _call_kb_helpers_retrieve(
+        self, helpers: list[Any], query: str, top_k: int
+    ) -> list[Any]:
+        if not helpers:
+            raise RuntimeError("knowledge base retrieve API is unavailable")
+        collected: list[Any] = []
+        for helper in helpers:
+            retriever = getattr(helper, "retrieve", None)
+            if not callable(retriever):
+                continue
+            try:
+                value = retriever(query=query, top_k=top_k)
+            except TypeError:
+                value = retriever(query=query, top_m_final=top_k)
+            result = await value if inspect.isawaitable(value) else value
+            if isinstance(result, dict) and isinstance(result.get("results"), list):
+                collected.extend(result["results"])
+            elif isinstance(result, list):
+                collected.extend(result)
+            elif result:
+                collected.append(result)
+        return collected
+
+    def _normalize_kb_evidence(self, raw_result: Any, top_k: int) -> list[dict[str, Any]]:
+        raw_items: list[Any] = []
+        context_text = ""
+        if isinstance(raw_result, dict):
+            context_text = str(raw_result.get("context_text", "") or "")
+            results = raw_result.get("results")
+            if isinstance(results, list):
+                raw_items.extend(results)
+                if not results and context_text:
+                    raw_items.append({"text": context_text})
+            elif results:
+                raw_items.append(results)
+            elif context_text:
+                raw_items.append({"text": context_text})
+        elif isinstance(raw_result, list):
+            raw_items.extend(raw_result)
+        elif raw_result:
+            raw_items.append(raw_result)
+
+        evidence: list[dict[str, Any]] = []
+        for index, item in enumerate(raw_items):
+            normalized = self._normalize_kb_evidence_item(item, index)
+            if normalized["text"]:
+                evidence.append(normalized)
+            if len(evidence) >= top_k:
+                break
+        return evidence
+
+    def _normalize_kb_evidence_item(self, item: Any, index: int) -> dict[str, Any]:
+        if isinstance(item, str):
+            return {"text": item, "score": None, "metadata": {"index": index}}
+
+        if isinstance(item, dict):
+            text = self._first_text_value(
+                item, ("text", "content", "chunk_text", "page_content")
+            )
+            score = self._first_float_value(
+                item,
+                ("score", "similarity", "relevance_score", "rerank_score"),
+            )
+            if score is None:
+                distance = self._first_float_value(item, ("distance",))
+                if distance is not None:
+                    score = max(0.0, 1.0 - distance)
+            metadata = {
+                key: value
+                for key, value in item.items()
+                if key not in {"text", "content", "chunk_text", "page_content"}
+            }
+            metadata["index"] = index
+            return {"text": text, "score": score, "metadata": metadata}
+
+        text = self._first_text_value(
+            item, ("text", "content", "chunk_text", "page_content")
+        )
+        score = self._first_float_value(
+            item,
+            ("score", "similarity", "relevance_score", "rerank_score"),
+        )
+        return {"text": text, "score": score, "metadata": {"index": index}}
+
+    @staticmethod
+    def _first_text_value(source: Any, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = source.get(key) if isinstance(source, dict) else getattr(source, key, "")
+            if value:
+                return str(value)
+        return ""
+
+    @staticmethod
+    def _first_float_value(source: Any, keys: tuple[str, ...]) -> float | None:
+        for key in keys:
+            value = source.get(key) if isinstance(source, dict) else getattr(source, key, None)
+            if value is None or value == "":
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
 
     def get_response_text(self, response: Any) -> str:
         return str(getattr(response, "completion_text", "") or "")
