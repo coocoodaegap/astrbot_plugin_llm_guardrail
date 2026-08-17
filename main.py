@@ -10,15 +10,20 @@ try:
     from .config import normalize_config, resolve_session_scope
     from .constants import INTERNAL_MARKER
     from .rails import GuardrailPipeline
+    from .session_lock import UmoLockManager, get_global_umo_lock_manager
+    from .state import MemoryStateStore, StateStore
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import AstrBotAdapter
     from config import normalize_config, resolve_session_scope
     from constants import INTERNAL_MARKER
     from rails import GuardrailPipeline
+    from session_lock import UmoLockManager, get_global_umo_lock_manager
+    from state import MemoryStateStore, StateStore
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
 PLUGIN_VERSION = "0.1.0"
+MESSAGE_STAGE_LOCK_EXTRA = "_llm_guardrail_message_stage_lock"
 
 
 @register(
@@ -37,6 +42,8 @@ class LlmGuardrailPlugin(Star):
         self.normalized_config = normalize_config(config)
         self.adapter = AstrBotAdapter(context)
         self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
+        self.umo_locks: UmoLockManager = get_global_umo_lock_manager()
+        self.state_store: StateStore = MemoryStateStore()
 
     async def initialize(self) -> None:
         """Initialize the plugin."""
@@ -54,11 +61,21 @@ class LlmGuardrailPlugin(Star):
         """Run user input checks before other ordinary message handlers."""
         if not self.normalized_config.enabled:
             return
+        lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
+        lease_result = self.adapter.set_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, lease)
+        keep_message_stage_lock = False
         try:
             rail_context = await self.pipeline.run_message_input(event)
+            keep_message_stage_lock = (
+                lease_result.success
+                and self._should_keep_message_stage_lock(rail_context)
+            )
         except Exception as exc:
             logger.error("[LLMGuardrail] message input pipeline failed: %s", exc, exc_info=True)
             return
+        finally:
+            if not keep_message_stage_lock:
+                await lease.release()
         self._log_context_summary("message_input", rail_context)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
@@ -66,11 +83,21 @@ class LlmGuardrailPlugin(Star):
         """Run route policy late in message handling, before AstrBot builds the LLM request."""
         if not self.normalized_config.enabled:
             return
+        lease = self.adapter.get_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, None)
+        owns_lease = False
+        if lease is None or getattr(lease, "released", False):
+            lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
+            owns_lease = True
         try:
             rail_context = await self.pipeline.run_message_route(event)
         except Exception as exc:
             logger.error("[LLMGuardrail] message route pipeline failed: %s", exc, exc_info=True)
             return
+        finally:
+            if owns_lease or lease is not None:
+                releaser = getattr(lease, "release", None)
+                if callable(releaser):
+                    await releaser()
         self._log_context_summary("message_route", rail_context)
 
     @filter.on_llm_request()
@@ -83,7 +110,8 @@ class LlmGuardrailPlugin(Star):
         if self._is_internal_request(req):
             return
         try:
-            rail_context = await self.pipeline.run_request(event, req)
+            async with self.umo_locks.hold(self.adapter.get_umo(event)):
+                rail_context = await self.pipeline.run_request(event, req)
         except Exception as exc:
             logger.error("[LLMGuardrail] request pipeline failed: %s", exc, exc_info=True)
             return
@@ -97,7 +125,8 @@ class LlmGuardrailPlugin(Star):
         if not self.normalized_config.enabled:
             return
         try:
-            rail_context = await self.pipeline.run_response(event, resp)
+            async with self.umo_locks.hold(self.adapter.get_umo(event)):
+                rail_context = await self.pipeline.run_response(event, resp)
         except Exception as exc:
             logger.error("[LLMGuardrail] response pipeline failed: %s", exc, exc_info=True)
             return
@@ -163,6 +192,15 @@ class LlmGuardrailPlugin(Star):
         system_prompt = str(getattr(req, "system_prompt", "") or "")
         prompt = str(getattr(req, "prompt", "") or "")
         return INTERNAL_MARKER in system_prompt or INTERNAL_MARKER in prompt
+
+    @staticmethod
+    def _should_keep_message_stage_lock(rail_context) -> bool:
+        decision = rail_context.session_scope_decision
+        return (
+            decision is not None
+            and decision.action == "run"
+            and not rail_context.input_blocked
+        )
 
     def _log_context_summary(self, phase: str, rail_context) -> None:
         if not self.normalized_config.global_default_settings.get("debug", False):
