@@ -57,8 +57,12 @@ class LlmGuardrailPlugin(Star):
         )
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
-    async def guardrail_message_input(self, event: AstrMessageEvent) -> None:
+    async def guardrail_message_input(
+        self, event: AstrMessageEvent, *_args, **_kwargs
+    ) -> None:
         """Run user input checks before other ordinary message handlers."""
+        if not self or not getattr(self, "normalized_config", None):
+            return
         if not self.normalized_config.enabled:
             return
         lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
@@ -79,8 +83,12 @@ class LlmGuardrailPlugin(Star):
         self._log_context_summary("message_input", rail_context)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
-    async def guardrail_message_route(self, event: AstrMessageEvent) -> None:
+    async def guardrail_message_route(
+        self, event: AstrMessageEvent, *_args, **_kwargs
+    ) -> None:
         """Run route policy late in message handling, before AstrBot builds the LLM request."""
+        if not self or not getattr(self, "normalized_config", None):
+            return
         if not self.normalized_config.enabled:
             return
         lease = self.adapter.get_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, None)
@@ -102,9 +110,11 @@ class LlmGuardrailPlugin(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(
-        self, event: AstrMessageEvent, req: ProviderRequest
+        self, event: AstrMessageEvent, req: ProviderRequest, *_args, **_kwargs
     ) -> None:
         """Run final request checks and prompt mutations before the main model call."""
+        if not self or not getattr(self, "normalized_config", None):
+            return
         if not self.normalized_config.enabled:
             return
         if self._is_internal_request(req):
@@ -119,9 +129,11 @@ class LlmGuardrailPlugin(Star):
 
     @filter.on_llm_response()
     async def on_llm_response(
-        self, event: AstrMessageEvent, resp: LLMResponse
+        self, event: AstrMessageEvent, resp: LLMResponse, *_args, **_kwargs
     ) -> None:
         """Run output rail before the model response is sent."""
+        if not self or not getattr(self, "normalized_config", None):
+            return
         if not self.normalized_config.enabled:
             return
         try:
