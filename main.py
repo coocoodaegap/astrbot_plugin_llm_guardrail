@@ -1,31 +1,42 @@
 """AstrBot LLM Guardrail plugin."""
 
+from pathlib import Path
+
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, register
 
 try:
+    from astrbot.api.star import StarTools
+except ImportError:  # pragma: no cover - older SDKs and isolated unit tests.
+    StarTools = None
+
+try:
     from .adapters import AstrBotAdapter
-    from .config import normalize_config, resolve_session_scope
+    from .config import resolve_session_scope
     from .constants import (
         GUARDRAIL_MESSAGE_INPUT_PRIORITY,
         GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
         INTERNAL_MARKER,
     )
     from .rails import GuardrailPipeline
+    from .pages_api import GuardrailPagesApiMixin
     from .session_lock import UmoLockManager, get_global_umo_lock_manager
+    from .snapshots import ConfigSnapshotManager
     from .state import MemoryStateStore, StateStore
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import AstrBotAdapter
-    from config import normalize_config, resolve_session_scope
+    from config import resolve_session_scope
     from constants import (
         GUARDRAIL_MESSAGE_INPUT_PRIORITY,
         GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
         INTERNAL_MARKER,
     )
     from rails import GuardrailPipeline
+    from pages_api import GuardrailPagesApiMixin
     from session_lock import UmoLockManager, get_global_umo_lock_manager
+    from snapshots import ConfigSnapshotManager
     from state import MemoryStateStore, StateStore
 
 
@@ -41,21 +52,27 @@ MESSAGE_STAGE_LOCK_EXTRA = "_llm_guardrail_message_stage_lock"
     version=PLUGIN_VERSION,
     repo="https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail",
 )
-class LlmGuardrailPlugin(Star):
+class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     """LLM guardrail orchestrator."""
 
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.context = context
         self.config = config
-        self.normalized_config = normalize_config(config)
         self.adapter = AstrBotAdapter(context)
+        self.snapshot_manager = ConfigSnapshotManager(
+            config,
+            persistence_path=self._snapshot_path(),
+        )
+        self.normalized_config = self.snapshot_manager.current.runtime_config
         self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
         self.umo_locks: UmoLockManager = get_global_umo_lock_manager()
         self.state_store: StateStore = MemoryStateStore()
+        self._register_pages_web_api()
 
     async def initialize(self) -> None:
         """Initialize the plugin."""
-        self.normalized_config = normalize_config(self.config)
+        self.normalized_config = self.snapshot_manager.current.runtime_config
         self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
         logger.info(
             "[LLMGuardrail] loaded P0 v%s | enabled=%s | warnings=%s",
@@ -80,7 +97,7 @@ class LlmGuardrailPlugin(Star):
         lease_result = self.adapter.set_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, lease)
         keep_message_stage_lock = False
         try:
-            rail_context = await self.pipeline.run_message_input(event)
+            rail_context = await self._pipeline_for_event(event).run_message_input(event)
             keep_message_stage_lock = (
                 lease_result.success
                 and self._should_keep_message_stage_lock(rail_context)
@@ -111,7 +128,7 @@ class LlmGuardrailPlugin(Star):
             lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
             owns_lease = True
         try:
-            rail_context = await self.pipeline.run_message_route(event)
+            rail_context = await self._pipeline_for_event(event).run_message_route(event)
         except Exception as exc:
             logger.error("[LLMGuardrail] message route pipeline failed: %s", exc, exc_info=True)
             return
@@ -135,7 +152,7 @@ class LlmGuardrailPlugin(Star):
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
-                rail_context = await self.pipeline.run_request(event, req)
+                rail_context = await self._pipeline_for_event(event).run_request(event, req)
         except Exception as exc:
             logger.error("[LLMGuardrail] request pipeline failed: %s", exc, exc_info=True)
             return
@@ -152,7 +169,7 @@ class LlmGuardrailPlugin(Star):
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
-                rail_context = await self.pipeline.run_response(event, resp)
+                rail_context = await self._pipeline_for_event(event).run_response(event, resp)
         except Exception as exc:
             logger.error("[LLMGuardrail] response pipeline failed: %s", exc, exc_info=True)
             return
@@ -162,7 +179,7 @@ class LlmGuardrailPlugin(Star):
     @filter.command("guardrail")
     async def guardrail_status(self, event: AstrMessageEvent):
         """Show the current LLM Guardrail P0 status."""
-        cfg = self.normalized_config
+        cfg = self.snapshot_manager.current.runtime_config
         current_umo = self.adapter.get_umo(event)
         session_decision = resolve_session_scope(
             cfg.session_control,
@@ -205,6 +222,23 @@ class LlmGuardrailPlugin(Star):
     async def terminate(self) -> None:
         """Clean up plugin resources."""
         logger.info("[LLMGuardrail] stopped")
+
+    def _pipeline_for_event(self, event: AstrMessageEvent) -> GuardrailPipeline:
+        """Build a pipeline from the snapshot fixed to this request event."""
+
+        snapshot = self.snapshot_manager.bind_event(self.adapter, event)
+        return GuardrailPipeline(snapshot.runtime_config, self.adapter)
+
+    @staticmethod
+    def _snapshot_path() -> Path | None:
+        getter = getattr(StarTools, "get_data_dir", None)
+        if not callable(getter):
+            return None
+        try:
+            return Path(getter(PLUGIN_NAME)) / "config_snapshot.json"
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("[LLMGuardrail] cannot resolve snapshot data directory: %s", exc)
+            return None
 
     @staticmethod
     def _clip_text(text: object, limit: int = 120) -> str:

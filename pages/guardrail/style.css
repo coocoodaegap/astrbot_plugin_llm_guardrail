@@ -1,0 +1,23 @@
+:root {
+  color: #1e293b;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body { margin: 0; background: #f8fafc; }
+.page-shell { max-width: 960px; margin: 0 auto; padding: 24px; }
+h1, h2, p { margin-top: 0; }
+.card { margin-top: 16px; padding: 18px; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; }
+.card-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.card-heading p { color: #64748b; margin-bottom: 0; }
+button { border: 0; border-radius: 6px; padding: 9px 12px; background: #2563eb; color: #fff; cursor: pointer; white-space: nowrap; }
+button:disabled { cursor: wait; opacity: 0.65; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; }
+dt { color: #64748b; }
+dd { margin: 0; font-weight: 600; }
+.rail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.rail { display: grid; gap: 4px; padding: 12px; background: #f8fafc; border-radius: 8px; }
+.rail span { color: #2563eb; font-size: 0.9rem; }
+.rail small { color: #64748b; }
+#diagnostics { margin: 0; padding-left: 20px; }
+.muted { color: #64748b; }
+#rule-library, #policy-library { box-sizing: border-box; width: 100%; min-height: 300px; resize: vertical; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; color: #0f172a; font: 0.85rem ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.45; }

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM Guardrail</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header>
+        <h1>LLM Guardrail</h1>
+        <p id="status">正在读取运行状态…</p>
+      </header>
+      <section class="card">
+        <h2>配置快照</h2>
+        <dl id="snapshot-summary"></dl>
+      </section>
+      <section class="card">
+        <h2>Rail 状态</h2>
+        <div id="rails" class="rail-grid"></div>
+      </section>
+      <section class="card">
+        <h2>诊断</h2>
+        <ul id="diagnostics"></ul>
+      </section>
+      <section class="card">
+        <div class="card-heading">
+          <div>
+            <h2>规则库</h2>
+            <p>这里维护可复用规则本体；保存规则不会改动策略编排。</p>
+          </div>
+          <button id="save-rule-library" type="button">保存规则库</button>
+        </div>
+        <p id="rule-library-status" class="muted"></p>
+        <textarea id="rule-library" spellcheck="false" aria-label="规则库 JSON"></textarea>
+      </section>
+      <section class="card">
+        <div class="card-heading">
+          <div>
+            <h2>策略库</h2>
+            <p>这里编排规则、Rail 与默认策略；保存策略不会修改规则本体。</p>
+          </div>
+          <button id="save-policy-library" type="button">保存策略库</button>
+        </div>
+        <p id="policy-library-status" class="muted"></p>
+        <textarea id="policy-library" spellcheck="false" aria-label="策略库 JSON"></textarea>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
