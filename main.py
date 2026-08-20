@@ -8,14 +8,22 @@ from astrbot.api.star import Context, Star, register
 try:
     from .adapters import AstrBotAdapter
     from .config import normalize_config, resolve_session_scope
-    from .constants import INTERNAL_MARKER
+    from .constants import (
+        GUARDRAIL_MESSAGE_INPUT_PRIORITY,
+        GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
+        INTERNAL_MARKER,
+    )
     from .rails import GuardrailPipeline
     from .session_lock import UmoLockManager, get_global_umo_lock_manager
     from .state import MemoryStateStore, StateStore
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import AstrBotAdapter
     from config import normalize_config, resolve_session_scope
-    from constants import INTERNAL_MARKER
+    from constants import (
+        GUARDRAIL_MESSAGE_INPUT_PRIORITY,
+        GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
+        INTERNAL_MARKER,
+    )
     from rails import GuardrailPipeline
     from session_lock import UmoLockManager, get_global_umo_lock_manager
     from state import MemoryStateStore, StateStore
@@ -56,7 +64,10 @@ class LlmGuardrailPlugin(Star):
             len(self.normalized_config.warnings),
         )
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=1000)
+    @filter.event_message_type(
+        filter.EventMessageType.ALL,
+        priority=GUARDRAIL_MESSAGE_INPUT_PRIORITY,
+    )
     async def guardrail_message_input(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
@@ -82,7 +93,10 @@ class LlmGuardrailPlugin(Star):
                 await lease.release()
         self._log_context_summary("message_input", rail_context)
 
-    @filter.event_message_type(filter.EventMessageType.ALL, priority=-1000)
+    @filter.event_message_type(
+        filter.EventMessageType.ALL,
+        priority=GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
+    )
     async def guardrail_message_route(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
