@@ -2,16 +2,18 @@
   "schema_version": {
     "type": "string",
     "description": "配置模板版本",
-    "default": "0.1.0",
+    "default": "0.2.0",
     "invisible": true
   },
   "enabled": {
+    "invisible": true,
     "type": "bool",
     "description": "启用 LLM Guardrail",
     "hint": "关闭后插件不会执行输入分析、提示词加工、模型路由或输出检查。",
     "default": true
   },
   "global_default_settings": {
+    "invisible": true,
     "type": "object",
     "description": "全局默认设置",
     "hint": "如果只需要一套配置，通常只需要调整本组和下方全局默认配置。在插件面板中可以创建自定义配置来覆盖部分全局配置，并作用于特定的会话 UMO。",
@@ -41,9 +43,139 @@
       }
     }
   },
+  "fallback_policy_settings": {
+    "type": "object",
+    "description": "兜底策略与默认项配置",
+    "hint": "",
+    "items": {
+      "max_text_chars": {
+        "type": "int",
+        "description": "最大检查字符数",
+        "hint": "超出部分会被截断后再检查，避免超长输入拖慢审核。此设置为所有自定义策略提供默认值。",
+        "default": 6000
+      },
+      "default_llm_provider": {
+        "type": "string",
+        "description": "默认辅助 Provider",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "仅供本插件 LLM 旁审类规则使用。留空则相关辅助调用尝试使用 AstrBot 当前会话默认 Provider。此设置为所有自定义策略提供默认值。"
+      },
+      "enable_llm_review_in_fallback_policy": {
+        "type": "bool",
+        "description": "在兜底策略下启用 LLM 旁审。",
+        "hint": "在兜底策略下启用的检测器被触发时调用 LLM 辅助分析。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": false
+      },
+      "default_action_on_hit": {
+        "type": "string",
+        "description": "默认风险动作",
+        "hint": "observe=只记录；block=阻断请求。此设置为所有自定义策略提供默认值。",
+        "options": ["observe", "block"],
+        "default": "block"
+      },
+      "default_action_on_error": {
+        "type": "string",
+        "description": "默认错误动作",
+        "hint": "discard=错误时丢弃本次规则结果，仅记录 warning，不进入依赖判断；record=错误时记录可依赖的错误结果；block=错误时阻断本轮请求或输出。此设置为所有自定义策略提供默认值。",
+        "options": ["discard", "record", "block"],
+        "default": "discard"
+      },
+      "reply_placeholder_on_block": {
+        "type": "bool",
+        "description": "拦截后发送提示",
+        "hint": "关闭后，输入或输出被阻断时将尽量静默处理。此设置为所有自定义策略提供默认值。",
+        "default": true
+      },
+      "block_message": {
+        "type": "string",
+        "description": "默认阻断提示",
+        "hint": "输入被阻断时返回给用户的提示。留空则使用插件内置提示。此设置为所有自定义策略提供默认值。",
+        "default": ""
+      },
+      "enable_encoded_payload_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 编码/混淆载荷检测",
+        "hint": "检测用户输入中疑似通过编码、转义或隐藏字符伪装的指令内容。用于捕捉 Base64、URL 编码、Unicode/Hex 转义、ROT13、零宽字符、方向控制符等可疑载荷。此检查只能识别明显混淆形态，复杂语义仍建议配合知识库证据裁判或 LLM 审查。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_length_anomaly_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 长文本/异常结构检测",
+        "hint": "检测用户输入中异常长文本、重复片段、多代码块或可疑结构堆叠。用于捕捉超长输入、大量重复字符、异常分隔符、多重代码块、隐藏文本比例异常等情况。它不判断内容是否违规，只作为异常结构节流器。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_role_marker_spoofing_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 伪造角色/工具结构检测",
+        "hint": "检测用户输入中疑似伪造角色或调用结构的内容。用于捕捉 role: system、developer message、function_call、tool_use、伪造日志片段、Prompt 区块等结构化伪装。它关注格式和结构，不直接判断复杂语义意图。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_external_fetch_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 外部拉取/外泄检测",
+        "hint": "检测用户是否诱导模型读取外部链接、下载提示词或通过外链传递隐藏指令。用于捕捉读取 URL、load prompt from、fetch/download、Markdown 图片外泄、curl/wget/powershell 等外链相关风险。普通链接不一定命中，通常需要与拉取/执行意图共现。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_instruction_override_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 越权与指令覆盖检测",
+        "hint": "检测用户是否试图覆盖系统指令、索要隐藏提示词或绕过既有约束。用于捕捉忽略前文、进入开发者模式、泄露系统提示词、突破安全限制、覆盖人格设定等明显越权请求。领域或人格相关边界建议配合知识库证据裁判。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_multi_turn_escalation_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 多轮渐进诱导检测",
+        "hint": "检测同一会话中风险信号是否在多轮对话内持续累积或升级。用于捕捉短时间内多次试探、逐步诱导、反复索要隐藏规则等渐进式风险。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_prompt_injection_combo_detector": {
+        "type": "bool",
+        "description": "启用输入检测器 - 注入组合信号检测",
+        "hint": "综合当前输入中的多个弱风险信号，判断是否构成明显提示词注入风险。此检查只组合当前输入内的本地信号，例如越权词、系统提示词引用、角色标记、长文本或代码块共现。它不引用其他规则结果，复杂组合请使用逻辑门。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_format_violation_detector": {
+        "type": "bool",
+        "description": "启用输出检测器 - 输出格式违规检测",
+        "hint": "检测模型回复是否违反预期输出格式。适用于要求 JSON、YAML、纯文本、单行回复、固定字段或禁止 Markdown 的场景。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_poor_quality_detector": {
+        "type": "bool",
+        "description": "启用输出检测器 - 异常低质回复检测",
+        "hint": "检测空回复、过短回复、重复内容、乱码或模板化异常回复。用于捕捉明显的生成异常，例如只有标点、重复字符、重复句子、空白回复、模型报错模板等。它不评价内容好坏，只处理明显异常。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_metadata_leakage_detector": {
+        "type": "bool",
+        "description": "启用输出检测器 - 元信息泄漏检测",
+        "hint": "检测回复中是否泄漏工具调用、调试信息、Provider 信息或内部字段。用于捕捉 tool_call、function_call、traceback、debug、provider_id、session_id、raw_completion、internal marker 等不应出现在最终回复中的元信息。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_sensitive_echo_detector": {
+        "type": "bool",
+        "description": "启用输出检测器 - 风险输入复述检测",
+        "hint": "检测模型是否原样复述了用户输入中的高风险片段或敏感内容。会结合输入分析阶段记录的命中片段、净化片段或危险关键词，判断输出是否再次暴露这些内容。适合拦截提示词注入内容、危险指令或敏感文本的回显。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_language_drift_detector": {
+        "type": "bool",
+        "description": "启用输出检测器 - 回复语言漂移检测",
+        "hint": "检测模型回复是否明显偏离预期语言。用于粗略判断回复语言是否偏离配置要求，例如要求中文却大段输出英文。它只做本地节流判断，复杂语境建议配合 LLM 审查。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      },
+      "enable_prompt_leakage_detector": {
+        "type": "bool",
+        "description": "启用输出检测器 - 内部提示泄漏检测",
+        "hint": "检测模型回复中疑似泄漏系统提示词、开发者指令或隐藏规则的内容。用于捕捉明显的内部提示泄漏迹象，例如 system prompt、developer instructions、隐藏规则、BEGIN SYSTEM PROMPT 等。复杂语义判断建议配合知识库证据裁判或 LLM 审查。此开关仅用于控制该功能在兜底策略下的激活状态。",
+        "default": true
+      }
+    }
+  },
   "session_control": {
     "type": "object",
-    "description": "生效会话",
+    "description": "生效会话控制",
     "hint": "用于决定哪些会话会进入 LLM Guardrail 流程。未纳入生效范围的会话可以选择放行或拦截。可在目标会话发送 /guardrail 查看当前 UMO。",
     "items": {
       "group_chat_mode": {
@@ -92,7 +224,90 @@
       }
     }
   },
+  "access_control": {
+    "type": "object",
+    "description": "输入访问控制",
+    "hint": "管理输入阶段的临时封禁。完整管理建议在插件面板中进行。",
+    "items": {
+      "auto_blacklist_enabled": {
+        "type": "bool",
+        "description": "启用自动拉黑",
+        "default": false
+      },
+      "blacklist_duration_minutes": {
+        "type": "int",
+        "description": "封禁时长（分钟）",
+        "hint": "0 表示永久。",
+        "default": 60
+      },
+      "blacklist_max_violations": {
+        "type": "int",
+        "description": "触发封禁的违规次数",
+        "default": 3
+      },
+      "blacklist_message": {
+        "type": "text",
+        "description": "黑名单提示文本",
+        "default": "你已因多次触发风险规则被临时限制使用，请稍后再试。"
+      }
+    }
+  },
+  "session_policy_state": {
+    "type": "object",
+    "description": "路由会话状态",
+    "hint": "保存路由缓存、任务延续和临时锁定等状态。完整查看与清理建议在插件面板中进行。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用路由会话状态",
+        "default": false
+      },
+      "cache_enabled": {
+        "type": "bool",
+        "description": "启用路由缓存",
+        "default": false
+      },
+      "lock_enabled": {
+        "type": "bool",
+        "description": "启用会话锁定",
+        "default": false
+      },
+      "ttl_seconds": {
+        "type": "int",
+        "description": "状态有效期",
+        "default": 3600
+      },
+      "max_entries": {
+        "type": "int",
+        "description": "最大状态数量",
+        "default": 500
+      }
+    }
+  },
+  "debug_settings": {
+    "type": "object",
+    "description": "调试设置",
+    "items": {
+      "enable_stats": {
+        "type": "bool",
+        "description": "启用统计",
+        "default": true
+      },
+      "stats_max_records": {
+        "type": "int",
+        "description": "最近记录上限",
+        "default": 200
+      },
+      "logging": {
+        "type": "bool",
+        "description": "调试日志",
+        "hint": "开启后会记录本轮请求和响应的摘要，方便检查配置是否命中。",
+        "default": false
+      }
+    }
+  },
   "input_rail": {
+    "invisible": true,
     "type": "object",
     "description": "Step 1 (message event listener early): 输入分析与拦截",
     "hint": "在普通消息事件监听器中尽早执行。负责用户原始输入分析、输入阻断和输入净化；净化后的文本会继续交给后续插件与 AstrBot 主流程，命中结果可供请求模型路由和后续提示词加工引用。",
@@ -964,6 +1179,7 @@
     }
   },
   "routing_rail": {
+    "invisible": true,
     "type": "object",
     "description": "Step 2 (message event listener late): 请求模型路由",
     "hint": "在普通消息事件监听器末尾、AstrBot 选择 Provider 前执行。根据 Step 1 得到的结果选择本轮请求模型。",
@@ -1102,6 +1318,7 @@
     }
   },
   "request_rail": {
+    "invisible": true,
     "type": "object",
     "description": "Step 3 (on_llm_request): 最终请求检查",
     "hint": "在 AstrBot 构造 ProviderRequest 后、提示词加工前执行。用于检查 req.prompt 中由核心或其他插件写入的最终请求文本，并为后续 prompt_rail 生成可 depend_on 的规则结果。",
@@ -1497,6 +1714,7 @@
     }
   },
   "prompt_rail": {
+    "invisible": true,
     "type": "object",
     "description": "Step 4 (on_llm_request): 提示词加工",
     "hint": "在最终请求检查之后执行。根据 Step 1/Step 2/Step 3 得到的结果对提示词进行加工。",
@@ -1648,6 +1866,7 @@
     }
   },
   "output_rail": {
+    "invisible": true,
     "type": "object",
     "description": "Step 5 (on_llm_response): 输出分析",
     "hint": "在主模型响应后、消息发送前执行。负责输出分析、输出阻断和输出净化。",
