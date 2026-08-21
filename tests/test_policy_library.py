@@ -19,6 +19,19 @@ from policy_library import (
 
 
 class PolicyLibraryTests(unittest.TestCase):
+    def test_rule_description_is_serialized_without_affecting_runtime_config(self):
+        rule = RuleDefinition(
+            rule_id="risk_words",
+            template_key="plain_keywords",
+            description="拦截敏感词",
+            template_config={"keywords": ["secret"]},
+        )
+
+        restored = RuleDefinition.from_dict(rule.to_dict())
+
+        self.assertEqual(restored.description, "拦截敏感词")
+        self.assertNotIn("description", restored.template_config)
+
     def test_policy_compiles_rule_defaults_and_binding_overrides(self):
         library = PolicyLibrary(
             rules=(

@@ -16,6 +16,7 @@ const status = $("status"),
   newRule = $("new-rule"),
   deleteRule = $("delete-rule"),
   ruleId = $("rule-id"),
+  ruleDescription = $("rule-description"),
   ruleTemplate = $("rule-template"),
   rulePriority = $("rule-priority"),
   ruleActionHit = $("rule-action-hit"),
@@ -49,6 +50,19 @@ const templates = [
     "retry_generation",
   ],
   errorActions = ["default", "discard", "record", "block"];
+const ruleActionDescriptions = {
+  default: "使用系统默认动作（default）",
+  observe: "仅记录命中，不改变请求或输出（observe）",
+  block: "阻断本轮请求或输出（block）",
+  sanitize: "净化命中内容后继续（sanitize）",
+  block_input: "阻断用户输入（block_input）",
+  sanitize_input: "净化用户输入后继续（sanitize_input）",
+  block_output: "阻断模型输出（block_output）",
+  sanitize_output: "净化模型输出后继续（sanitize_output）",
+  retry_generation: "请求模型重新生成输出（retry_generation）",
+  discard: "丢弃本次规则结果（discard）",
+  record: "记录可被依赖的错误结果（record）",
+};
 const systemOptionDescriptions = {
   default_action_on_hit: {
     observe: "仅记录命中结果（observe）",
@@ -87,6 +101,14 @@ function populateOptions(select, values) {
     select.append(option);
   }
 }
+function populateRuleActionOptions(select, values) {
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = ruleActionDescriptions[value] || value;
+    select.append(option);
+  }
+}
 function ensureOption(select, value) {
   if (
     value &&
@@ -99,8 +121,8 @@ function ensureOption(select, value) {
   }
 }
 populateOptions(ruleTemplate, templates);
-populateOptions(ruleActionHit, hitActions);
-populateOptions(ruleActionError, errorActions);
+populateRuleActionOptions(ruleActionHit, hitActions);
+populateRuleActionOptions(ruleActionError, errorActions);
 function switchTab(name) {
   document.querySelectorAll("[data-tab]").forEach((tab) => {
     const active = tab.dataset.tab === name;
@@ -396,13 +418,7 @@ function collectSystemSettings() {
   return settings;
 }
 function ruleSummary(rule) {
-  const config = rule.template_config || {};
-  if (Array.isArray(config.keywords))
-    return `${config.keywords.length} 个关键词`;
-  if (typeof config.pattern === "string")
-    return config.pattern.slice(0, 48) || "未配置正则";
-  if (typeof config.prompt === "string") return "已配置审查提示";
-  return "模板参数待配置";
+  return String(rule.description || "").trim() || "未说明";
 }
 function selectedRule() {
   return (
@@ -417,10 +433,12 @@ function renderRuleEditor() {
   if (!rule) return;
   $("rule-editor-title").textContent = `编辑：${rule.rule_id}`;
   ruleId.value = rule.rule_id;
+  ruleDescription.value = rule.description || "";
   ensureOption(ruleTemplate, rule.template_key);
   ensureOption(ruleActionHit, rule.default_action_on_hit);
   ensureOption(ruleActionError, rule.default_action_on_error);
   ruleTemplate.value = rule.template_key || templates[0];
+  ruleTemplate.disabled = true;
   rulePriority.value = String(
     Number.isInteger(rule.default_priority) ? rule.default_priority : 100,
   );
@@ -490,7 +508,7 @@ function syncSelectedRule() {
   }
   const priority = Number.parseInt(rulePriority.value, 10);
   rule.rule_id = nextId;
-  rule.template_key = ruleTemplate.value;
+  rule.description = ruleDescription.value.trim();
   rule.default_priority = Number.isNaN(priority) ? 100 : priority;
   rule.default_action_on_hit = ruleActionHit.value;
   rule.default_action_on_error = ruleActionError.value;
@@ -509,6 +527,7 @@ function createRule() {
   ruleLibrary.rules.push({
     rule_id: id,
     template_key: "plain_keywords",
+    description: "",
     template_config: { keywords: [] },
     default_priority: 100,
     default_action_on_hit: "default",

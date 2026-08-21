@@ -36,11 +36,13 @@ class RuleDefinition:
     default_priority: int = 100
     default_action_on_hit: str = "default"
     default_action_on_error: str = "default"
+    description: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "rule_id": self.rule_id,
             "template_key": self.template_key,
+            "description": self.description,
             "template_config": copy.deepcopy(self.template_config),
             "default_priority": self.default_priority,
             "default_action_on_hit": self.default_action_on_hit,
@@ -52,6 +54,7 @@ class RuleDefinition:
         return cls(
             rule_id=str(value.get("rule_id") or "").strip(),
             template_key=str(value.get("template_key") or "").strip(),
+            description=str(value.get("description") or "").strip(),
             template_config=_copy_dict(value.get("template_config")),
             default_priority=_as_int(value.get("default_priority"), 100),
             default_action_on_hit=str(value.get("default_action_on_hit") or "default"),

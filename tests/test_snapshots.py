@@ -174,6 +174,25 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.policy_library.active_policy_id, "none")
 
+    def test_existing_rule_template_cannot_be_changed(self):
+        manager = ConfigSnapshotManager({})
+        first = asyncio.run(
+            manager.publish_rule_library(
+                (RuleDefinition("risk", "plain_keywords", {"keywords": ["secret"]}),),
+                expected_revision=0,
+            )
+        )
+        changed = asyncio.run(
+            manager.publish_rule_library(
+                (RuleDefinition("risk", "regex_pattern", {"pattern": "secret"}),),
+                expected_revision=1,
+            )
+        )
+
+        self.assertTrue(first.success)
+        self.assertFalse(changed.success)
+        self.assertIn("template cannot change", changed.diagnostics[0])
+
 
 if __name__ == "__main__":
     unittest.main()

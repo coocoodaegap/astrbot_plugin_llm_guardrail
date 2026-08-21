@@ -152,6 +152,18 @@ class ConfigSnapshotManager:
         """Publish only reusable rules, retaining all current policies."""
 
         current_library = self._current.policy_library
+        existing_templates = {
+            rule.rule_id: rule.template_key for rule in current_library.rules
+        }
+        for rule in rules:
+            previous_template = existing_templates.get(rule.rule_id)
+            if previous_template is not None and previous_template != rule.template_key:
+                return SnapshotPublishResult(
+                    success=False,
+                    diagnostics=(
+                        f"rule {rule.rule_id} template cannot change after creation",
+                    ),
+                )
         library = PolicyLibrary(
             rules=tuple(rules),
             policies=current_library.policies,
