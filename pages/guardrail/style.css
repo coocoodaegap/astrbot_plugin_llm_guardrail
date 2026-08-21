@@ -498,6 +498,11 @@ textarea {
     background: #315a9c
 }
 
+.provider-selector {
+    display: grid;
+    gap: 8px
+}
+
 @media(max-width:760px) {
     .page-shell {
         padding: 20px 14px 32px

@@ -80,8 +80,46 @@ class GuardrailPagesApiMixin:
                     },
                 },
                 "schema": _load_system_settings_schema(),
+                "providers": self._pages_registered_chat_providers(),
             }
         )
+
+    def _pages_registered_chat_providers(self) -> list[dict[str, str]]:
+        """List registered chat Providers using AstrBot's public Context API."""
+
+        getter = getattr(self.context, "get_all_providers", None)
+        if not callable(getter):
+            return []
+        try:
+            providers = getter()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return []
+        if not isinstance(providers, (list, tuple)):
+            return []
+
+        options: list[dict[str, str]] = []
+        seen_ids: set[str] = set()
+        for provider in providers:
+            metadata = None
+            metadata_getter = getattr(provider, "meta", None)
+            if callable(metadata_getter):
+                try:
+                    metadata = metadata_getter()
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    continue
+            provider_id = str(
+                getattr(metadata, "id", "") or getattr(provider, "id", "") or ""
+            ).strip()
+            if not provider_id or provider_id in seen_ids:
+                continue
+            seen_ids.add(provider_id)
+            display_name = str(
+                getattr(metadata, "name", "")
+                or getattr(metadata, "display_name", "")
+                or provider_id
+            ).strip()
+            options.append({"id": provider_id, "name": display_name})
+        return sorted(options, key=lambda option: option["id"])
 
     async def _pages_save_system_settings(self):
         payload = await self._pages_json_payload()

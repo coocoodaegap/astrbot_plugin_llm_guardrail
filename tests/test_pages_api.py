@@ -16,9 +16,27 @@ from snapshots import ConfigSnapshotManager
 class _Context:
     def __init__(self):
         self.routes = []
+        self.providers = []
 
     def register_web_api(self, route, handler, methods, description):
         self.routes.append((route, handler, methods, description))
+
+    def get_all_providers(self):
+        return self.providers
+
+
+class _ProviderMeta:
+    def __init__(self, provider_id, name):
+        self.id = provider_id
+        self.name = name
+
+
+class _Provider:
+    def __init__(self, provider_id, name):
+        self._metadata = _ProviderMeta(provider_id, name)
+
+    def meta(self):
+        return self._metadata
 
 
 class _Plugin(GuardrailPagesApiMixin):
@@ -103,6 +121,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
     def test_system_settings_returns_active_schema_and_normalized_values(self):
         plugin = _Plugin()
+        plugin.context.providers = [_Provider("openai/test", "Test OpenAI")]
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):
             result = asyncio.run(plugin._pages_get_system_settings())
 
@@ -112,6 +131,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(set(result["schema"]), set(result["settings"]))
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
+        self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])
 
     def test_rule_and_policy_libraries_are_returned_without_each_other(self):
         plugin = _Plugin()

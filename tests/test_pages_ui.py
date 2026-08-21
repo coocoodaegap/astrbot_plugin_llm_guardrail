@@ -31,6 +31,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function collectSystemSettings", javascript)
         self.assertIn("function createUmoTagEditor", javascript)
         self.assertIn("umo-tag-editor", javascript)
+        self.assertIn("function createProviderSelector", javascript)
+        self.assertIn("手动填写", javascript)
 
 
 if __name__ == "__main__":

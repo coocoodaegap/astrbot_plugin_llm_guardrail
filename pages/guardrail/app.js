@@ -46,7 +46,8 @@ const templates = [
 let currentRevision = null,
   ruleLibrary = { rules: [] },
   selectedRuleId = null,
-  systemSettingsSchema = {};
+  systemSettingsSchema = {},
+  registeredProviders = [];
 function populateOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -180,6 +181,49 @@ function createUmoTagEditor(value) {
   renderTags();
   return editor;
 }
+function createProviderSelector(value) {
+  const editor = document.createElement("div");
+  editor.className = "provider-selector";
+  const select = document.createElement("select");
+  const automaticOption = document.createElement("option");
+  automaticOption.value = "";
+  automaticOption.textContent = "跟随当前会话 Provider（默认）";
+  select.append(automaticOption);
+  for (const provider of registeredProviders) {
+    const option = document.createElement("option");
+    option.value = provider.id;
+    option.textContent =
+      provider.name === provider.id
+        ? provider.id
+        : `${provider.name}（${provider.id}）`;
+    select.append(option);
+  }
+  const manualOption = document.createElement("option");
+  manualOption.value = "__llm_guardrail_manual_provider__";
+  manualOption.textContent = "手动填写…";
+  select.append(manualOption);
+  const manualInput = document.createElement("input");
+  manualInput.type = "text";
+  manualInput.placeholder = "输入 Provider ID";
+  manualInput.setAttribute("aria-label", "手动填写 Provider ID");
+  const selectedProvider = String(value ?? "").trim();
+  const isRegistered = registeredProviders.some(
+    (provider) => provider.id === selectedProvider,
+  );
+  select.value = selectedProvider && !isRegistered
+    ? manualOption.value
+    : selectedProvider;
+  manualInput.value = selectedProvider && !isRegistered ? selectedProvider : "";
+  const syncManualInput = () => {
+    manualInput.hidden = select.value !== manualOption.value;
+  };
+  select.addEventListener("change", syncManualInput);
+  editor.providerValue = () =>
+    select.value === manualOption.value ? manualInput.value.trim() : select.value;
+  editor.append(select, manualInput);
+  syncManualInput();
+  return editor;
+}
 function createSystemSettingControl(groupKey, fieldKey, field, value) {
   if (field.type === "bool") {
     const input = document.createElement("input");
@@ -190,6 +234,9 @@ function createSystemSettingControl(groupKey, fieldKey, field, value) {
   }
   if (field.type === "list" && groupKey === "session_control") {
     return createUmoTagEditor(value);
+  }
+  if (field._special === "select_provider") {
+    return createProviderSelector(value);
   }
   if (field.type === "list") {
     const textarea = document.createElement("textarea");
@@ -218,6 +265,14 @@ function createSystemSettingControl(groupKey, fieldKey, field, value) {
 function renderSystemSettings(payload) {
   systemSettings.replaceChildren();
   systemSettingsSchema = payload.schema || {};
+  registeredProviders = Array.isArray(payload.providers)
+    ? payload.providers.filter(
+        (provider) =>
+          provider &&
+          typeof provider.id === "string" &&
+          typeof provider.name === "string",
+      )
+    : [];
   for (const [groupKey, groupSchema] of Object.entries(payload.schema || {})) {
     const group = document.createElement("section");
     group.className = "card setting-group";
@@ -279,6 +334,8 @@ function collectSystemSettings() {
       if (!control) throw new Error(`缺少系统设置字段：${groupKey}.${fieldKey}`);
       if (field.type === "bool") {
         groupSettings[fieldKey] = control.checked;
+      } else if (typeof control.providerValue === "function") {
+        groupSettings[fieldKey] = control.providerValue();
       } else if (field.type === "list") {
         groupSettings[fieldKey] = Array.isArray(control.umoValues)
           ? [...control.umoValues]
