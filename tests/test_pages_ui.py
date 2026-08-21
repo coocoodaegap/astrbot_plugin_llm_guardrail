@@ -29,6 +29,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('apiGet("get_system_settings")', javascript)
         self.assertIn('"save_system_settings"', javascript)
         self.assertIn("function collectSystemSettings", javascript)
+        self.assertIn("function createUmoTagEditor", javascript)
+        self.assertIn("umo-tag-editor", javascript)
 
 
 if __name__ == "__main__":

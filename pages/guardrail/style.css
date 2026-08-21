@@ -440,6 +440,64 @@ textarea {
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace
 }
 
+.umo-tag-editor {
+    display: grid;
+    gap: 8px
+}
+
+.umo-tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px
+}
+
+.umo-tag-controls {
+    display: flex;
+    gap: 8px
+}
+
+.umo-tag-controls input {
+    min-width: 0
+}
+
+.umo-add-button {
+    flex: 0 0 auto
+}
+
+.umo-tag {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    max-width: 100%;
+    padding: 4px 6px 4px 8px;
+    color: #315a9c;
+    background: #e7efff;
+    border-radius: 999px;
+    font: .78rem ui-monospace, SFMono-Regular, Consolas, monospace
+}
+
+.umo-tag>span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.umo-remove-button {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    color: #315a9c;
+    background: transparent;
+    border-radius: 50%;
+    font-size: 1rem;
+    line-height: 1
+}
+
+.umo-remove-button:hover {
+    color: #fff;
+    background: #315a9c
+}
+
 @media(max-width:760px) {
     .page-shell {
         padding: 20px 14px 32px
@@ -489,5 +547,9 @@ textarea {
         padding-right: 0;
         padding-left: 0;
         border-left: 0
+    }
+
+    .umo-tag-controls {
+        align-items: stretch
     }
 }

@@ -123,13 +123,73 @@ function renderDiagnostics(items) {
     diagnostics.append(item);
   }
 }
-function createSystemSettingControl(field, value) {
+function createUmoTagEditor(value) {
+  const editor = document.createElement("div");
+  editor.className = "umo-tag-editor";
+  editor.umoValues = Array.isArray(value) ? [...new Set(value)] : [];
+  const tags = document.createElement("div");
+  tags.className = "umo-tag-list";
+  const controls = document.createElement("div");
+  controls.className = "umo-tag-controls";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "输入 UMO 后按回车，可粘贴多行";
+  input.setAttribute("aria-label", "添加 UMO");
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "button-secondary umo-add-button";
+  addButton.textContent = "添加";
+  const renderTags = () => {
+    tags.replaceChildren();
+    for (const umo of editor.umoValues) {
+      const tag = document.createElement("span");
+      tag.className = "umo-tag";
+      const label = document.createElement("span");
+      label.textContent = umo;
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "umo-remove-button";
+      removeButton.setAttribute("aria-label", `移除 ${umo}`);
+      removeButton.textContent = "×";
+      removeButton.addEventListener("click", () => {
+        editor.umoValues = editor.umoValues.filter((item) => item !== umo);
+        renderTags();
+      });
+      tag.append(label, removeButton);
+      tags.append(tag);
+    }
+  };
+  const addUmos = () => {
+    const values = input.value
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    editor.umoValues = [...new Set([...editor.umoValues, ...values])];
+    input.value = "";
+    renderTags();
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addUmos();
+    }
+  });
+  addButton.addEventListener("click", addUmos);
+  controls.append(input, addButton);
+  editor.append(tags, controls);
+  renderTags();
+  return editor;
+}
+function createSystemSettingControl(groupKey, fieldKey, field, value) {
   if (field.type === "bool") {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.className = "setting-checkbox";
     input.checked = Boolean(value);
     return input;
+  }
+  if (field.type === "list" && groupKey === "session_control") {
+    return createUmoTagEditor(value);
   }
   if (field.type === "list") {
     const textarea = document.createElement("textarea");
@@ -191,6 +251,8 @@ function renderSystemSettings(payload) {
       hint.className = "setting-hint";
       hint.textContent = field.hint || "";
       const control = createSystemSettingControl(
+        groupKey,
+        fieldKey,
         field,
         payload.settings?.[groupKey]?.[fieldKey],
       );
@@ -218,10 +280,12 @@ function collectSystemSettings() {
       if (field.type === "bool") {
         groupSettings[fieldKey] = control.checked;
       } else if (field.type === "list") {
-        groupSettings[fieldKey] = control.value
-          .split("\n")
-          .map((item) => item.trim())
-          .filter(Boolean);
+        groupSettings[fieldKey] = Array.isArray(control.umoValues)
+          ? [...control.umoValues]
+          : control.value
+              .split("\n")
+              .map((item) => item.trim())
+              .filter(Boolean);
       } else if (field.type === "int") {
         const value = Number(control.value);
         if (!Number.isInteger(value)) {
