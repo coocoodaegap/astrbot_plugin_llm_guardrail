@@ -21,6 +21,12 @@ const status = $("status"),
   ruleActionHit = $("rule-action-hit"),
   ruleActionError = $("rule-action-error"),
   ruleTemplateConfig = $("rule-template-config");
+const systemSettingHintOverrides = {
+  default_action_on_hit: "规则命中风险时采用的默认处理方式。",
+  default_action_on_error: "规则执行出错时采用的默认处理方式。",
+  group_chat_mode: "决定哪些群聊会进入 Guardrail 流程。",
+  private_chat_mode: "决定哪些私聊会进入 Guardrail 流程。",
+};
 const templates = [
     "plain_keywords",
     "regex_pattern",
@@ -43,6 +49,31 @@ const templates = [
     "retry_generation",
   ],
   errorActions = ["default", "discard", "record", "block"];
+const systemOptionDescriptions = {
+  default_action_on_hit: {
+    observe: "仅记录命中结果（observe）",
+    block: "阻断本轮请求或输出（block）",
+  },
+  default_action_on_error: {
+    discard: "丢弃本次规则结果，仅记录 warning（discard）",
+    record: "记录可被依赖的错误结果（record）",
+    block: "错误时阻断本轮请求或输出（block）",
+  },
+  group_chat_mode: {
+    all_run: "所有群聊进入 Guardrail（all_run）",
+    all_pass: "所有群聊跳过 Guardrail 并放行（all_pass）",
+    all_block: "所有群聊跳过 Guardrail 并拦截（all_block）",
+    enabled_or_pass: "仅指定群聊进入，其他放行（enabled_or_pass）",
+    enabled_or_block: "仅指定群聊进入，其他拦截（enabled_or_block）",
+  },
+  private_chat_mode: {
+    all_run: "所有群聊进入 Guardrail（all_run）",
+    all_pass: "所有群聊跳过 Guardrail 并放行（all_pass）",
+    all_block: "所有群聊跳过 Guardrail 并拦截（all_block）",
+    enabled_or_pass: "仅指定群聊进入，其他放行（enabled_or_pass）",
+    enabled_or_block: "仅指定群聊进入，其他拦截（enabled_or_block）",
+  },
+};
 let currentRevision = null,
   ruleLibrary = { rules: [] },
   selectedRuleId = null,
@@ -224,6 +255,13 @@ function createProviderSelector(value) {
   syncManualInput();
   return editor;
 }
+function describeSystemSettingOption(fieldKey, value) {
+  const description = systemOptionDescriptions[fieldKey]?.[value];
+  return description || value;
+}
+function describeSystemSettingHint(fieldKey, fallback) {
+  return systemSettingHintOverrides[fieldKey] || fallback;
+}
 function createSystemSettingControl(groupKey, fieldKey, field, value) {
   if (field.type === "bool") {
     const input = document.createElement("input");
@@ -250,7 +288,7 @@ function createSystemSettingControl(groupKey, fieldKey, field, value) {
     for (const optionValue of field.options) {
       const option = document.createElement("option");
       option.value = optionValue;
-      option.textContent = optionValue;
+      option.textContent = describeSystemSettingOption(fieldKey, optionValue);
       select.append(option);
     }
     ensureOption(select, String(value ?? ""));
@@ -304,7 +342,7 @@ function renderSystemSettings(payload) {
       }
       const hint = document.createElement("p");
       hint.className = "setting-hint";
-      hint.textContent = field.hint || "";
+      hint.textContent = describeSystemSettingHint(fieldKey, field.hint || "");
       const control = createSystemSettingControl(
         groupKey,
         fieldKey,

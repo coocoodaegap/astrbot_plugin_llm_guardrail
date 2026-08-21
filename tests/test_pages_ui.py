@@ -33,6 +33,10 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("umo-tag-editor", javascript)
         self.assertIn("function createProviderSelector", javascript)
         self.assertIn("手动填写", javascript)
+        self.assertIn("function describeSystemSettingOption", javascript)
+        self.assertIn("function describeSystemSettingHint", javascript)
+        self.assertIn("规则命中风险时采用的默认处理方式", javascript)
+        self.assertIn("所有群聊进入 Guardrail", javascript)
 
 
 if __name__ == "__main__":
