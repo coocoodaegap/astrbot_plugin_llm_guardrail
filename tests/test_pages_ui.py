@@ -6,19 +6,24 @@ PAGES_DIR = Path(__file__).resolve().parents[1] / "pages" / "guardrail"
 
 
 class GuardrailPagesUiTests(unittest.TestCase):
-    def test_rule_and_policy_editors_use_separate_revisioned_apis(self):
+    def test_pages_use_documented_tabs_and_visual_rule_editor(self):
         html = (PAGES_DIR / "index.html").read_text(encoding="utf-8")
         javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('id="rule-library"', html)
+        for label in (
+            "总览", "规则库", "策略编排", "访问控制", "知识库经验",
+            "会话策略监控", "Token 监控", "系统配置",
+        ):
+            self.assertIn(label, html)
+        self.assertIn('id="rule-list"', html)
+        self.assertIn('id="rule-editor"', html)
+        self.assertIn('id="new-rule"', html)
         self.assertIn('id="save-rule-library"', html)
-        self.assertIn('id="policy-library"', html)
-        self.assertIn('id="save-policy-library"', html)
         self.assertIn('apiGet("get_rule_library")', javascript)
-        self.assertIn('apiGet("get_policy_library")', javascript)
         self.assertIn('"save_rule_library"', javascript)
-        self.assertIn('"save_policy_library"', javascript)
-        self.assertIn("expected_revision: currentRevision", javascript)
+        self.assertIn("expected_revision:currentRevision", javascript)
+        self.assertIn("function switchTab", javascript)
+        self.assertIn("function renderRuleList", javascript)
 
 
 if __name__ == "__main__":
