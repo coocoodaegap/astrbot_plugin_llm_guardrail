@@ -12,7 +12,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
 
         for label in (
             "总览", "规则库", "策略编排", "访问控制", "知识库经验",
-            "会话策略监控", "Token 监控", "系统配置",
+            "会话策略监控", "Token 监控", "系统设置",
         ):
             self.assertIn(label, html)
         self.assertIn('id="rule-list"', html)
@@ -21,9 +21,14 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('id="save-rule-library"', html)
         self.assertIn('apiGet("get_rule_library")', javascript)
         self.assertIn('"save_rule_library"', javascript)
-        self.assertIn("expected_revision:currentRevision", javascript)
+        self.assertIn("expected_revision: currentRevision", javascript)
         self.assertIn("function switchTab", javascript)
         self.assertIn("function renderRuleList", javascript)
+        self.assertIn('id="system-settings"', html)
+        self.assertIn('id="save-system-settings"', html)
+        self.assertIn('apiGet("get_system_settings")', javascript)
+        self.assertIn('"save_system_settings"', javascript)
+        self.assertIn("function collectSystemSettings", javascript)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,8 @@ class _Plugin(GuardrailPagesApiMixin):
 
     def __init__(self):
         self.context = _Context()
-        self.snapshot_manager = ConfigSnapshotManager({"enabled": True})
+        self.config = _Config({})
+        self.snapshot_manager = ConfigSnapshotManager(self.config)
 
 
 class _Request:
@@ -37,8 +38,17 @@ class _Request:
         return self.payload
 
 
+class _Config(dict):
+    def __init__(self, payload):
+        super().__init__(payload)
+        self.save_count = 0
+
+    def save_config(self):
+        self.save_count += 1
+
+
 class GuardrailPagesApiTests(unittest.TestCase):
-    def test_registers_separate_rule_and_policy_routes(self):
+    def test_registers_separate_rule_policy_and_system_setting_routes(self):
         plugin = _Plugin()
         plugin._register_pages_web_api()
         routes = {item[0]: item for item in plugin.context.routes}
@@ -46,6 +56,8 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(set(routes), {
             "/astrbot_plugin_llm_guardrail/get_overview",
             "/astrbot_plugin_llm_guardrail/get_diagnostics",
+            "/astrbot_plugin_llm_guardrail/get_system_settings",
+            "/astrbot_plugin_llm_guardrail/save_system_settings",
             "/astrbot_plugin_llm_guardrail/get_rule_library",
             "/astrbot_plugin_llm_guardrail/save_rule_library",
             "/astrbot_plugin_llm_guardrail/get_policy_library",
@@ -53,6 +65,53 @@ class GuardrailPagesApiTests(unittest.TestCase):
         })
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_rule_library"][2], ["GET"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/save_policy_library"][2], ["POST"])
+
+    def test_system_settings_save_persists_config_then_publishes_snapshot(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
+            settings["fallback_policy_settings"]["max_text_chars"] = 321
+            settings["session_control"]["group_chat_mode"] = "all_pass"
+            with patch(
+                "pages_api.request",
+                _Request({"expected_revision": 0, "settings": settings}),
+            ):
+                saved = asyncio.run(plugin._pages_save_system_settings())
+
+        self.assertTrue(saved["success"])
+        self.assertEqual(saved["revision"], 1)
+        self.assertEqual(plugin.config.save_count, 1)
+        self.assertEqual(plugin.config["fallback_policy_settings"]["max_text_chars"], 321)
+        self.assertEqual(
+            plugin.snapshot_manager.current.runtime_config.session_control[
+                "group_chat_mode"
+            ],
+            "all_pass",
+        )
+
+    def test_system_settings_save_rejects_incomplete_payload(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request({"expected_revision": 0, "settings": {}}),
+            ):
+                result = asyncio.run(plugin._pages_save_system_settings())
+
+        self.assertEqual(result[1], 400)
+        self.assertEqual(plugin.config.save_count, 0)
+
+    def test_system_settings_returns_active_schema_and_normalized_values(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            result = asyncio.run(plugin._pages_get_system_settings())
+
+        self.assertEqual(
+            set(result["settings"]), {"fallback_policy_settings", "session_control"}
+        )
+        self.assertEqual(set(result["schema"]), set(result["settings"]))
+        self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
+        self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
 
     def test_rule_and_policy_libraries_are_returned_without_each_other(self):
         plugin = _Plugin()

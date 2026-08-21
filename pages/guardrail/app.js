@@ -4,6 +4,9 @@ const status = $("status"),
   summary = $("snapshot-summary"),
   rails = $("rails"),
   diagnostics = $("diagnostics"),
+  systemSettings = $("system-settings"),
+  systemSettingsStatus = $("system-settings-status"),
+  saveSystemSettings = $("save-system-settings"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
@@ -42,7 +45,8 @@ const templates = [
   errorActions = ["default", "discard", "record", "block"];
 let currentRevision = null,
   ruleLibrary = { rules: [] },
-  selectedRuleId = null;
+  selectedRuleId = null,
+  systemSettingsSchema = {};
 function populateOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -118,6 +122,119 @@ function renderDiagnostics(items) {
     item.textContent = message;
     diagnostics.append(item);
   }
+}
+function createSystemSettingControl(field, value) {
+  if (field.type === "bool") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "setting-checkbox";
+    input.checked = Boolean(value);
+    return input;
+  }
+  if (field.type === "list") {
+    const textarea = document.createElement("textarea");
+    textarea.className = "list-value";
+    textarea.value = Array.isArray(value) ? value.join("\n") : "";
+    textarea.placeholder = "（空列表）";
+    return textarea;
+  }
+  if (Array.isArray(field.options)) {
+    const select = document.createElement("select");
+    for (const optionValue of field.options) {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      select.append(option);
+    }
+    ensureOption(select, String(value ?? ""));
+    select.value = String(value ?? "");
+    return select;
+  }
+  const input = document.createElement("input");
+  input.type = field.type === "int" ? "number" : "text";
+  input.value = String(value ?? "");
+  return input;
+}
+function renderSystemSettings(payload) {
+  systemSettings.replaceChildren();
+  systemSettingsSchema = payload.schema || {};
+  for (const [groupKey, groupSchema] of Object.entries(payload.schema || {})) {
+    const group = document.createElement("section");
+    group.className = "card setting-group";
+    const header = document.createElement("header");
+    const title = document.createElement("h3");
+    const description = document.createElement("p");
+    title.textContent = groupSchema.description || groupKey;
+    description.textContent = groupSchema.hint || "";
+    header.append(title, description);
+    const grid = document.createElement("div");
+    grid.className = "setting-grid";
+    for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
+      const row = document.createElement("div");
+      row.className = "setting-row";
+      if (field.invisible) row.classList.add("is-hidden-in-schema");
+      const meta = document.createElement("div");
+      meta.className = "setting-meta";
+      const fieldTitle = document.createElement("strong");
+      fieldTitle.textContent = field.description || fieldKey;
+      const key = document.createElement("code");
+      key.className = "setting-key";
+      key.textContent = fieldKey;
+      meta.append(fieldTitle, key);
+      if (field.invisible) {
+        const badge = document.createElement("span");
+        badge.className = "schema-badge";
+        badge.textContent = "配置表隐藏项";
+        meta.append(badge);
+      }
+      const hint = document.createElement("p");
+      hint.className = "setting-hint";
+      hint.textContent = field.hint || "";
+      const control = createSystemSettingControl(
+        field,
+        payload.settings?.[groupKey]?.[fieldKey],
+      );
+      control.dataset.systemSettingGroup = groupKey;
+      control.dataset.systemSettingKey = fieldKey;
+      row.append(
+        meta,
+        hint,
+        control,
+      );
+      grid.append(row);
+    }
+    group.append(header, grid);
+    systemSettings.append(group);
+  }
+}
+function collectSystemSettings() {
+  const settings = {};
+  for (const [groupKey, groupSchema] of Object.entries(systemSettingsSchema)) {
+    const groupSettings = {};
+    for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
+      const selector = `[data-system-setting-group="${groupKey}"][data-system-setting-key="${fieldKey}"]`;
+      const control = systemSettings.querySelector(selector);
+      if (!control) throw new Error(`缺少系统设置字段：${groupKey}.${fieldKey}`);
+      if (field.type === "bool") {
+        groupSettings[fieldKey] = control.checked;
+      } else if (field.type === "list") {
+        groupSettings[fieldKey] = control.value
+          .split("\n")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      } else if (field.type === "int") {
+        const value = Number(control.value);
+        if (!Number.isInteger(value)) {
+          throw new Error(`${field.description || fieldKey} 必须是整数。`);
+        }
+        groupSettings[fieldKey] = value;
+      } else {
+        groupSettings[fieldKey] = control.value;
+      }
+    }
+    settings[groupKey] = groupSettings;
+  }
+  return settings;
 }
 function ruleSummary(rule) {
   const config = rule.template_config || {};
@@ -252,14 +369,18 @@ function deleteSelectedRule() {
   renderRuleList();
 }
 async function refresh() {
-  const [overviewResult, diagnosticsResult, ruleResult] = await Promise.all([
+  const [overviewResult, diagnosticsResult, ruleResult, systemSettingsResult] =
+    await Promise.all([
     bridge.apiGet("get_overview"),
     bridge.apiGet("get_diagnostics"),
     bridge.apiGet("get_rule_library"),
+    bridge.apiGet("get_system_settings"),
   ]);
   currentRevision = overviewResult.overview.revision;
   renderOverview(overviewResult.overview);
   renderDiagnostics(diagnosticsResult.diagnostics || []);
+  renderSystemSettings(systemSettingsResult);
+  systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
   ruleLibrary = {
     rules: Array.isArray(ruleResult.rule_library?.rules)
       ? ruleResult.rule_library.rules
@@ -301,6 +422,36 @@ saveRuleLibrary.addEventListener("click", async () => {
     ruleStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
     saveRuleLibrary.disabled = false;
+  }
+});
+saveSystemSettings.addEventListener("click", async () => {
+  if (!Number.isInteger(currentRevision)) {
+    systemSettingsStatus.textContent = "尚未加载当前配置，无法保存。";
+    return;
+  }
+  let settings;
+  try {
+    settings = collectSystemSettings();
+  } catch (error) {
+    systemSettingsStatus.textContent = `无法保存：${error instanceof Error ? error.message : String(error)}`;
+    return;
+  }
+  saveSystemSettings.disabled = true;
+  try {
+    const result = await bridge.apiPost("save_system_settings", {
+      expected_revision: currentRevision,
+      settings,
+    });
+    if (!result.success) {
+      systemSettingsStatus.textContent = result.detail || result.error || "保存失败。";
+      return;
+    }
+    systemSettingsStatus.textContent = `系统设置已发布为 revision ${result.revision}。`;
+    await refresh();
+  } catch (error) {
+    systemSettingsStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    saveSystemSettings.disabled = false;
   }
 });
 if (!bridge) {

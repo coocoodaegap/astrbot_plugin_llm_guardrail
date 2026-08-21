@@ -9,7 +9,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 try:
     from .config import NormalizedConfig, normalize_config
@@ -174,6 +174,70 @@ class ConfigSnapshotManager:
             active_policy_id=active_policy_id,
         )
         return await self.publish_policy_library(library, expected_revision)
+
+    async def publish_system_settings(
+        self,
+        settings: Mapping[str, Any],
+        expected_revision: int | None,
+        persist_settings: Callable[[dict[str, Any]], None],
+    ) -> SnapshotPublishResult:
+        """Persist AstrBot-owned settings before publishing their runtime snapshot.
+
+        Pages-owned policy libraries intentionally remain in the plugin JSON snapshot.
+        System settings instead use AstrBotConfig as their durable source of truth.
+        """
+
+        async with self._publish_lock:
+            current = self._current
+            if expected_revision is not None and expected_revision != current.revision:
+                return SnapshotPublishResult(
+                    success=False,
+                    conflict=True,
+                    diagnostics=(
+                        f"configuration revision conflict: expected {expected_revision}, "
+                        f"current {current.revision}",
+                    ),
+                )
+
+            candidate_source = copy.deepcopy(current.source_config)
+            for key in ("fallback_policy_settings", "session_control"):
+                value = settings.get(key)
+                if not isinstance(value, Mapping):
+                    return SnapshotPublishResult(
+                        success=False,
+                        diagnostics=(f"system setting {key} must be an object",),
+                    )
+                candidate_source[key] = copy.deepcopy(dict(value))
+
+            candidate = self._build_snapshot(
+                candidate_source,
+                revision=current.revision + 1,
+            )
+            if not candidate.library_validation.valid:
+                return SnapshotPublishResult(
+                    success=False,
+                    diagnostics=candidate.library_validation.fatal_errors,
+                )
+            try:
+                await asyncio.to_thread(
+                    persist_settings,
+                    {
+                        "fallback_policy_settings": copy.deepcopy(
+                            candidate.source_config["fallback_policy_settings"]
+                        ),
+                        "session_control": copy.deepcopy(
+                            candidate.source_config["session_control"]
+                        ),
+                    },
+                )
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                return SnapshotPublishResult(
+                    success=False,
+                    diagnostics=(f"failed to save AstrBot system settings: {exc}",),
+                )
+
+            self._current = candidate
+            return SnapshotPublishResult(success=True, snapshot=candidate)
 
     def overview(self) -> dict[str, Any]:
         """Return a safe, small Pages overview without raw user configuration."""

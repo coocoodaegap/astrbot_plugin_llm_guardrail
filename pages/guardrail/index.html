@@ -29,7 +29,7 @@
         aria-selected="false" aria-controls="panel-session" data-tab="session">会话策略监控</button><button class="tab"
         id="tab-token" type="button" role="tab" aria-selected="false" aria-controls="panel-token" data-tab="token">Token
         监控</button><button class="tab" id="tab-system" type="button" role="tab" aria-selected="false"
-        aria-controls="panel-system" data-tab="system">系统配置</button>
+        aria-controls="panel-system" data-tab="system">系统设置</button>
     </nav>
     <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
       <div class="overview-grid">
@@ -123,11 +123,16 @@
     </section>
     <section class="tab-panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" data-panel="system"
       hidden>
-      <div class="placeholder">
-        <p class="eyebrow">ASTRBOT</p>
-        <h2>系统配置</h2>
-        <p>当前系统配置由 AstrBot 插件配置面板管理；Pages 不会保存或覆盖该配置。</p>
+      <div class="card-heading system-heading">
+        <div>
+          <p class="eyebrow">ASTRBOT CONFIGURATION</p>
+          <h2>系统设置</h2>
+          <p>保存会直接更新 AstrBot 插件配置；新请求立即使用新快照，进行中的请求保持旧快照。</p>
+        </div>
+        <button id="save-system-settings" type="button">保存系统设置</button>
       </div>
+      <p id="system-settings-status" class="muted" aria-live="polite"></p>
+      <div id="system-settings" class="system-settings" aria-live="polite"></div>
     </section>
   </main>
   <script type="module" src="./app.js"></script>

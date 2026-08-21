@@ -50,6 +50,31 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
 
+    def test_system_setting_publish_updates_only_new_requests(self):
+        manager = ConfigSnapshotManager(
+            {"fallback_policy_settings": {"max_text_chars": 1}}
+        )
+        event = _Event()
+        old_snapshot = manager.bind_event(_Adapter(), event)
+        saved_settings = []
+
+        result = asyncio.run(
+            manager.publish_system_settings(
+                {
+                    "fallback_policy_settings": {"max_text_chars": 2},
+                    "session_control": {},
+                },
+                expected_revision=0,
+                persist_settings=lambda settings: saved_settings.append(settings),
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(saved_settings[0]["fallback_policy_settings"]["max_text_chars"], 2)
+        self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 2)
+        self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
+        self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
+
     def test_conflicting_revision_does_not_publish(self):
         manager = ConfigSnapshotManager({})
 
