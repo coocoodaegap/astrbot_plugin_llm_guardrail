@@ -150,9 +150,11 @@ class PipelineTests(unittest.TestCase):
     def test_input_block_stops_event(self):
         cfg = normalize_config(
             {
-                "global_default_settings": {"reply_placeholder_on_block": True},
-                "input_rail": {
+                "fallback_policy_settings": {
+                    "reply_placeholder_on_block": True,
                     "block_message": "blocked",
+                },
+                "input_rail": {
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
@@ -307,7 +309,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "blocked final request"})
+        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
         self.assertNotIn("should_not_wrap", ctx.results)
         self.assertNotIn("<untrusted_user_input>", request.prompt)
 
@@ -371,7 +373,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "safe fallback")
+        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
 
     def test_output_sanitize_replaces_response_span(self):
         cfg = normalize_config(
@@ -420,7 +422,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "rule failed closed"})
+        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
         self.assertIn("RuntimeError: simulated", ctx.results["boom"].metadata["error"])
 
@@ -477,7 +479,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
-        self.assertEqual(event.result, {"plain": "review blocked"})
+        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
         self.assertTrue(ctx.results["review"].matched)
         self.assertEqual(ctx.results["review"].signal.payload["reason"], "prompt leak")
         self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "safe-provider")
@@ -512,7 +514,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_request(event, request))
 
         self.assertFalse(ctx.results["review"].matched)
-        self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "safe-provider")
+        self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "default-provider")
         self.assertIn("plugin-added final prompt", fake_context.llm_calls[0]["prompt"])
 
     def test_request_llm_review_falls_back_to_current_provider(self):
@@ -579,7 +581,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
-        self.assertEqual(event.result, {"plain": "rag blocked"})
+        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
         self.assertTrue(ctx.results["rag"].matched)
         self.assertEqual(ctx.results["rag"].signal.payload["evidence_count"], 1)
         self.assertIn("Policy says hello", ctx.results["rag"].signal.payload["matched_text"])
@@ -683,7 +685,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "rag failed closed")
+        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
         self.assertEqual(ctx.results["rag"].metadata["error_action"], "block")
         self.assertIn("knowledge base manager is unavailable", " ".join(ctx.warnings))
 
@@ -710,7 +712,7 @@ class PipelineTests(unittest.TestCase):
             ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "output failed closed")
+        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
 
     def test_output_llm_review_parse_error_uses_error_action_block(self):
@@ -738,7 +740,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "review failed closed")
+        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
         self.assertEqual(ctx.results["review"].metadata["error_action"], "block")
         self.assertIn("ValueError", ctx.results["review"].metadata["error"])
 

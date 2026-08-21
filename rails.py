@@ -241,8 +241,6 @@ class GuardrailPipeline:
         return context
 
     def _admit_session(self, event: Any, context: RailContext) -> bool:
-        if not self.config.enabled:
-            return False
         decision = resolve_session_scope(
             self.config.session_control,
             context.umo,
@@ -263,11 +261,11 @@ class GuardrailPipeline:
         message = DEFAULT_INPUT_BLOCK_MESSAGE
         if context.response is not None:
             context.output_blocked = True
-            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+            if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_response_text(context.response, message)
             else:
                 adapter_result = self.adapter.stop_event(context.event)
-        elif self.config.global_default_settings.get("reply_placeholder_on_block", True):
+        elif self.config.fallback_policy_settings["reply_placeholder_on_block"]:
             adapter_result = self.adapter.set_block_result(context.event, message)
         else:
             adapter_result = self.adapter.stop_event(context.event)
@@ -379,7 +377,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_INPUT_BLOCK_MESSAGE
-            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+            if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_block_result(context.event, message)
             else:
                 adapter_result = self.adapter.stop_event(context.event)
@@ -576,7 +574,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_OUTPUT_BLOCK_MESSAGE
-            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+            if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_response_text(context.response, message)
             else:
                 adapter_result = self.adapter.stop_event(context.event)
@@ -643,7 +641,7 @@ class GuardrailPipeline:
     def _log_llm_review_result(
         self, rule: NormalizedRule, result: RuleResult
     ) -> None:
-        if not self.config.global_default_settings.get("debug", False):
+        if not self.config.debug_settings["logging"]:
             return
         payload = result.metadata.get("payload")
         payload_keys = ",".join(sorted(payload)) if isinstance(payload, dict) else "-"
@@ -665,7 +663,7 @@ class GuardrailPipeline:
     def _log_rag_judge_result(
         self, rule: NormalizedRule, result: RuleResult
     ) -> None:
-        if not self.config.global_default_settings.get("debug", False):
+        if not self.config.debug_settings["logging"]:
             return
         evidence = result.metadata.get("evidence", [])
         top_text = ""
@@ -754,7 +752,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_INPUT_BLOCK_MESSAGE
-            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+            if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_block_result(context.event, message)
             else:
                 adapter_result = self.adapter.stop_event(context.event)
@@ -764,7 +762,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_OUTPUT_BLOCK_MESSAGE
-            if self.config.global_default_settings.get("reply_placeholder_on_block", True):
+            if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_response_text(context.response, message)
             else:
                 adapter_result = self.adapter.stop_event(context.event)

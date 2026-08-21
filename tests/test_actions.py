@@ -113,8 +113,8 @@ class ErrorActionPlanTests(unittest.TestCase):
     def test_input_default_error_action_targets_input_when_blocking(self):
         cfg = normalize_config(
             {
+                "fallback_policy_settings": {"default_action_on_error": "block"},
                 "input_rail": {
-                    "default_action_on_error": "block",
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",

@@ -20,7 +20,6 @@ try:
         PolicyLibrary,
         RuleDefinition,
         compile_policy_to_legacy_config,
-        import_legacy_rule_list,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import NormalizedConfig, normalize_config
@@ -31,7 +30,6 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         PolicyLibrary,
         RuleDefinition,
         compile_policy_to_legacy_config,
-        import_legacy_rule_list,
     )
 
 
@@ -71,8 +69,11 @@ class ConfigSnapshotManager:
         self._publish_lock = asyncio.Lock()
         self._startup_diagnostics: list[str] = []
         persisted = self._load_persisted_config()
+        system_config = _copy_config(raw_config)
+        if persisted is not None and isinstance(persisted.get("policy_library"), Mapping):
+            system_config["policy_library"] = copy.deepcopy(persisted["policy_library"])
         self._current = self._build_snapshot(
-            persisted if persisted is not None else raw_config,
+            system_config,
             revision=self._load_persisted_revision() if persisted is not None else 0,
         )
 
@@ -190,7 +191,6 @@ class ConfigSnapshotManager:
         return {
             "revision": snapshot.revision,
             "saved_at": snapshot.saved_at,
-            "enabled": config.enabled,
             "schema_version": config.schema_version,
             "warning_count": len(snapshot.diagnostics),
             "rule_library_count": len(snapshot.policy_library.rules),
@@ -274,7 +274,9 @@ class ConfigSnapshotManager:
             "version": SNAPSHOT_FILE_VERSION,
             "revision": snapshot.revision,
             "saved_at": snapshot.saved_at,
-            "config_source": snapshot.source_config,
+            "config_source": {
+                "policy_library": snapshot.policy_library.to_dict(),
+            },
         }
         try:
             temporary.write_text(
@@ -302,10 +304,9 @@ def _copy_config(raw_config: Any) -> dict[str, Any]:
 
 
 def _load_policy_library(source_config: dict[str, Any]) -> tuple[PolicyLibrary, list[str]]:
-    """Load an explicit library or preserve old rule lists as an import candidate."""
+    """Load only the Pages-owned library; legacy rule lists are no longer a source."""
 
     raw_library = source_config.get("policy_library")
     if isinstance(raw_library, Mapping):
         return PolicyLibrary.from_dict(raw_library), []
-    library, diagnostics = import_legacy_rule_list(source_config)
-    return library, diagnostics
+    return PolicyLibrary.empty(), []

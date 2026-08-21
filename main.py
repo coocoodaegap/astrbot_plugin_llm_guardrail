@@ -75,9 +75,8 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self.normalized_config = self.snapshot_manager.current.runtime_config
         self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
         logger.info(
-            "[LLMGuardrail] loaded P0 v%s | enabled=%s | warnings=%s",
+            "[LLMGuardrail] loaded P1 v%s | warnings=%s",
             PLUGIN_VERSION,
-            self.normalized_config.enabled,
             len(self.normalized_config.warnings),
         )
 
@@ -90,8 +89,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     ) -> None:
         """Run user input checks before other ordinary message handlers."""
         if not self or not getattr(self, "normalized_config", None):
-            return
-        if not self.normalized_config.enabled:
             return
         lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
         lease_result = self.adapter.set_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, lease)
@@ -120,8 +117,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         """Run route policy late in message handling, before AstrBot builds the LLM request."""
         if not self or not getattr(self, "normalized_config", None):
             return
-        if not self.normalized_config.enabled:
-            return
         lease = self.adapter.get_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, None)
         owns_lease = False
         if lease is None or getattr(lease, "released", False):
@@ -146,8 +141,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         """Run final request checks and prompt mutations before the main model call."""
         if not self or not getattr(self, "normalized_config", None):
             return
-        if not self.normalized_config.enabled:
-            return
         if self._is_internal_request(req):
             return
         try:
@@ -164,8 +157,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     ) -> None:
         """Run output rail before the model response is sent."""
         if not self or not getattr(self, "normalized_config", None):
-            return
-        if not self.normalized_config.enabled:
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
@@ -204,13 +195,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             "LLM Guardrail P0",
             f"- version: {PLUGIN_VERSION}",
             f"- schema: {cfg.schema_version}",
-            f"- enabled: {cfg.enabled}",
             "- session scope: "
             f"group={cfg.session_control.get('group_chat_mode', 'all_run')}, "
             f"private={cfg.session_control.get('private_chat_mode', 'all_run')}",
             f"- current UMO: {current_umo or '(empty)'}",
             f"- current session action: {session_decision.action} ({session_decision.reason})",
-            f"- debug: {cfg.global_default_settings.get('debug', False)}",
             f"- warnings: {len(cfg.warnings)}",
             *rail_lines,
             "- capabilities: keywords, regex, logic gates, request checks, prompt mutations, first-hit routing, output blocking/sanitizing",
@@ -263,7 +252,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         )
 
     def _log_context_summary(self, phase: str, rail_context) -> None:
-        if not self.normalized_config.global_default_settings.get("debug", False):
+        if not self.normalized_config.debug_settings["logging"]:
             return
         matched = [
             result.rule_id

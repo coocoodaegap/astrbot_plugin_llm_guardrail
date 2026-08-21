@@ -258,34 +258,35 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertFalse(rule.enabled)
         self.assertIn("knowledge_bases is empty", " ".join(rule.warnings))
 
-    def test_llm_provider_defaults_are_rail_scoped(self):
+    def test_fallback_settings_supply_all_execution_rails(self):
         cfg = normalize_config(
             {
-                "global_default_settings": {
-                    "default_llm_provider": "legacy-global-provider",
+                "fallback_policy_settings": {
+                    "default_llm_provider": "fallback-provider",
+                    "max_text_chars": 42,
+                    "default_action_on_hit": "observe",
+                    "default_action_on_error": "record",
+                    "enable_prompt_leakage_detector": False,
                 },
-                "input_rail": {"default_llm_provider": "input-provider"},
-                "request_rail": {"default_llm_provider": "request-provider"},
-                "output_rail": {"default_llm_provider": "output-provider"},
+                "input_rail": {"default_llm_provider": "ignored-old-value"},
             }
         )
 
-        self.assertEqual(
-            cfg.global_default_settings["default_llm_provider"],
-            "legacy-global-provider",
-        )
+        self.assertEqual(cfg.fallback_policy_settings["default_llm_provider"], "fallback-provider")
         self.assertEqual(
             cfg.rails["input_rail"].settings["default_llm_provider"],
-            "input-provider",
+            "fallback-provider",
         )
         self.assertEqual(
             cfg.rails["request_rail"].settings["default_llm_provider"],
-            "request-provider",
+            "fallback-provider",
         )
         self.assertEqual(
             cfg.rails["output_rail"].settings["default_llm_provider"],
-            "output-provider",
+            "fallback-provider",
         )
+        self.assertEqual(cfg.rails["input_rail"].settings["max_text_chars"], 42)
+        self.assertFalse(cfg.fallback_policy_settings["enable_prompt_leakage_detector"])
 
     def test_legacy_risk_action_alias_is_normalized(self):
         cfg = normalize_config(
@@ -310,8 +311,10 @@ class ConfigNormalizerTests(unittest.TestCase):
     def test_error_action_defaults_are_normalized(self):
         cfg = normalize_config(
             {
-                "input_rail": {
+                "fallback_policy_settings": {
                     "default_action_on_error": "record",
+                },
+                "input_rail": {
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
@@ -332,8 +335,10 @@ class ConfigNormalizerTests(unittest.TestCase):
     def test_invalid_error_actions_fall_back(self):
         cfg = normalize_config(
             {
-                "input_rail": {
+                "fallback_policy_settings": {
                     "default_action_on_error": "explode",
+                },
+                "input_rail": {
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
@@ -350,7 +355,7 @@ class ConfigNormalizerTests(unittest.TestCase):
         rule = rail.rules[0]
         self.assertEqual(rail.settings["default_action_on_error"], "discard")
         self.assertEqual(rule.config["action_on_error"], "default")
-        self.assertIn("default_action_on_error is invalid", " ".join(cfg.warnings))
+        self.assertIn("fallback_policy_settings.default_action_on_error is invalid", " ".join(cfg.warnings))
         self.assertIn("risk.action_on_error is invalid", " ".join(rule.warnings))
 
     def test_session_control_normalizes_group_and_private_modes(self):
@@ -389,6 +394,30 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(cfg.session_control["group_chat_mode"], "all_block")
         self.assertEqual(cfg.session_control["private_chat_mode"], "all_block")
         self.assertEqual(cfg.warnings, [])
+
+    def test_debug_settings_are_normalized_independently(self):
+        cfg = normalize_config(
+            {
+                "debug_settings": {
+                    "enable_stats": False,
+                    "stats_max_records": "8",
+                    "logging": True,
+                },
+                "global_default_settings": {"debug": False},
+            }
+        )
+
+        self.assertEqual(
+            cfg.debug_settings,
+            {"enable_stats": False, "stats_max_records": 8, "logging": True},
+        )
+        self.assertEqual(cfg.warnings, [])
+
+    def test_invalid_debug_stats_limit_falls_back_to_default(self):
+        cfg = normalize_config({"debug_settings": {"stats_max_records": 0}})
+
+        self.assertEqual(cfg.debug_settings["stats_max_records"], 200)
+        self.assertIn("stats_max_records must be positive", " ".join(cfg.warnings))
 
     def test_invalid_session_mode_falls_back_to_all_run(self):
         cfg = normalize_config(

@@ -24,7 +24,6 @@ function renderOverview(overview) {
   summary.replaceChildren();
   addSummary("Revision", overview.revision);
   addSummary("Schema", overview.schema_version);
-  addSummary("Plugin enabled", overview.enabled ? "yes" : "no");
   addSummary("Warnings", overview.warning_count);
   addSummary("Active policy", overview.active_policy_id);
   addSummary("Graph", `${overview.graph.node_count} rules / ${overview.graph.edge_count} edges`);

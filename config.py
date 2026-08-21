@@ -112,9 +112,9 @@ class NormalizedRail:
 @dataclass
 class NormalizedConfig:
     schema_version: str
-    enabled: bool
-    global_default_settings: dict[str, Any]
+    fallback_policy_settings: dict[str, Any]
     session_control: dict[str, Any]
+    debug_settings: dict[str, Any]
     rails: dict[str, NormalizedRail]
     warnings: list[str] = field(default_factory=list)
 
@@ -123,35 +123,20 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     """Normalize AstrBotConfig or a dict into runtime-only dataclasses."""
 
     warnings: list[str] = []
-    schema_version = _as_str(_config_get(raw_config, "schema_version", "0.1.0"))
-    enabled = _as_bool(_config_get(raw_config, "enabled", True), True)
-
-    global_default_settings = _merge_defaults(
-        {
-            "reply_placeholder_on_block": True,
-            "enable_stats": True,
-            "stats_max_records": 200,
-            "debug": False,
-        },
-        _config_get(raw_config, "global_default_settings", {}),
-    )
-    global_default_settings["reply_placeholder_on_block"] = _as_bool(
-        global_default_settings.get("reply_placeholder_on_block"), True
-    )
-    global_default_settings["enable_stats"] = _as_bool(
-        global_default_settings.get("enable_stats"), True
-    )
-    global_default_settings["stats_max_records"] = _as_int(
-        global_default_settings.get("stats_max_records"), 200
-    )
-    global_default_settings["debug"] = _as_bool(
-        global_default_settings.get("debug"), False
+    schema_version = "0.2.0"
+    fallback_policy_settings = _normalize_fallback_policy_settings(
+        _as_dict(_config_get(raw_config, "fallback_policy_settings", {})),
+        warnings,
     )
 
     raw_session_control = _as_dict(_config_get(raw_config, "session_control", {}))
     session_control = _normalize_session_control(
         raw_session_control,
         warnings=warnings,
+    )
+    debug_settings = _normalize_debug_settings(
+        _as_dict(_config_get(raw_config, "debug_settings", {})),
+        warnings,
     )
 
     rails: dict[str, NormalizedRail] = {}
@@ -162,6 +147,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
             rail_name=rail_name,
             raw_rail=_config_get(raw_config, rail_name, {}),
             seen_rule_ids=seen_rule_ids,
+            fallback_policy_settings=fallback_policy_settings,
         )
         rails[rail_name] = rail
         warnings.extend(rail.warnings)
@@ -170,27 +156,26 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
 
     return NormalizedConfig(
         schema_version=schema_version,
-        enabled=enabled,
-        global_default_settings=global_default_settings,
+        fallback_policy_settings=fallback_policy_settings,
         session_control=session_control,
+        debug_settings=debug_settings,
         rails=rails,
         warnings=warnings,
     )
 
 
 def _normalize_rail(
-    rail_name: str, raw_rail: Any, seen_rule_ids: set[str]
+    rail_name: str,
+    raw_rail: Any,
+    seen_rule_ids: set[str],
+    fallback_policy_settings: dict[str, Any],
 ) -> NormalizedRail:
     warnings: list[str] = []
     rail_dict = _as_dict(raw_rail)
     if not isinstance(raw_rail, dict) and raw_rail is not None:
         warnings.append(f"{rail_name} is not an object; fallback to defaults")
 
-    settings = _rail_defaults(rail_name)
-    settings.update(
-        {key: value for key, value in rail_dict.items() if key != "rule_list"}
-    )
-    settings = _coerce_rail_settings(rail_name, settings, warnings)
+    settings = _rail_defaults(rail_name, fallback_policy_settings)
 
     raw_rules = rail_dict.get("rule_list", [])
     if raw_rules is None:
@@ -596,37 +581,94 @@ def _rule_availability_problem(rule: NormalizedRule) -> str:
     return detail
 
 
-def _rail_defaults(rail_name: str) -> dict[str, Any]:
-    defaults: dict[str, dict[str, Any]] = {
-        "input_rail": {
-            "enabled": True,
-            "max_text_chars": 6000,
-            "default_llm_provider": "",
-            "default_action_on_hit": "block",
-            "default_action_on_error": "discard",
-            "block_message": "",
-        },
-        "prompt_rail": {"enabled": True},
-        "request_rail": {
-            "enabled": False,
-            "max_text_chars": 6000,
-            "default_llm_provider": "",
-            "default_action_on_hit": "observe",
-            "default_action_on_error": "discard",
-            "block_message": "",
-        },
-        "routing_rail": {"enabled": True},
-        "output_rail": {
-            "enabled": True,
-            "max_text_chars": 6000,
-            "default_llm_provider": "",
-            "default_action_on_hit": "block",
-            "default_action_on_error": "discard",
-            "max_retries": 0,
-            "block_message": "",
-        },
+def _normalize_fallback_policy_settings(
+    raw_settings: dict[str, Any], warnings: list[str]
+) -> dict[str, Any]:
+    """Normalize the only active system-wide guardrail settings in P1."""
+
+    settings = {
+        "max_text_chars": max(_as_int(raw_settings.get("max_text_chars"), 6000), 0),
+        "default_llm_provider": _as_str(raw_settings.get("default_llm_provider", "")).strip(),
+        "enable_llm_review_in_fallback_policy": _as_bool(
+            raw_settings.get("enable_llm_review_in_fallback_policy"), False
+        ),
+        "default_action_on_hit": _normalize_action_alias(
+            _as_str(raw_settings.get("default_action_on_hit", "block"))
+        ),
+        "default_action_on_error": _as_str(
+            raw_settings.get("default_action_on_error", "discard")
+        ).strip(),
+        "reply_placeholder_on_block": _as_bool(
+            raw_settings.get("reply_placeholder_on_block"), True
+        ),
+        "block_message": _as_str(raw_settings.get("block_message", "")),
     }
-    return dict(defaults[rail_name])
+
+
+    if settings["default_action_on_hit"] not in {"observe", "block"}:
+        warnings.append(
+            "fallback_policy_settings.default_action_on_hit is invalid; fallback to block"
+        )
+        settings["default_action_on_hit"] = "block"
+    if settings["default_action_on_error"] not in DEFAULT_ERROR_ACTIONS:
+        warnings.append(
+            "fallback_policy_settings.default_action_on_error is invalid; fallback to discard"
+        )
+        settings["default_action_on_error"] = "discard"
+    for key in (
+        "enable_encoded_payload_detector",
+        "enable_length_anomaly_detector",
+        "enable_role_marker_spoofing_detector",
+        "enable_external_fetch_detector",
+        "enable_instruction_override_detector",
+        "enable_multi_turn_escalation_detector",
+        "enable_prompt_injection_combo_detector",
+        "enable_format_violation_detector",
+        "enable_poor_quality_detector",
+        "enable_metadata_leakage_detector",
+        "enable_sensitive_echo_detector",
+        "enable_language_drift_detector",
+        "enable_prompt_leakage_detector",
+    ):
+        settings[key] = _as_bool(raw_settings.get(key), True)
+    return settings
+
+
+def _normalize_debug_settings(
+    raw_settings: dict[str, Any], warnings: list[str]
+) -> dict[str, Any]:
+    """Normalize P1 diagnostic switches without starting a stats service."""
+
+    stats_max_records = _as_int(raw_settings.get("stats_max_records"), 200)
+    if stats_max_records < 1:
+        warnings.append(
+            "debug_settings.stats_max_records must be positive; fallback to 200"
+        )
+        stats_max_records = 200
+    return {
+        "enable_stats": _as_bool(raw_settings.get("enable_stats"), True),
+        "stats_max_records": stats_max_records,
+        "logging": _as_bool(raw_settings.get("logging"), False),
+    }
+
+
+def _rail_defaults(
+    rail_name: str, fallback_policy_settings: dict[str, Any]
+) -> dict[str, Any]:
+    settings = {"enabled": True}
+    if rail_name in {"input_rail", "request_rail", "output_rail"}:
+        settings.update(
+            {
+                "max_text_chars": fallback_policy_settings["max_text_chars"],
+                "default_llm_provider": fallback_policy_settings["default_llm_provider"],
+                "default_action_on_hit": fallback_policy_settings["default_action_on_hit"],
+                "default_action_on_error": fallback_policy_settings["default_action_on_error"],
+                "block_message": fallback_policy_settings["block_message"],
+            }
+        )
+    if rail_name == "output_rail":
+        settings["max_retries"] = 0
+    return settings
 
 
 def _coerce_rail_settings(
