@@ -200,7 +200,11 @@ class ConfigSnapshotManager:
                 )
 
             candidate_source = copy.deepcopy(current.source_config)
-            for key in ("fallback_policy_settings", "session_control"):
+            for key in (
+                "fallback_policy_settings",
+                "session_control",
+                "debug_settings",
+            ):
                 value = settings.get(key)
                 if not isinstance(value, Mapping):
                     return SnapshotPublishResult(
@@ -227,6 +231,9 @@ class ConfigSnapshotManager:
                         ),
                         "session_control": copy.deepcopy(
                             candidate.source_config["session_control"]
+                        ),
+                        "debug_settings": copy.deepcopy(
+                            candidate.source_config["debug_settings"]
                         ),
                     },
                 )

@@ -63,6 +63,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
                 {
                     "fallback_policy_settings": {"max_text_chars": 2},
                     "session_control": {},
+                    "debug_settings": {"logging": True},
                 },
                 expected_revision=0,
                 persist_settings=lambda settings: saved_settings.append(settings),
@@ -71,7 +72,9 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(saved_settings[0]["fallback_policy_settings"]["max_text_chars"], 2)
+        self.assertTrue(saved_settings[0]["debug_settings"]["logging"])
         self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 2)
+        self.assertTrue(manager.current.runtime_config.debug_settings["logging"])
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
 

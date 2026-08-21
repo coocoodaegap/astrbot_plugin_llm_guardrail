@@ -90,6 +90,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
             settings["fallback_policy_settings"]["max_text_chars"] = 321
             settings["session_control"]["group_chat_mode"] = "all_pass"
+            settings["debug_settings"]["logging"] = True
             with patch(
                 "pages_api.request",
                 _Request({"expected_revision": 0, "settings": settings}),
@@ -100,6 +101,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(saved["revision"], 1)
         self.assertEqual(plugin.config.save_count, 1)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_text_chars"], 321)
+        self.assertTrue(plugin.config["debug_settings"]["logging"])
         self.assertEqual(
             plugin.snapshot_manager.current.runtime_config.session_control[
                 "group_chat_mode"
@@ -126,11 +128,13 @@ class GuardrailPagesApiTests(unittest.TestCase):
             result = asyncio.run(plugin._pages_get_system_settings())
 
         self.assertEqual(
-            set(result["settings"]), {"fallback_policy_settings", "session_control"}
+            set(result["settings"]),
+            {"fallback_policy_settings", "session_control", "debug_settings"},
         )
         self.assertEqual(set(result["schema"]), set(result["settings"]))
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
+        self.assertFalse(result["settings"]["debug_settings"]["logging"])
         self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])
 
     def test_rule_and_policy_libraries_are_returned_without_each_other(self):

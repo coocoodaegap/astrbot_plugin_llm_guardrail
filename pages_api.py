@@ -64,7 +64,7 @@ class GuardrailPagesApiMixin:
         )
 
     async def _pages_get_system_settings(self):
-        """Return the two active AstrBot configuration groups for read-only Pages."""
+        """Return all active AstrBot configuration groups for Pages."""
 
         snapshot = self.snapshot_manager.current
         config = snapshot.runtime_config
@@ -78,6 +78,7 @@ class GuardrailPagesApiMixin:
                         key: list(value) if isinstance(value, list) else value
                         for key, value in config.session_control.items()
                     },
+                    "debug_settings": dict(config.debug_settings),
                 },
                 "schema": _load_system_settings_schema(),
                 "providers": self._pages_registered_chat_providers(),
@@ -161,7 +162,11 @@ class GuardrailPagesApiMixin:
             raise RuntimeError("AstrBotConfig.save_config is unavailable")
         original = {
             key: copy.deepcopy(config.get(key))
-            for key in ("fallback_policy_settings", "session_control")
+            for key in (
+                "fallback_policy_settings",
+                "session_control",
+                "debug_settings",
+            )
         }
         try:
             for key, value in settings.items():
@@ -313,7 +318,11 @@ def _load_system_settings_schema() -> dict[str, Any]:
         return {}
     return {
         key: raw_schema[key]
-        for key in ("fallback_policy_settings", "session_control")
+        for key in (
+            "fallback_policy_settings",
+            "session_control",
+            "debug_settings",
+        )
         if isinstance(raw_schema.get(key), dict)
     }
 
@@ -324,7 +333,11 @@ def _validate_system_settings_payload(
     """Reject incomplete, unknown, or type-invalid direct config writes."""
 
     diagnostics: list[str] = []
-    expected_groups = {"fallback_policy_settings", "session_control"}
+    expected_groups = {
+        "fallback_policy_settings",
+        "session_control",
+        "debug_settings",
+    }
     if set(settings) != expected_groups:
         diagnostics.append("settings must contain exactly the active system setting groups")
         return diagnostics
