@@ -433,6 +433,16 @@ class AstrBotAdapter:
     def get_active_route_target(self, event: Any) -> str:
         return str(self.get_event_extra(event, ROUTE_TARGET_PROVIDER_EXTRA, "") or "")
 
+    async def get_current_request_provider_id(self, event: Any) -> str:
+        """Return the Provider selected for the event's main request, if known."""
+
+        selected = str(
+            self.get_event_extra(event, ROUTE_SELECTED_PROVIDER_EXTRA, "") or ""
+        ).strip()
+        if selected:
+            return selected
+        return await self._resolve_chat_provider_id(event, "")
+
     def _provider_exists(self, provider_id: str) -> bool | None:
         if self.context is None:
             return None

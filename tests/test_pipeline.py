@@ -781,6 +781,44 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(fake_context.provider_manager.calls, [])
 
+    def test_step_debug_logs_follow_the_selected_main_provider(self):
+        cfg = normalize_config(
+            {
+                "debug_settings": {"logging": True},
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "route_policy",
+                            "rule_id": "route",
+                            "provider_id": "safe-provider",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        adapter = AstrBotAdapter(FakeContext())
+        pipeline = GuardrailPipeline(cfg, adapter)
+
+        with patch("rails.logger.info") as log_info:
+            asyncio.run(pipeline.run_message(event))
+            asyncio.run(pipeline.run_request(event, FakeRequest()))
+            asyncio.run(pipeline.run_response(event, FakeResponse("hello")))
+
+        step_logs = [
+            call.args
+            for call in log_info.call_args_list
+            if call.args and "step start" in call.args[0]
+        ]
+        self.assertEqual(len(step_logs), 5)
+        self.assertEqual([entry[-1] for entry in step_logs], [
+            "default-provider",
+            "default-provider",
+            "safe-provider",
+            "safe-provider",
+            "safe-provider",
+        ])
+
     def test_unavailable_route_provider_falls_back_to_default_request_route(self):
         cfg = normalize_config(
             {

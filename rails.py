@@ -31,6 +31,7 @@ try:
         RuleResult,
         RuleSignal,
         RuleScheduler,
+        RAIL_STEPS,
         build_graph_index,
         make_result,
         skipped_result,
@@ -65,6 +66,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         RuleResult,
         RuleSignal,
         RuleScheduler,
+        RAIL_STEPS,
         build_graph_index,
         make_result,
         skipped_result,
@@ -284,6 +286,7 @@ class GuardrailPipeline:
         context.warnings.extend(result.warnings)
 
     async def _run_input_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.original_input, max_chars)
 
@@ -312,6 +315,7 @@ class GuardrailPipeline:
         )
 
     async def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(
             self.adapter.get_request_prompt(context.request) or context.current_input,
@@ -384,6 +388,7 @@ class GuardrailPipeline:
             context.warnings.extend(adapter_result.warnings)
 
     async def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        await self._log_step_provider(rail, context)
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
@@ -470,6 +475,7 @@ class GuardrailPipeline:
         )
 
     async def _run_routing_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        await self._log_step_provider(rail, context)
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
@@ -522,6 +528,7 @@ class GuardrailPipeline:
         )
 
     async def _run_output_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+        await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.current_output, max_chars)
 
@@ -612,6 +619,20 @@ class GuardrailPipeline:
         result.metadata["provider_id"] = adapter_result.metadata.get("provider_id", "")
         self._log_llm_review_result(rule, result)
         return result
+
+    async def _log_step_provider(
+        self, rail: NormalizedRail, context: RailContext
+    ) -> None:
+        if not self.config.debug_settings["logging"]:
+            return
+        provider_id = await self.adapter.get_current_request_provider_id(context.event)
+        logger.info(
+            "[LLMGuardrail] step start | step=%s | rail=%s | umo=%s | main_provider=%s",
+            RAIL_STEPS.get(rail.rail, 0),
+            rail.rail,
+            context.umo or "-",
+            provider_id or "-",
+        )
 
     async def _execute_rag_judge(
         self, rule: NormalizedRule, context: RailContext, inspected_text: str
