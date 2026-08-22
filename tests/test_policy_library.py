@@ -118,6 +118,35 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(observed["input_rail"]["rule_list"][0]["action_on_hit"], "observe")
         self.assertEqual(blocked["request_rail"]["rule_list"][0]["action_on_hit"], "block")
 
+    def test_policy_step_settings_override_system_rail_settings(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "custom",
+                    "Custom",
+                    rail_settings={
+                        "input_rail": {
+                            "enabled": False,
+                            "max_text_chars": 120,
+                            "default_action_on_hit": "observe",
+                        }
+                    },
+                ),
+            ),
+            active_policy_id="custom",
+        )
+
+        raw, validation = compile_policy_to_runtime_config(
+            {"input_rail": {"max_text_chars": 6000}}, library
+        )
+        config = normalize_config(raw)
+
+        self.assertTrue(validation.valid)
+        self.assertFalse(config.rails["input_rail"].enabled)
+        self.assertEqual(config.rails["input_rail"].settings["max_text_chars"], 120)
+        self.assertEqual(config.rails["input_rail"].settings["default_action_on_hit"], "observe")
+
     def test_umo_override_uses_first_usable_policy_then_default(self):
         library = PolicyLibrary(
             policies=(

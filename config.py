@@ -172,7 +172,14 @@ def _normalize_rail(
     if not isinstance(raw_rail, dict) and raw_rail is not None:
         warnings.append(f"{rail_name} is not an object; fallback to defaults")
 
-    settings = _rail_defaults(rail_name, fallback_policy_settings)
+    settings = _coerce_rail_settings(
+        rail_name,
+        _merge_defaults(
+            _rail_defaults(rail_name, fallback_policy_settings),
+            rail_dict.get("__policy_step_settings", {}),
+        ),
+        warnings,
+    )
 
     raw_rules = rail_dict.get("rule_list", [])
     if raw_rules is None:

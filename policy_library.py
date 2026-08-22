@@ -110,6 +110,7 @@ class PolicyDefinition:
     description: str = ""
     bindings: tuple[PolicyRuleBinding, ...] = ()
     umo_list: tuple[str, ...] = ()
+    rail_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     session_scope: dict[str, Any] = field(default_factory=dict)
     builtin: bool = False
 
@@ -120,6 +121,7 @@ class PolicyDefinition:
             "description": self.description,
             "bindings": [binding.to_dict() for binding in self.bindings],
             "umo_list": list(self.umo_list),
+            "rail_settings": copy.deepcopy(self.rail_settings),
             "session_scope": copy.deepcopy(self.session_scope),
             "builtin": self.builtin,
         }
@@ -140,6 +142,7 @@ class PolicyDefinition:
             if isinstance(bindings, list)
             else (),
             umo_list=tuple(_clean_string_list(umo_list)),
+            rail_settings=_copy_nested_dict(value.get("rail_settings")),
             session_scope=_copy_dict(value.get("session_scope")),
             builtin=bool(value.get("builtin", False)),
         )
@@ -389,6 +392,9 @@ def compile_policy_to_runtime_config(
     rule_by_id = {rule.rule_id: rule for rule in library.rules}
     for rail_name in RAIL_NAMES:
         rail = _copy_dict(compiled.get(rail_name))
+        rail["__policy_step_settings"] = _copy_dict(
+            policy.rail_settings.get(rail_name)
+        )
         rail["rule_list"] = []
         compiled[rail_name] = rail
     if policy.session_scope:
@@ -432,6 +438,16 @@ def _copy_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return copy.deepcopy(dict(value))
     return {}
+
+
+def _copy_nested_dict(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _copy_dict(item)
+        for key, item in value.items()
+        if isinstance(item, Mapping)
+    }
 
 
 def _as_int(value: Any, default: int) -> int:

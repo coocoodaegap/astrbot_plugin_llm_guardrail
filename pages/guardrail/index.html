@@ -37,10 +37,6 @@
           <h2>配置快照</h2>
           <dl id="snapshot-summary"></dl>
         </section>
-        <section class="card">
-          <h2>Rail 状态</h2>
-          <div id="rails" class="rail-grid"></div>
-        </section>
       </div>
       <section class="card">
         <h2>诊断</h2>
@@ -129,18 +125,25 @@
             <h2 id="policy-detail-name">策略详情</h2>
             <p id="policy-detail-description"></p>
           </div>
-          <div class="button-group"><button id="save-policy-as" type="button" class="button-secondary">另存为</button><button id="delete-policy" type="button" class="danger-button">删除</button><button id="back-to-policy-list" type="button" class="button-secondary">返回策略列表</button></div>
+          <div class="button-group"><button id="save-policy" type="button">保存策略</button><button id="save-policy-as" type="button" class="button-secondary">另存为</button><button id="delete-policy" type="button" class="danger-button">删除</button><button id="back-to-policy-list" type="button" class="button-secondary">返回策略列表</button></div>
         </div>
+        <section class="policy-basic-editor">
+          <div class="form-grid">
+            <label>策略名称<input id="policy-name-input" autocomplete="off" required /></label>
+            <label class="full-width">策略描述<textarea id="policy-description-input" rows="3" placeholder="简述此策略的用途"></textarea></label>
+          </div>
+          <p id="policy-basic-status" class="form-status" aria-live="polite"></p>
+        </section>
         <div id="policy-detail-meta" class="policy-detail-meta"></div>
-        <section class="policy-json-editor">
+        <section class="policy-step-settings-section">
           <div class="form-heading">
             <div>
-              <h3>规则绑定（JSON）</h3>
-              <p>使用 JSON 数组编辑此策略的规则绑定。</p>
+              <h3>Step 开关与设置</h3>
+              <p>这些值只作用于当前策略，未填写的项沿用系统默认设置。</p>
             </div>
           </div>
-          <textarea id="policy-bindings-json" class="json-editor" spellcheck="false" aria-label="规则绑定 JSON"></textarea>
-          <p id="policy-bindings-json-status" class="form-status" aria-live="polite"></p>
+          <div id="policy-step-settings" class="policy-step-settings"></div>
+          <p id="policy-step-settings-status" class="form-status" aria-live="polite"></p>
         </section>
         <section class="policy-session-assignment">
           <div class="form-heading">
@@ -151,7 +154,6 @@
             <button id="set-default-policy" type="button" class="button-secondary">设为默认策略</button>
           </div>
           <div id="policy-umo-list" aria-label="策略 UMO 列表"></div>
-          <div class="button-group policy-session-actions"><button id="save-policy-session" type="button">保存会话分配</button></div>
           <p id="policy-session-status" class="form-status" aria-live="polite"></p>
         </section>
       </section>

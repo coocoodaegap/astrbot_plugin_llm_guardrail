@@ -2,7 +2,6 @@ const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 const status = $("status"),
   summary = $("snapshot-summary"),
-  rails = $("rails"),
   diagnostics = $("diagnostics"),
   systemSettings = $("system-settings"),
   systemSettingsStatus = $("system-settings-status"),
@@ -18,11 +17,14 @@ const status = $("status"),
   policyDetailName = $("policy-detail-name"),
   policyDetailDescription = $("policy-detail-description"),
   policyDetailMeta = $("policy-detail-meta"),
-  policyBindingsJson = $("policy-bindings-json"),
-  policyBindingsJsonStatus = $("policy-bindings-json-status"),
+  policyNameInput = $("policy-name-input"),
+  policyDescriptionInput = $("policy-description-input"),
+  policyBasicStatus = $("policy-basic-status"),
+  savePolicy = $("save-policy"),
+  policyStepSettings = $("policy-step-settings"),
+  policyStepSettingsStatus = $("policy-step-settings-status"),
   policyUmoList = $("policy-umo-list"),
   setDefaultPolicy = $("set-default-policy"),
-  savePolicySession = $("save-policy-session"),
   policySessionStatus = $("policy-session-status"),
   backToPolicyList = $("back-to-policy-list"),
   newPolicy = $("new-policy"),
@@ -247,19 +249,6 @@ function renderOverview(overview) {
     "Graph",
     `${overview.graph.node_count} rules / ${overview.graph.edge_count} edges`,
   );
-  rails.replaceChildren();
-  for (const [name, rail] of Object.entries(overview.rails)) {
-    const item = document.createElement("article"),
-      title = document.createElement("strong"),
-      state = document.createElement("span"),
-      count = document.createElement("small");
-    item.className = "rail";
-    title.textContent = name;
-    state.textContent = rail.enabled ? "enabled" : "disabled";
-    count.textContent = `${rail.enabled_rules}/${rail.total_rules} valid rules`;
-    item.append(title, state, count);
-    rails.append(item);
-  }
 }
 function renderDiagnostics(items) {
   diagnostics.replaceChildren();
@@ -590,18 +579,124 @@ function addPolicyDetail(label, value) {
   item.append(term, detail);
   policyDetailMeta.append(item);
 }
+const policyStepDefinitions = [
+  { rail: "input_rail", title: "Step 1 · 输入分析", fields: [
+    ["enabled", "启用 Step 1", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
+    ["default_llm_provider", "默认辅助 Provider", "provider"], ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
+    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "默认阻断提示", "text"],
+  ] },
+  { rail: "routing_rail", title: "Step 2 · 模型路由", fields: [["enabled", "启用 Step 2", "boolean"]] },
+  { rail: "request_rail", title: "Step 3 · 请求审查", fields: [
+    ["enabled", "启用 Step 3", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
+    ["default_llm_provider", "默认辅助 Provider", "provider"], ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
+    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "默认阻断提示", "text"],
+  ] },
+  { rail: "prompt_rail", title: "Step 4 · 提示词强化", fields: [["enabled", "启用 Step 4", "boolean"]] },
+  { rail: "output_rail", title: "Step 5 · 输出检查", fields: [
+    ["enabled", "启用 Step 5", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
+    ["default_llm_provider", "默认辅助 Provider", "provider"], ["max_retries", "最大重试次数", "number"],
+    ["default_action_on_hit", "默认命中动作", "select", ["block"]], ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]],
+    ["block_message", "默认阻断提示", "text"],
+  ] },
+];
+function createPolicyStepControl(type, value, options) {
+  if (type === "boolean") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "setting-checkbox";
+    input.checked = value !== false;
+    return input;
+  }
+  if (type === "provider") return createProviderSelector(value);
+  if (type === "select") {
+    const select = document.createElement("select");
+    const inherit = document.createElement("option");
+    inherit.value = "";
+    inherit.textContent = "沿用系统设置";
+    select.append(inherit);
+    populateRuleActionOptions(select, options || []);
+    ensureOption(select, String(value ?? ""));
+    select.value = String(value ?? "");
+    return select;
+  }
+  const input = document.createElement("input");
+  input.type = type === "number" ? "number" : "text";
+  input.value = String(value ?? "");
+  input.placeholder = "沿用系统设置";
+  return input;
+}
+function renderPolicyStepSettings(policy) {
+  policyStepSettings.replaceChildren();
+  const settings = policy.rail_settings || {};
+  for (const definition of policyStepDefinitions) {
+    const card = document.createElement("section");
+    card.className = "policy-step-card";
+    const title = document.createElement("h4");
+    title.textContent = definition.title;
+    const grid = document.createElement("div");
+    grid.className = "form-grid";
+    const railSettings = settings[definition.rail] || {};
+    for (const [key, labelText, type, options] of definition.fields) {
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      const control = createPolicyStepControl(type, railSettings[key], options);
+      control.dataset.policyRail = definition.rail;
+      control.dataset.policyRailSetting = key;
+      control.dataset.policyRailSettingType = type;
+      label.append(control);
+      grid.append(label);
+    }
+    const bindingsLabel = document.createElement("label");
+    bindingsLabel.className = "full-width";
+    bindingsLabel.textContent = "规则绑定（JSON）";
+    const bindingsJson = document.createElement("textarea");
+    bindingsJson.className = "json-editor policy-step-bindings-json";
+    bindingsJson.spellcheck = false;
+    bindingsJson.dataset.policyBindingsRail = definition.rail;
+    bindingsJson.setAttribute("aria-label", `${definition.title} 的规则绑定 JSON`);
+    bindingsJson.value = JSON.stringify(
+      (policy.bindings || []).filter((binding) => binding.rail === definition.rail),
+      null,
+      2,
+    );
+    bindingsLabel.append(bindingsJson);
+    card.append(title, grid, bindingsLabel);
+    policyStepSettings.append(card);
+  }
+  policyStepSettingsStatus.textContent = "";
+}
+function collectPolicyStepSettings(policy) {
+  const settings = structuredClone(policy.rail_settings || {});
+  for (const definition of policyStepDefinitions) {
+    const railSettings = { ...(settings[definition.rail] || {}) };
+    for (const [key, _label, type] of definition.fields) {
+      const control = policyStepSettings.querySelector(
+        `[data-policy-rail="${definition.rail}"][data-policy-rail-setting="${key}"]`
+      );
+      if (!control) continue;
+      let value;
+      if (type === "boolean") value = control.checked;
+      else if (type === "provider") value = control.providerValue();
+      else if (type === "number") value = control.value === "" ? "" : Number(control.value);
+      else value = control.value;
+      if (value === "" || (typeof value === "number" && !Number.isFinite(value))) delete railSettings[key];
+      else railSettings[key] = value;
+    }
+    settings[definition.rail] = railSettings;
+  }
+  return settings;
+}
 function renderPolicyDetail(policy) {
   policyDetailName.textContent = policy.name || policy.policy_id || "未命名策略";
   policyDetailDescription.textContent = String(policy.description || "").trim() || "未说明";
+  policyNameInput.value = policy.name || "";
+  policyDescriptionInput.value = policy.description || "";
+  policyBasicStatus.textContent = "";
   policyDetailMeta.replaceChildren();
   addPolicyDetail("策略 ID", policy.policy_id || "未设置");
-  addPolicyDetail("状态", policy.policy_id === policyLibrary.active_policy_id ? "当前活动策略" : "未启用");
-  addPolicyDetail("类型", policy.builtin ? "内置策略" : "自定义策略");
   const bindings = Array.isArray(policy.bindings) ? policy.bindings : [];
   addPolicyDetail("规则绑定", `${bindings.length} 条`);
-  policyBindingsJson.value = JSON.stringify(bindings, null, 2);
-  policyBindingsJson.classList.remove("is-invalid", "is-dirty");
-  policyBindingsJsonStatus.textContent = "";
+  renderPolicyStepSettings(policy);
   policyUmoList.replaceChildren();
   policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
   policyUmoList.append(policyUmoList.umoEditor);
@@ -613,23 +708,63 @@ function renderPolicyDetail(policy) {
   savePolicyAs.hidden = policy.builtin;
   deletePolicyButton.hidden = policy.builtin;
 }
+function collectPolicyBindings() {
+  try {
+    const bindings = [];
+    for (const editor of policyStepSettings.querySelectorAll("[data-policy-bindings-rail]")) {
+      const rail = editor.dataset.policyBindingsRail;
+      let parsed;
+      try {
+        parsed = JSON.parse(editor.value);
+      } catch (error) {
+        editor.classList.add("is-invalid");
+        throw new SyntaxError(`${rail} 的 JSON 无效：${error.message}`);
+      }
+      if (!Array.isArray(parsed)) throw new TypeError(`${rail} 的规则绑定必须是 JSON 数组`);
+      for (const binding of parsed) {
+        if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
+          throw new TypeError(`${rail} 的规则绑定必须是对象`);
+        }
+        bindings.push({ ...binding, rail });
+      }
+      editor.classList.remove("is-invalid");
+    }
+    return bindings;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = message.match(/^(\w+_rail) /);
+    if (match) {
+      policyStepSettings.querySelector(`[data-policy-bindings-rail="${match[1]}"]`)?.classList.add("is-invalid");
+    }
+    policyStepSettingsStatus.textContent = `规则 JSON 无效：${message}`;
+    return null;
+  }
+}
+function collectPolicyDetailDraft(policy) {
+  const name = policyNameInput.value.trim();
+  if (!name) {
+    policyBasicStatus.textContent = "请填写策略名称。";
+    policyNameInput.focus();
+    return null;
+  }
+  const bindings = collectPolicyBindings();
+  if (bindings === null) return null;
+  const umoEditor = policyUmoList.umoEditor;
+  return {
+    ...structuredClone(policy),
+    name,
+    description: policyDescriptionInput.value.trim(),
+    bindings,
+    rail_settings: collectPolicyStepSettings(policy),
+    umo_list: Array.isArray(umoEditor?.umoValues) ? [...umoEditor.umoValues] : [],
+  };
+}
 function syncPolicyBindingsJson() {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
-  if (!policy) return false;
-  try {
-    const bindings = JSON.parse(policyBindingsJson.value);
-    if (!Array.isArray(bindings)) throw new TypeError("规则绑定必须是 JSON 数组");
-    policy.bindings = bindings;
-    policyBindingsJson.classList.remove("is-invalid");
-    policyBindingsJson.classList.add("is-dirty");
-    policyBindingsJsonStatus.textContent = "JSON 有效，已更新当前编辑；执行策略操作时会一并发布。";
-    renderPolicyList();
-    return true;
-  } catch (error) {
-    policyBindingsJson.classList.add("is-invalid");
-    policyBindingsJsonStatus.textContent = `JSON 无效：${error.message}`;
-    return false;
-  }
+  const bindings = policy ? collectPolicyBindings() : null;
+  if (!policy || bindings === null) return false;
+  policy.bindings = bindings;
+  return true;
 }
 function validCustomPolicyId(id) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(id) && id !== "_default";
@@ -653,23 +788,24 @@ async function persistPolicyLibrary(successMessage) {
     return false;
   }
 }
-async function savePolicySessionAssignment(makeDefault = false) {
+async function saveCurrentPolicy(makeDefault = false) {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
-  const editor = policyUmoList.umoEditor;
-  if (!policy || !editor || !syncPolicyBindingsJson()) return false;
-  const previousUmoList = policy.umo_list;
+  if (!policy) return false;
+  const draft = collectPolicyDetailDraft(policy);
+  if (!draft) return false;
+  const previousPolicy = structuredClone(policy);
   const previousDefaultPolicyId = policyLibrary.active_policy_id;
-  policy.umo_list = Array.isArray(editor.umoValues) ? [...editor.umoValues] : [];
+  Object.assign(policy, draft);
   if (makeDefault) policyLibrary.active_policy_id = policy.policy_id;
-  savePolicySession.disabled = true;
+  savePolicy.disabled = true;
   setDefaultPolicy.disabled = true;
   const saved = await persistPolicyLibrary((revision) => makeDefault
     ? `策略“${policy.name || policy.policy_id}”已设为默认策略，revision ${revision}。`
-    : `策略“${policy.name || policy.policy_id}”的会话分配已保存为 revision ${revision}。`);
-  savePolicySession.disabled = false;
+    : `策略“${policy.name || policy.policy_id}”已保存为 revision ${revision}。`);
+  savePolicy.disabled = false;
   setDefaultPolicy.disabled = false;
   if (!saved) {
-    policy.umo_list = previousUmoList;
+    Object.assign(policy, previousPolicy);
     policyLibrary.active_policy_id = previousDefaultPolicyId;
     return false;
   }
@@ -677,7 +813,7 @@ async function savePolicySessionAssignment(makeDefault = false) {
   renderPolicyDetail(policy);
   policySessionStatus.textContent = makeDefault
     ? "默认策略已更新。"
-    : "UMO 列表已保存。";
+    : "策略的所有修改已保存。";
   return true;
 }
 function openCreatePolicyDialog() {
@@ -712,10 +848,10 @@ async function createPolicy() {
 }
 function openSavePolicyAsDialog() {
   const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
-  if (!source || source.builtin || !syncPolicyBindingsJson()) return;
+  if (!source || source.builtin) return;
   saveAsPolicyId.value = "";
-  saveAsPolicyName.value = `${source.name || source.policy_id} 副本`;
-  saveAsPolicyDescription.value = source.description || "";
+  saveAsPolicyName.value = `${policyNameInput.value.trim() || source.name || source.policy_id} 副本`;
+  saveAsPolicyDescription.value = policyDescriptionInput.value.trim();
   saveAsPolicyStatus.textContent = "";
   savePolicyAsDialog.showModal();
   saveAsPolicyId.focus();
@@ -724,11 +860,13 @@ async function savePolicyAsCopy() {
   const id = saveAsPolicyId.value.trim();
   const name = saveAsPolicyName.value.trim();
   const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
-  if (!source || source.builtin || !syncPolicyBindingsJson()) return;
+  if (!source || source.builtin) return;
   if (!validCustomPolicyId(id)) { saveAsPolicyStatus.textContent = "新策略 ID 格式无效。"; return; }
   if (!name) { saveAsPolicyStatus.textContent = "请填写策略名称。"; return; }
   if (policyLibrary.policies.some((policy) => policy.policy_id === id)) { saveAsPolicyStatus.textContent = "策略 ID 已存在。"; return; }
-  const copy = { ...structuredClone(source), policy_id: id, name, description: saveAsPolicyDescription.value.trim(), builtin: false };
+  const draft = collectPolicyDetailDraft(source);
+  if (!draft) return;
+  const copy = { ...draft, policy_id: id, name, description: saveAsPolicyDescription.value.trim(), builtin: false };
   policyLibrary.policies.push(copy);
   confirmSavePolicyAs.disabled = true;
   const saved = await persistPolicyLibrary((revision) => `策略“${name}”已另存为 revision ${revision}。`);
@@ -1169,9 +1307,8 @@ newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
 backToPolicyList.addEventListener("click", showPolicyList);
-policyBindingsJson.addEventListener("input", syncPolicyBindingsJson);
-savePolicySession.addEventListener("click", () => savePolicySessionAssignment());
-setDefaultPolicy.addEventListener("click", () => savePolicySessionAssignment(true));
+savePolicy.addEventListener("click", () => saveCurrentPolicy());
+setDefaultPolicy.addEventListener("click", () => saveCurrentPolicy(true));
 newPolicy.addEventListener("click", openCreatePolicyDialog);
 cancelCreatePolicy.addEventListener("click", () => createPolicyDialog.close());
 confirmCreatePolicy.addEventListener("click", createPolicy);

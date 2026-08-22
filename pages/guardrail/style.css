@@ -315,6 +315,17 @@ button:disabled {
     margin: 20px 0
 }
 
+.policy-basic-editor {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0
+}
+
+.policy-basic-editor textarea {
+    min-height: 92px;
+    font-family: inherit
+}
+
 .policy-detail-meta div {
     display: grid;
     gap: 4px;
@@ -329,15 +340,33 @@ button:disabled {
     font-size: .78rem
 }
 
-.policy-json-editor {
-    padding-top: 18px;
-    border-top: 1px solid #e2e8f0
-}
-
 .policy-session-assignment {
     margin-top: 18px;
     padding-top: 18px;
     border-top: 1px solid #e2e8f0
+}
+
+.policy-step-settings-section {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0
+}
+
+.policy-step-settings {
+    display: grid;
+    gap: 12px
+}
+
+.policy-step-card {
+    padding: 14px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px
+}
+
+.policy-step-card h4 {
+    margin: 0 0 12px;
+    color: #26334a
 }
 
 .policy-session-assignment h3 {
@@ -348,12 +377,6 @@ button:disabled {
 
 .policy-session-actions {
     margin-top: 12px
-}
-
-.policy-json-editor h3 {
-    margin: 0 0 12px;
-    color: #26334a;
-    font-size: 1rem
 }
 
 .json-editor {
@@ -367,6 +390,11 @@ button:disabled {
     border-radius: 8px;
     resize: vertical;
     font: .84rem/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace
+}
+
+.policy-step-bindings-json {
+    min-height: 150px;
+    margin-top: 4px
 }
 
 .json-editor:focus {
