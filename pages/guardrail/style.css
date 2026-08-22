@@ -447,6 +447,13 @@ label {
     font-weight: 650
 }
 
+.rule-field-hint {
+    color: #64748b;
+    font-size: .78rem;
+    font-weight: 400;
+    line-height: 1.45
+}
+
 input,
 select,
 textarea {

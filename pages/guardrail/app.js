@@ -479,6 +479,12 @@ function createRuleHitActionSelect(templateKey, value) {
   select.value = values.includes(value) ? value : "default";
   return select;
 }
+function createRuleFieldHint(text) {
+  const hint = document.createElement("span");
+  hint.className = "rule-field-hint";
+  hint.textContent = text;
+  return hint;
+}
 function syncRuleEditor(editor) {
   const rule = ruleLibrary.rules.find((item) => item.rule_id === editor.dataset.ruleId);
   if (!rule) return true;
@@ -497,7 +503,7 @@ function syncRuleEditor(editor) {
     ruleStatus.textContent = "模板参数必须是 JSON 对象。";
     return false;
   }
-  const priority = Number.parseInt(editor.querySelector("input").value, 10);
+  const priority = Number.parseInt(editor.querySelector('input[type="number"]').value, 10);
   const selects = editor.querySelectorAll("select");
   rule.description = editor.querySelector(".rule-description").value.trim();
   rule.default_priority = Number.isNaN(priority) ? 100 : priority;
@@ -535,14 +541,14 @@ function createRuleEditor(rule) {
   actions.append(save, saveAs, close, remove); heading.append(headingText, actions);
   const grid = document.createElement("div"); grid.className = "form-grid";
   const descriptionLabel = document.createElement("label"); descriptionLabel.textContent = "规则描述";
-  const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(description);
+  const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(createRuleFieldHint("用于规则列表的说明，不影响实际执行。"), description);
   const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
-  const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(priority);
-  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit));
-  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createActionSelect(errorActions, rule.default_action_on_error));
+  const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(createRuleFieldHint("数值越小越先执行；策略编排可覆盖此值。"), priority);
+  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 当前会回退为 Step 默认动作。"), createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit));
+  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；retry_generation 当前会回退为 Step 默认动作。"), createActionSelect(errorActions, rule.default_action_on_error));
   grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
   const configLabel = document.createElement("label"); configLabel.className = "full-width"; configLabel.textContent = "模板参数（JSON）";
-  const config = document.createElement("textarea"); config.spellcheck = false; config.value = JSON.stringify(rule.template_config || {}, null, 2); configLabel.append(config);
+  const config = document.createElement("textarea"); config.spellcheck = false; config.value = JSON.stringify(rule.template_config || {}, null, 2); configLabel.append(createRuleFieldHint("仅填写当前模板的业务参数；必须是 JSON 对象。规则 ID 与模板类型创建后不可修改。"), config);
   editor.append(heading, grid, configLabel);
   editor.addEventListener("input", () => editor.classList.add("is-dirty"));
   editor.addEventListener("change", () => editor.classList.add("is-dirty"));

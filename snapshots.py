@@ -9,7 +9,8 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 try:
     from .config import NormalizedConfig, normalize_config
