@@ -152,7 +152,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         plugin = _Plugin()
         plugin._register_pages_web_api()
         rules = {"rules": [{"rule_id": "risk", "template_key": "plain_keywords", "template_config": {"keywords": ["secret"]}}]}
-        policies = {"policies": [{"policy_id": "none", "name": "None", "builtin": True}, {"policy_id": "input_policy", "name": "Input", "bindings": [{"rule_id": "risk", "rail": "input_rail"}]}], "active_policy_id": "input_policy"}
+        policies = {"policies": [{"policy_id": "default", "name": "Default", "builtin": True}, {"policy_id": "input_policy", "name": "Input", "bindings": [{"rule_id": "risk", "rail": "input_rail"}]}], "active_policy_id": "input_policy"}
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):
             with patch("pages_api.request", _Request({"expected_revision": 0, "rule_library": rules})):
                 saved_rules = asyncio.run(plugin._pages_save_rule_library())
@@ -170,7 +170,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
     def test_rule_deletion_is_rejected_when_a_policy_uses_it(self):
         plugin = _Plugin()
         plugin._register_pages_web_api()
-        library = {"rules": [{"rule_id": "risk", "template_key": "plain_keywords"}], "policies": [{"policy_id": "none", "name": "None", "builtin": True}, {"policy_id": "active", "name": "Active", "bindings": [{"rule_id": "risk", "rail": "input_rail"}]}], "active_policy_id": "active"}
+        library = {"rules": [{"rule_id": "risk", "template_key": "plain_keywords"}], "policies": [{"policy_id": "default", "name": "Default", "builtin": True}, {"policy_id": "active", "name": "Active", "bindings": [{"rule_id": "risk", "rail": "input_rail"}]}], "active_policy_id": "active"}
         asyncio.run(plugin.snapshot_manager.publish_policy_library(PolicyLibrary.from_dict(library), 0))
 
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):

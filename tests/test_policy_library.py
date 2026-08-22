@@ -47,6 +47,18 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(rule.to_dict()["default_action_on_hit"], "sanitize")
         self.assertEqual(binding.to_dict()["action_on_hit"], "sanitize")
 
+    def test_legacy_none_builtin_policy_migrates_to_default(self):
+        library = PolicyLibrary.from_dict(
+            {
+                "policies": [{"policy_id": "none", "name": "None", "builtin": True}],
+                "active_policy_id": "none",
+            }
+        )
+
+        self.assertEqual(library.active_policy_id, "default")
+        self.assertEqual(library.policies[0].policy_id, "default")
+        self.assertEqual(library.policies[0].name, "Default")
+
     def test_policy_compiles_rule_defaults_and_binding_overrides(self):
         library = PolicyLibrary(
             rules=(
@@ -64,7 +76,7 @@ class PolicyLibraryTests(unittest.TestCase):
                 ),
             ),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "safe_input",
                     "Safe Input",
@@ -103,7 +115,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(rule,),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "observe_policy",
                     "Observe",
@@ -162,7 +174,7 @@ class PolicyLibraryTests(unittest.TestCase):
     def test_missing_rule_binding_is_fatal(self):
         library = PolicyLibrary(
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "broken",
                     "Broken",
@@ -181,7 +193,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("replace", "replace_input", {}),),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_step",
                     "Invalid step",
@@ -200,7 +212,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("gate", "logic_gate", {}),),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_action",
                     "Invalid action",
@@ -218,8 +230,8 @@ class PolicyLibraryTests(unittest.TestCase):
     def test_rule_library_rejects_invalid_default_sanitize_without_a_binding(self):
         library = PolicyLibrary(
             rules=(RuleDefinition("review", "llm_review", {}, default_action_on_hit="sanitize"),),
-            policies=(PolicyDefinition("none", "None", builtin=True),),
-            active_policy_id="none",
+            policies=(PolicyDefinition("default", "Default", builtin=True),),
+            active_policy_id="default",
         )
 
         _raw, validation = compile_policy_to_legacy_config({}, library)
@@ -231,7 +243,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_hit="retry_generation"),),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "early_retry",
                     "Early retry",
@@ -250,7 +262,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_error="retry_generation"),),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "early_retry",
                     "Early retry",
@@ -271,7 +283,7 @@ class PolicyLibraryTests(unittest.TestCase):
                 RuleDefinition("future_rule", "preset_encoded_payload", {}),
             ),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "future",
                     "Future",
@@ -302,7 +314,7 @@ class PolicyLibraryTests(unittest.TestCase):
             PolicyLibrary(
                 rules=(rule,),
                 policies=(
-                    PolicyDefinition("none", "None", builtin=True),
+                    PolicyDefinition("default", "Default", builtin=True),
                     PolicyDefinition("active", "Active", bindings=(binding,)),
                 ),
                 active_policy_id="active",

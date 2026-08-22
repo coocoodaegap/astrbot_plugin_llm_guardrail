@@ -143,7 +143,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         snapshot = manager.current
 
-        self.assertEqual(snapshot.policy_library.active_policy_id, "none")
+        self.assertEqual(snapshot.policy_library.active_policy_id, "default")
         self.assertEqual(snapshot.policy_library.rules, ())
         self.assertEqual(snapshot.runtime_config.rails["input_rail"].rules, [])
 
@@ -156,7 +156,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
                 RuleDefinition("risk", "plain_keywords", {"keywords": ["secret"]}),
             ),
             policies=(
-                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition("default", "Default", builtin=True),
                 PolicyDefinition(
                     "input_policy",
                     "Input",
@@ -172,7 +172,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(manager.current.policy_library.active_policy_id, "input_policy")
         self.assertEqual(manager.current.runtime_config.rails["input_rail"].rules[0].rule_id, "risk")
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
-        self.assertEqual(old_snapshot.policy_library.active_policy_id, "none")
+        self.assertEqual(old_snapshot.policy_library.active_policy_id, "default")
 
     def test_existing_rule_template_cannot_be_changed(self):
         manager = ConfigSnapshotManager({})
@@ -192,6 +192,16 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertTrue(first.success)
         self.assertFalse(changed.success)
         self.assertIn("template cannot change", changed.diagnostics[0])
+
+    def test_builtin_default_policy_cannot_be_deleted(self):
+        manager = ConfigSnapshotManager({})
+
+        result = asyncio.run(
+            manager.publish_policy_collection((), "default", expected_revision=0)
+        )
+
+        self.assertFalse(result.success)
+        self.assertIn("Default policy cannot be deleted", result.diagnostics[0])
 
 
 if __name__ == "__main__":

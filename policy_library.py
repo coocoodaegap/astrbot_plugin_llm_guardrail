@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 RULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+DEFAULT_POLICY_ID = "default"
 RULE_METADATA_KEYS = {
     "__template_key",
     "template_key",
@@ -173,20 +174,20 @@ class PolicyLibrary:
 
     rules: tuple[RuleDefinition, ...] = ()
     policies: tuple[PolicyDefinition, ...] = ()
-    active_policy_id: str = "none"
+    active_policy_id: str = DEFAULT_POLICY_ID
 
     @classmethod
     def empty(cls) -> "PolicyLibrary":
         return cls(
             policies=(
                 PolicyDefinition(
-                    policy_id="none",
-                    name="None",
-                    description="不启用任何 Guardrail 规则。",
+                    policy_id=DEFAULT_POLICY_ID,
+                    name="Default",
+                    description="默认策略，暂不绑定 Guardrail 规则。",
                     builtin=True,
                 ),
             ),
-            active_policy_id="none",
+            active_policy_id=DEFAULT_POLICY_ID,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -200,6 +201,27 @@ class PolicyLibrary:
     def from_dict(cls, value: Mapping[str, Any]) -> "PolicyLibrary":
         rules = value.get("rules")
         policies = value.get("policies")
+        parsed_policies = [
+            PolicyDefinition.from_dict(item)
+            for item in policies
+            if isinstance(item, Mapping)
+        ] if isinstance(policies, list) else []
+        normalized_policies = tuple(
+            PolicyDefinition(
+                policy_id=DEFAULT_POLICY_ID,
+                name="Default",
+                description=policy.description or "默认策略，暂不绑定 Guardrail 规则。",
+                bindings=policy.bindings,
+                session_scope=policy.session_scope,
+                builtin=True,
+            )
+            if policy.policy_id == "none" and policy.builtin
+            else policy
+            for policy in parsed_policies
+        )
+        active_policy_id = str(value.get("active_policy_id") or DEFAULT_POLICY_ID).strip()
+        if active_policy_id == "none":
+            active_policy_id = DEFAULT_POLICY_ID
         return cls(
             rules=tuple(
                 RuleDefinition.from_dict(item)
@@ -208,14 +230,8 @@ class PolicyLibrary:
             )
             if isinstance(rules, list)
             else (),
-            policies=tuple(
-                PolicyDefinition.from_dict(item)
-                for item in policies
-                if isinstance(item, Mapping)
-            )
-            if isinstance(policies, list)
-            else (),
-            active_policy_id=str(value.get("active_policy_id") or "none").strip(),
+            policies=normalized_policies,
+            active_policy_id=active_policy_id,
         )
 
     def get_policy(self, policy_id: str | None = None) -> PolicyDefinition | None:
@@ -427,7 +443,7 @@ def import_legacy_rule_list(raw_config: Mapping[str, Any] | None) -> tuple[Polic
     return PolicyLibrary(
         rules=tuple(rules),
         policies=(PolicyLibrary.empty().policies[0], legacy_policy),
-        active_policy_id="legacy_import" if bindings else "none",
+        active_policy_id="legacy_import" if bindings else DEFAULT_POLICY_ID,
     ), diagnostics
 
 

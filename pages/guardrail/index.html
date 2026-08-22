@@ -99,11 +99,33 @@
     </section>
     <section class="tab-panel" id="panel-policies" role="tabpanel" aria-labelledby="tab-policies" data-panel="policies"
       hidden>
-      <div class="placeholder">
-        <p class="eyebrow">NEXT</p>
-        <h2>策略编排</h2>
-        <p>后续将在这里配置规则引用、Rail、优先级、动作、依赖关系及策略诊断。</p>
-      </div>
+      <section id="policy-list-panel" class="policy-list-panel" aria-label="策略列表">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">POLICY LIBRARY</p>
+            <h2>策略编排</h2>
+            <p>选择策略查看其当前的执行范围与规则绑定；编排编辑将在下一步接入。</p>
+          </div>
+          <span id="policy-count" class="count-badge">0</span>
+        </div>
+        <p id="policy-library-status" class="muted" aria-live="polite"></p>
+        <div id="policy-list" class="policy-list"></div>
+      </section>
+      <section id="policy-detail-panel" class="policy-detail-panel" aria-label="策略详情" hidden>
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">POLICY DETAILS</p>
+            <h2 id="policy-detail-name">策略详情</h2>
+            <p id="policy-detail-description"></p>
+          </div>
+          <button id="back-to-policy-list" type="button" class="button-secondary">返回策略列表</button>
+        </div>
+        <div id="policy-detail-meta" class="policy-detail-meta"></div>
+        <section class="policy-binding-summary">
+          <h3>规则绑定摘要</h3>
+          <div id="policy-detail-bindings" class="policy-detail-bindings"></div>
+        </section>
+      </section>
     </section>
     <section class="tab-panel" id="panel-access" role="tabpanel" aria-labelledby="tab-access" data-panel="access"
       hidden>

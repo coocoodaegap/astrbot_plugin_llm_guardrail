@@ -10,6 +10,16 @@ const status = $("status"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
+  policyListPanel = $("policy-list-panel"),
+  policyDetailPanel = $("policy-detail-panel"),
+  policyList = $("policy-list"),
+  policyCount = $("policy-count"),
+  policyLibraryStatus = $("policy-library-status"),
+  policyDetailName = $("policy-detail-name"),
+  policyDetailDescription = $("policy-detail-description"),
+  policyDetailMeta = $("policy-detail-meta"),
+  policyDetailBindings = $("policy-detail-bindings"),
+  backToPolicyList = $("back-to-policy-list"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationPanel = $("rule-creation-panel"),
@@ -151,7 +161,9 @@ const systemOptionDescriptions = {
 };
 let currentRevision = null,
   ruleLibrary = { rules: [] },
+  policyLibrary = { policies: [], active_policy_id: "default" },
   openRuleIds = [],
+  selectedPolicyId = null,
   saveAsSourceRuleId = null,
   pendingRuleDeletionId = null,
   selectedNewTemplate = null,
@@ -497,6 +509,80 @@ function renderRuleList() {
     ruleList.append(item);
   }
 }
+const railLabels = {
+  input_rail: "Step 1 · 输入分析",
+  routing_rail: "Step 2 · 模型路由",
+  request_rail: "Step 3 · 请求检查",
+  prompt_rail: "Step 4 · 提示词加工",
+  output_rail: "Step 5 · 输出检查",
+};
+function showPolicyList() {
+  policyDetailPanel.hidden = true;
+  policyListPanel.hidden = false;
+  selectedPolicyId = null;
+  renderPolicyList();
+}
+function showPolicyDetail(policyId) {
+  const policy = policyLibrary.policies.find((item) => item.policy_id === policyId);
+  if (!policy) return;
+  selectedPolicyId = policyId;
+  policyListPanel.hidden = true;
+  policyDetailPanel.hidden = false;
+  renderPolicyDetail(policy);
+}
+function renderPolicyList() {
+  policyList.replaceChildren();
+  policyCount.textContent = String(policyLibrary.policies.length);
+  for (const policy of policyLibrary.policies) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "policy-list-item";
+    const title = document.createElement("strong");
+    const description = document.createElement("small");
+    const metadata = document.createElement("span");
+    title.textContent = policy.name || policy.policy_id || "未命名策略";
+    description.textContent = String(policy.description || "").trim() || "未说明";
+    const bindingCount = Array.isArray(policy.bindings) ? policy.bindings.length : 0;
+    metadata.textContent = `${bindingCount} 条规则绑定${policy.policy_id === policyLibrary.active_policy_id ? " · 当前活动" : ""}`;
+    item.append(title, description, metadata);
+    item.addEventListener("click", () => showPolicyDetail(policy.policy_id));
+    policyList.append(item);
+  }
+}
+function addPolicyDetail(label, value) {
+  const item = document.createElement("div");
+  const term = document.createElement("span");
+  const detail = document.createElement("strong");
+  term.textContent = label;
+  detail.textContent = value;
+  item.append(term, detail);
+  policyDetailMeta.append(item);
+}
+function renderPolicyDetail(policy) {
+  policyDetailName.textContent = policy.name || policy.policy_id || "未命名策略";
+  policyDetailDescription.textContent = String(policy.description || "").trim() || "未说明";
+  policyDetailMeta.replaceChildren();
+  addPolicyDetail("策略 ID", policy.policy_id || "未设置");
+  addPolicyDetail("状态", policy.policy_id === policyLibrary.active_policy_id ? "当前活动策略" : "未启用");
+  addPolicyDetail("类型", policy.builtin ? "内置策略" : "自定义策略");
+  const bindings = Array.isArray(policy.bindings) ? policy.bindings : [];
+  addPolicyDetail("规则绑定", `${bindings.length} 条`);
+  policyDetailBindings.replaceChildren();
+  if (!bindings.length) {
+    policyDetailBindings.textContent = "此策略暂未绑定规则。";
+    return;
+  }
+  for (const binding of bindings) {
+    const item = document.createElement("article");
+    item.className = "policy-binding-item";
+    const title = document.createElement("strong");
+    const meta = document.createElement("span");
+    title.textContent = binding.rule_id || "未命名规则";
+    meta.textContent = railLabels[binding.rail] || binding.rail || "未知 Step";
+    item.append(title, meta);
+    policyDetailBindings.append(item);
+  }
+}
 function createActionSelect(values, value) {
   const select = document.createElement("select");
   populateRuleActionOptions(select, values);
@@ -839,11 +925,12 @@ function createRule() {
   renderRuleList();
 }
 async function refresh() {
-  const [overviewResult, diagnosticsResult, ruleResult, systemSettingsResult] =
+  const [overviewResult, diagnosticsResult, ruleResult, policyResult, systemSettingsResult] =
     await Promise.all([
     bridge.apiGet("get_overview"),
     bridge.apiGet("get_diagnostics"),
     bridge.apiGet("get_rule_library"),
+    bridge.apiGet("get_policy_library"),
     bridge.apiGet("get_system_settings"),
   ]);
   currentRevision = overviewResult.overview.revision;
@@ -857,11 +944,33 @@ async function refresh() {
       ? ruleResult.rule_library.rules
       : [],
   };
+  policyLibrary = {
+    policies: Array.isArray(policyResult.policy_library?.policies)
+      ? policyResult.policy_library.policies
+      : [],
+    active_policy_id: String(policyResult.policy_library?.active_policy_id || "default"),
+  };
   openRuleEditors.replaceChildren();
   openRuleIds = [];
   for (const ruleId of previousOpenRuleIds) openRule(ruleId);
   ruleEmptyState.hidden = openRuleIds.length > 0;
   renderRuleList();
+  if (selectedPolicyId && policyLibrary.policies.some((policy) => policy.policy_id === selectedPolicyId)) {
+    renderPolicyDetail(policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId));
+  } else {
+    selectedPolicyId = null;
+    policyDetailPanel.hidden = true;
+    policyListPanel.hidden = false;
+    renderPolicyList();
+  }
+  const policyValidation = policyResult.validation || { warnings: [], fatal_errors: [] };
+  const policyMessages = [
+    ...(policyValidation.fatal_errors || []),
+    ...(policyValidation.warnings || []),
+  ];
+  policyLibraryStatus.textContent = policyMessages.length
+    ? policyMessages.join(" · ")
+    : `已加载 ${policyLibrary.policies.length} 条策略，revision ${policyResult.revision}。`;
   const validation = ruleResult.validation || {
       warnings: [],
       fatal_errors: [],
@@ -878,6 +987,7 @@ async function refresh() {
 newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
+backToPolicyList.addEventListener("click", showPolicyList);
 cancelSaveRuleAs.addEventListener("click", () => saveRuleAsDialog.close());
 confirmSaveRuleAs.addEventListener("click", saveRuleAs);
 cancelRuleDelete.addEventListener("click", () => confirmRuleDeleteDialog.close());

@@ -141,6 +141,20 @@ class ConfigSnapshotManager:
     ) -> SnapshotPublishResult:
         """Publish a policy-library edit while retaining non-library settings."""
 
+        if (
+            any(
+                policy.policy_id == "default" and policy.builtin
+                for policy in self._current.policy_library.policies
+            )
+            and not any(
+                policy.policy_id == "default" and policy.builtin
+                for policy in policy_library.policies
+            )
+        ):
+            return SnapshotPublishResult(
+                success=False,
+                diagnostics=("the built-in Default policy cannot be deleted",),
+            )
         raw_config = copy.deepcopy(self._current.source_config)
         raw_config["policy_library"] = policy_library.to_dict()
         return await self.publish(raw_config, expected_revision)
