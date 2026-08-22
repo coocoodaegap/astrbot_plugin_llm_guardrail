@@ -13,8 +13,7 @@ from policy_library import (
     PolicyLibrary,
     PolicyRuleBinding,
     RuleDefinition,
-    compile_policy_to_legacy_config,
-    import_legacy_rule_list,
+    compile_policy_to_runtime_config,
 )
 
 
@@ -31,33 +30,6 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertEqual(restored.description, "拦截敏感词")
         self.assertNotIn("description", restored.template_config)
-
-    def test_legacy_hit_action_aliases_are_canonicalized_in_new_library_data(self):
-        rule = RuleDefinition.from_dict(
-            {
-                "rule_id": "legacy",
-                "template_key": "plain_keywords",
-                "default_action_on_hit": "sanitize_input",
-            }
-        )
-        binding = PolicyRuleBinding.from_dict(
-            {"rule_id": "legacy", "rail": "output_rail", "action_on_hit": "sanitize_output"}
-        )
-
-        self.assertEqual(rule.to_dict()["default_action_on_hit"], "sanitize")
-        self.assertEqual(binding.to_dict()["action_on_hit"], "sanitize")
-
-    def test_legacy_none_builtin_policy_migrates_to_default(self):
-        library = PolicyLibrary.from_dict(
-            {
-                "policies": [{"policy_id": "none", "name": "None", "builtin": True}],
-                "active_policy_id": "none",
-            }
-        )
-
-        self.assertEqual(library.active_policy_id, "default")
-        self.assertEqual(library.policies[0].policy_id, "default")
-        self.assertEqual(library.policies[0].name, "Default")
 
     def test_policy_compiles_rule_defaults_and_binding_overrides(self):
         library = PolicyLibrary(
@@ -76,7 +48,7 @@ class PolicyLibraryTests(unittest.TestCase):
                 ),
             ),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "safe_input",
                     "Safe Input",
@@ -93,7 +65,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="safe_input",
         )
 
-        raw, validation = compile_policy_to_legacy_config(
+        raw, validation = compile_policy_to_runtime_config(
             {"input_rail": {"max_text_chars": 123}}, library
         )
         normalized = normalize_config(raw)
@@ -115,7 +87,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(rule,),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "observe_policy",
                     "Observe",
@@ -134,10 +106,10 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="observe_policy",
         )
 
-        observed, first_validation = compile_policy_to_legacy_config(
+        observed, first_validation = compile_policy_to_runtime_config(
             {}, library, "observe_policy"
         )
-        blocked, second_validation = compile_policy_to_legacy_config(
+        blocked, second_validation = compile_policy_to_runtime_config(
             {}, library, "block_policy"
         )
 
@@ -146,35 +118,10 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(observed["input_rail"]["rule_list"][0]["action_on_hit"], "observe")
         self.assertEqual(blocked["request_rail"]["rule_list"][0]["action_on_hit"], "block")
 
-    def test_imports_legacy_rule_list_without_runtime_metadata(self):
-        legacy = {
-            "input_rail": {
-                "rule_list": [
-                    {
-                        "__template_key": "regex_pattern",
-                        "rule_id": "legacy_regex",
-                        "pattern": "secret",
-                        "priority": 5,
-                        "action_on_hit": "block",
-                        "_compiled_pattern": "must_not_persist",
-                    }
-                ]
-            }
-        }
-
-        library, diagnostics = import_legacy_rule_list(legacy)
-        raw, validation = compile_policy_to_legacy_config({}, library)
-
-        self.assertEqual(diagnostics, [])
-        self.assertTrue(validation.valid)
-        self.assertEqual(library.active_policy_id, "legacy_import")
-        self.assertNotIn("_compiled_pattern", library.rules[0].template_config)
-        self.assertEqual(raw["input_rail"]["rule_list"][0]["pattern"], "secret")
-
     def test_missing_rule_binding_is_fatal(self):
         library = PolicyLibrary(
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "broken",
                     "Broken",
@@ -184,7 +131,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="broken",
         )
 
-        _raw, validation = compile_policy_to_legacy_config({}, library)
+        _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertFalse(validation.valid)
         self.assertIn("references missing rule missing", validation.fatal_errors[0])
@@ -193,7 +140,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("replace", "replace_input", {}),),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_step",
                     "Invalid step",
@@ -203,7 +150,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="invalid_step",
         )
 
-        _raw, validation = compile_policy_to_legacy_config({}, library)
+        _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertFalse(validation.valid)
         self.assertIn("Step 1", validation.fatal_errors[0])
@@ -212,7 +159,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("gate", "logic_gate", {}),),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_action",
                     "Invalid action",
@@ -222,7 +169,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="invalid_action",
         )
 
-        _raw, validation = compile_policy_to_legacy_config({}, library)
+        _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertFalse(validation.valid)
         self.assertIn("only available", validation.fatal_errors[0])
@@ -230,11 +177,11 @@ class PolicyLibraryTests(unittest.TestCase):
     def test_rule_library_rejects_invalid_default_sanitize_without_a_binding(self):
         library = PolicyLibrary(
             rules=(RuleDefinition("review", "llm_review", {}, default_action_on_hit="sanitize"),),
-            policies=(PolicyDefinition("default", "Default", builtin=True),),
-            active_policy_id="default",
+            policies=(PolicyDefinition("_default", "Default", builtin=True),),
+            active_policy_id="_default",
         )
 
-        _raw, validation = compile_policy_to_legacy_config({}, library)
+        _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertFalse(validation.valid)
         self.assertIn("only available", validation.fatal_errors[0])
@@ -243,7 +190,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_hit="retry_generation"),),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "early_retry",
                     "Early retry",
@@ -253,7 +200,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="early_retry",
         )
 
-        _raw, validation = compile_policy_to_legacy_config({}, library)
+        _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertTrue(validation.valid)
         self.assertTrue(any("outside Step 5" in warning for warning in validation.warnings))
@@ -262,7 +209,7 @@ class PolicyLibraryTests(unittest.TestCase):
         library = PolicyLibrary(
             rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_error="retry_generation"),),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "early_retry",
                     "Early retry",
@@ -272,7 +219,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="early_retry",
         )
 
-        _raw, validation = compile_policy_to_legacy_config({}, library)
+        _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertTrue(validation.valid)
         self.assertTrue(any("error action outside Step 5" in warning for warning in validation.warnings))
@@ -283,7 +230,7 @@ class PolicyLibraryTests(unittest.TestCase):
                 RuleDefinition("future_rule", "preset_encoded_payload", {}),
             ),
             policies=(
-                PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "future",
                     "Future",
@@ -293,7 +240,7 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="future",
         )
 
-        raw, validation = compile_policy_to_legacy_config({}, library)
+        raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertTrue(validation.valid)
         self.assertTrue(validation.warnings)
@@ -309,12 +256,12 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertNotIn("default_threshold", rule.to_dict())
         self.assertNotIn("threshold", binding.to_dict())
-        compiled = compile_policy_to_legacy_config(
+        compiled = compile_policy_to_runtime_config(
             {},
             PolicyLibrary(
                 rules=(rule,),
                 policies=(
-                    PolicyDefinition("default", "Default", builtin=True),
+                PolicyDefinition("_default", "Default", builtin=True),
                     PolicyDefinition("active", "Active", bindings=(binding,)),
                 ),
                 active_policy_id="active",

@@ -66,7 +66,7 @@ def _resolved_hit_action(rail: NormalizedRail, result: RuleResult) -> str:
     if not result.matched:
         return "none"
     if result.action_on_hit != "default":
-        action = _normalize_action_alias(result.action_on_hit)
+        action = result.action_on_hit
         if action != "retry_generation":
             return action
     return _default_hit_action(rail)
@@ -74,9 +74,9 @@ def _resolved_hit_action(rail: NormalizedRail, result: RuleResult) -> str:
 
 def _default_hit_action(rail: NormalizedRail) -> str:
     if rail.rail in {"input_rail", "request_rail"}:
-        return _normalize_action_alias(str(rail.settings.get("default_action_on_hit", "block")))
+        return str(rail.settings.get("default_action_on_hit", "block"))
     if rail.rail == "output_rail":
-        return _normalize_action_alias(str(rail.settings.get("default_action_on_hit", "block")))
+        return str(rail.settings.get("default_action_on_hit", "block"))
     return "observe"
 
 
@@ -85,14 +85,6 @@ def _resolved_error_action(rail: NormalizedRail, action: str) -> str:
         if action != "retry_generation":
             return action
     return str(rail.settings.get("default_action_on_error", "discard") or "discard")
-
-
-def _normalize_action_alias(action: str) -> str:
-    if action in {"block_input", "sanitize_input"}:
-        return action.removesuffix("_input")
-    if action in {"block_output", "sanitize_output"}:
-        return action.removesuffix("_output")
-    return action
 
 
 def _hit_action_target(rail_name: str, action: str) -> str:

@@ -329,26 +329,6 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(cfg.rails["input_rail"].settings["max_text_chars"], 42)
         self.assertFalse(cfg.fallback_policy_settings["enable_prompt_leakage_detector"])
 
-    def test_legacy_risk_action_alias_is_normalized(self):
-        cfg = normalize_config(
-            {
-                "input_rail": {
-                    "rule_list": [
-                        {
-                            "__template_key": "plain_keywords",
-                            "rule_id": "legacy_action",
-                            "keywords": ["secret"],
-                            "action_on_hit": "sanitize_input",
-                        }
-                    ]
-                }
-            }
-        )
-
-        rule = cfg.rails["input_rail"].rules[0]
-        self.assertTrue(rule.valid)
-        self.assertEqual(rule.config["action_on_hit"], "sanitize")
-
     def test_error_action_defaults_are_normalized(self):
         cfg = normalize_config(
             {

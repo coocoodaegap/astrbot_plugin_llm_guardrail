@@ -288,35 +288,44 @@ button:disabled {
     font-size: .78rem
 }
 
-.policy-binding-summary {
+.policy-json-editor {
     padding-top: 18px;
     border-top: 1px solid #e2e8f0
 }
 
-.policy-binding-summary h3 {
+.policy-json-editor h3 {
     margin: 0 0 12px;
     color: #26334a;
     font-size: 1rem
 }
 
-.policy-detail-bindings {
-    display: grid;
-    gap: 8px;
-    color: #64748b
+.json-editor {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 260px;
+    padding: 12px;
+    color: #1e293b;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    resize: vertical;
+    font: .84rem/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace
 }
 
-.policy-binding-item {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px
+.json-editor:focus {
+    outline: 2px solid #93c5fd;
+    outline-offset: 1px;
+    border-color: #3b82f6
 }
 
-.policy-binding-item span {
-    color: #64748b;
-    font-size: .82rem
+.json-editor.is-dirty {
+    border-color: #d97706
+}
+
+.json-editor.is-invalid {
+    color: #991b1b;
+    background: #fff1f2;
+    border-color: #dc2626
 }
 
 

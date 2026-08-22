@@ -47,8 +47,6 @@ INPUT_ACTIONS = {
     "retry_generation",
     "block",
     "sanitize",
-    "block_input",
-    "sanitize_input",
 }
 OUTPUT_ACTIONS = {
     "default",
@@ -56,8 +54,6 @@ OUTPUT_ACTIONS = {
     "retry_generation",
     "block",
     "sanitize",
-    "block_output",
-    "sanitize_output",
 }
 ERROR_ACTIONS = {"default", "discard", "record", "retry_generation", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
@@ -343,7 +339,7 @@ def _normalize_rule(
         "llm_review",
     }:
         raw_action = raw_action_on_hit
-        action = _normalize_action_alias(raw_action)
+        action = raw_action
         config["action_on_hit"] = action
         if action == "sanitize" and template_key not in {"plain_keywords", "regex_pattern"}:
             warnings.append(
@@ -417,9 +413,7 @@ def _normalize_plain_keywords(
         weight_map[key] = weight
     config["_keyword_weight_map"] = weight_map
     config["sanitizer"] = _as_str(config.get("sanitizer", ""))
-    config["action_on_hit"] = _normalize_action_alias(
-        _as_str(config.get("action_on_hit", "default")) or "default"
-    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 
 def _normalize_regex_pattern(
@@ -428,9 +422,7 @@ def _normalize_regex_pattern(
     pattern = _as_str(config.get("pattern", ""))
     config["pattern"] = pattern
     config["sanitizer"] = _as_str(config.get("sanitizer", ""))
-    config["action_on_hit"] = _normalize_action_alias(
-        _as_str(config.get("action_on_hit", "default")) or "default"
-    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
     if not pattern:
         config["_compiled_pattern"] = None
         warnings.append(f"{rule_id}.pattern is empty; rule skipped")
@@ -452,9 +444,7 @@ def _normalize_logic_gate(
     config["gate"] = gate
     config["inputs"] = _clean_string_list(config.get("inputs", []))
     config["invert"] = _as_bool(config.get("invert", False), False)
-    config["action_on_hit"] = _normalize_action_alias(
-        _as_str(config.get("action_on_hit", "default")) or "default"
-    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 
 def _normalize_strengthen_prompt(
@@ -480,9 +470,7 @@ def _normalize_llm_review(
     config["audit_prompt"] = _as_str(config.get("audit_prompt", "")).strip()
     if not config["audit_prompt"]:
         warnings.append(f"{rule_id}.audit_prompt is empty; rule skipped")
-    config["action_on_hit"] = _normalize_action_alias(
-        _as_str(config.get("action_on_hit", "default")) or "default"
-    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 
 def _normalize_rag_judge(
@@ -497,9 +485,7 @@ def _normalize_rag_judge(
     config["timeout_seconds"] = max(
         _as_float(config.get("timeout_seconds", 8), 8.0), 0.0
     )
-    config["action_on_hit"] = _normalize_action_alias(
-        _as_str(config.get("action_on_hit", "default")) or "default"
-    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 
 def _validate_cross_references(
@@ -592,8 +578,8 @@ def _normalize_fallback_policy_settings(
         "enable_llm_review_in_fallback_policy": _as_bool(
             raw_settings.get("enable_llm_review_in_fallback_policy"), False
         ),
-        "default_action_on_hit": _normalize_action_alias(
-            _as_str(raw_settings.get("default_action_on_hit", "block"))
+        "default_action_on_hit": _as_str(
+            raw_settings.get("default_action_on_hit", "block")
         ),
         "default_action_on_error": _as_str(
             raw_settings.get("default_action_on_error", "discard")
@@ -681,7 +667,7 @@ def _coerce_rail_settings(
             settings.get("default_llm_provider", "")
         )
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
-        action = _normalize_action_alias(raw_action)
+        action = raw_action
         if action not in {"observe", "block"}:
             warnings.append("input_rail.default_action_on_hit is invalid; fallback to block")
             action = "block"
@@ -702,7 +688,7 @@ def _coerce_rail_settings(
             settings.get("default_llm_provider", "")
         )
         raw_action = _as_str(settings.get("default_action_on_hit", "observe"))
-        action = _normalize_action_alias(raw_action)
+        action = raw_action
         if action not in {"observe", "block"}:
             warnings.append("request_rail.default_action_on_hit is invalid; fallback to observe")
             action = "observe"
@@ -724,7 +710,7 @@ def _coerce_rail_settings(
         )
         settings["max_retries"] = max(_as_int(settings.get("max_retries"), 0), 0)
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
-        action = _normalize_action_alias(raw_action)
+        action = raw_action
         if action != "block":
             warnings.append("output_rail.default_action_on_hit is invalid; fallback to block")
             action = "block"
@@ -740,14 +726,6 @@ def _coerce_rail_settings(
         settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     return settings
-
-
-def _normalize_action_alias(action: str) -> str:
-    if action in {"block_input", "block_output"}:
-        return "block"
-    if action in {"sanitize_input", "sanitize_output"}:
-        return "sanitize"
-    return action
 
 
 def _dependency_target(value: str) -> str:

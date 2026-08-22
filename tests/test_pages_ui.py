@@ -71,6 +71,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('id="policy-list-panel"', html)
         self.assertIn('id="policy-detail-panel"', html)
         self.assertIn('id="policy-list"', html)
+        self.assertIn('id="policy-bindings-json"', html)
+        self.assertNotIn('id="policy-detail-bindings"', html)
         self.assertIn('id="back-to-policy-list"', html)
         self.assertIn('id="save-system-settings"', html)
         self.assertIn('apiGet("get_system_settings")', javascript)
@@ -87,6 +89,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function showPolicyDetail", javascript)
         self.assertIn("function renderPolicyList", javascript)
         self.assertIn("function renderPolicyDetail", javascript)
+        self.assertIn("function syncPolicyBindingsJson", javascript)
         self.assertIn("规则命中风险时采用的默认处理方式", javascript)
         self.assertIn("所有群聊进入 Guardrail", javascript)
 

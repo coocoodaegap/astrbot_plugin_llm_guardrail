@@ -61,30 +61,6 @@ class HitActionPlanTests(unittest.TestCase):
         self.assertEqual(plan.target, "output")
         self.assertTrue(plan.stop_rail)
 
-    def test_legacy_action_alias_resolves_to_canonical_action(self):
-        cfg = normalize_config(
-            {
-                "input_rail": {
-                    "rule_list": [
-                        {
-                            "__template_key": "plain_keywords",
-                            "rule_id": "risk",
-                            "keywords": ["risk"],
-                            "action_on_hit": "sanitize_input",
-                        }
-                    ],
-                }
-            }
-        )
-        rail = cfg.rails["input_rail"]
-        result = evaluate_plain_keywords(rail.rules[0], "risk")
-
-        plan = resolve_hit_action_plan(rail, result)
-
-        self.assertEqual(plan.action, "sanitize")
-        self.assertEqual(plan.target, "input")
-        self.assertTrue(plan.mutate_text)
-
     def test_unmatched_result_resolves_to_none(self):
         cfg = normalize_config(
             {

@@ -18,7 +18,8 @@ const status = $("status"),
   policyDetailName = $("policy-detail-name"),
   policyDetailDescription = $("policy-detail-description"),
   policyDetailMeta = $("policy-detail-meta"),
-  policyDetailBindings = $("policy-detail-bindings"),
+  policyBindingsJson = $("policy-bindings-json"),
+  policyBindingsJsonStatus = $("policy-bindings-json-status"),
   backToPolicyList = $("back-to-policy-list"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleWorkspace = $("rule-workspace"),
@@ -161,7 +162,7 @@ const systemOptionDescriptions = {
 };
 let currentRevision = null,
   ruleLibrary = { rules: [] },
-  policyLibrary = { policies: [], active_policy_id: "default" },
+  policyLibrary = { policies: [], active_policy_id: "_default" },
   openRuleIds = [],
   selectedPolicyId = null,
   saveAsSourceRuleId = null,
@@ -567,20 +568,24 @@ function renderPolicyDetail(policy) {
   addPolicyDetail("类型", policy.builtin ? "内置策略" : "自定义策略");
   const bindings = Array.isArray(policy.bindings) ? policy.bindings : [];
   addPolicyDetail("规则绑定", `${bindings.length} 条`);
-  policyDetailBindings.replaceChildren();
-  if (!bindings.length) {
-    policyDetailBindings.textContent = "此策略暂未绑定规则。";
-    return;
-  }
-  for (const binding of bindings) {
-    const item = document.createElement("article");
-    item.className = "policy-binding-item";
-    const title = document.createElement("strong");
-    const meta = document.createElement("span");
-    title.textContent = binding.rule_id || "未命名规则";
-    meta.textContent = railLabels[binding.rail] || binding.rail || "未知 Step";
-    item.append(title, meta);
-    policyDetailBindings.append(item);
+  policyBindingsJson.value = JSON.stringify(bindings, null, 2);
+  policyBindingsJson.classList.remove("is-invalid", "is-dirty");
+  policyBindingsJsonStatus.textContent = "";
+}
+function syncPolicyBindingsJson() {
+  const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
+  if (!policy) return;
+  try {
+    const bindings = JSON.parse(policyBindingsJson.value);
+    if (!Array.isArray(bindings)) throw new TypeError("规则绑定必须是 JSON 数组");
+    policy.bindings = bindings;
+    policyBindingsJson.classList.remove("is-invalid");
+    policyBindingsJson.classList.add("is-dirty");
+    policyBindingsJsonStatus.textContent = "JSON 有效，已更新当前编辑；保存策略功能接入后才会发布。";
+    renderPolicyList();
+  } catch (error) {
+    policyBindingsJson.classList.add("is-invalid");
+    policyBindingsJsonStatus.textContent = `JSON 无效：${error.message}`;
   }
 }
 function createActionSelect(values, value) {
@@ -948,7 +953,7 @@ async function refresh() {
     policies: Array.isArray(policyResult.policy_library?.policies)
       ? policyResult.policy_library.policies
       : [],
-    active_policy_id: String(policyResult.policy_library?.active_policy_id || "default"),
+    active_policy_id: String(policyResult.policy_library?.active_policy_id || "_default"),
   };
   openRuleEditors.replaceChildren();
   openRuleIds = [];
@@ -988,6 +993,7 @@ newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
 backToPolicyList.addEventListener("click", showPolicyList);
+policyBindingsJson.addEventListener("input", syncPolicyBindingsJson);
 cancelSaveRuleAs.addEventListener("click", () => saveRuleAsDialog.close());
 confirmSaveRuleAs.addEventListener("click", saveRuleAs);
 cancelRuleDelete.addEventListener("click", () => confirmRuleDeleteDialog.close());

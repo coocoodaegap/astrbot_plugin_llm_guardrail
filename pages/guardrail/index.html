@@ -121,9 +121,15 @@
           <button id="back-to-policy-list" type="button" class="button-secondary">返回策略列表</button>
         </div>
         <div id="policy-detail-meta" class="policy-detail-meta"></div>
-        <section class="policy-binding-summary">
-          <h3>规则绑定摘要</h3>
-          <div id="policy-detail-bindings" class="policy-detail-bindings"></div>
+        <section class="policy-json-editor">
+          <div class="form-heading">
+            <div>
+              <h3>规则绑定（JSON）</h3>
+              <p>使用 JSON 数组编辑此策略的规则绑定。</p>
+            </div>
+          </div>
+          <textarea id="policy-bindings-json" class="json-editor" spellcheck="false" aria-label="规则绑定 JSON"></textarea>
+          <p id="policy-bindings-json-status" class="form-status" aria-live="polite"></p>
         </section>
       </section>
     </section>

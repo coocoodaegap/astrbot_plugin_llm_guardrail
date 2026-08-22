@@ -20,7 +20,7 @@ try:
         PolicyDefinition,
         PolicyLibrary,
         RuleDefinition,
-        compile_policy_to_legacy_config,
+        compile_policy_to_runtime_config,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import NormalizedConfig, normalize_config
@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         PolicyDefinition,
         PolicyLibrary,
         RuleDefinition,
-        compile_policy_to_legacy_config,
+        compile_policy_to_runtime_config,
     )
 
 
@@ -141,20 +141,6 @@ class ConfigSnapshotManager:
     ) -> SnapshotPublishResult:
         """Publish a policy-library edit while retaining non-library settings."""
 
-        if (
-            any(
-                policy.policy_id == "default" and policy.builtin
-                for policy in self._current.policy_library.policies
-            )
-            and not any(
-                policy.policy_id == "default" and policy.builtin
-                for policy in policy_library.policies
-            )
-        ):
-            return SnapshotPublishResult(
-                success=False,
-                diagnostics=("the built-in Default policy cannot be deleted",),
-            )
         raw_config = copy.deepcopy(self._current.source_config)
         raw_config["policy_library"] = policy_library.to_dict()
         return await self.publish(raw_config, expected_revision)
@@ -309,16 +295,15 @@ class ConfigSnapshotManager:
 
     def _build_snapshot(self, raw_config: Any, revision: int) -> ConfigSnapshot:
         source_config = _copy_config(raw_config)
-        library, legacy_diagnostics = _load_policy_library(source_config)
+        library = _load_policy_library(source_config).with_default_policy()
         source_config["policy_library"] = library.to_dict()
-        compiled_config, library_validation = compile_policy_to_legacy_config(
+        compiled_config, library_validation = compile_policy_to_runtime_config(
             source_config,
             library,
         )
         runtime_config = normalize_config(compiled_config)
         graph = build_graph_index(runtime_config)
         diagnostics = list(self._startup_diagnostics)
-        diagnostics.extend(legacy_diagnostics)
         diagnostics.extend(library_validation.fatal_errors)
         diagnostics.extend(library_validation.warnings)
         diagnostics.extend(runtime_config.warnings)
@@ -401,10 +386,10 @@ def _copy_config(raw_config: Any) -> dict[str, Any]:
     return copy.deepcopy(value)
 
 
-def _load_policy_library(source_config: dict[str, Any]) -> tuple[PolicyLibrary, list[str]]:
-    """Load only the Pages-owned library; legacy rule lists are no longer a source."""
+def _load_policy_library(source_config: dict[str, Any]) -> PolicyLibrary:
+    """Load the Pages-owned policy library or initialize the built-in Default policy."""
 
     raw_library = source_config.get("policy_library")
     if isinstance(raw_library, Mapping):
-        return PolicyLibrary.from_dict(raw_library), []
-    return PolicyLibrary.empty(), []
+        return PolicyLibrary.from_dict(raw_library)
+    return PolicyLibrary.empty()
