@@ -86,6 +86,44 @@ const templateCreationDetails = {
   strengthen_prompt: "向请求注入额外约束或上下文提示。",
   route_policy: "根据规则命中结果选择目标模型 Provider。",
 };
+const templateParameterFields = {
+  plain_keywords: [
+    { key: "keywords", label: "关键词列表", hint: "每行一个关键词或短语。", type: "list", default: [], fullWidth: true },
+    { key: "keyword_weights", label: "关键词权值", hint: "每行一项，格式为：关键词:权重。未填写的关键词权重为 1。", type: "list", default: [], fullWidth: true },
+    { key: "threshold", label: "命中门槛", hint: "命中关键词的权重总和达到此值时规则命中。", type: "number", default: 1 },
+    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用；留空会移除命中片段。", type: "string" },
+  ],
+  regex_pattern: [
+    { key: "pattern", label: "正则模式", hint: "用于匹配文本的正则表达式；保存后由后端编译校验。", type: "text", fullWidth: true },
+    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用；留空会移除命中片段。", type: "string" },
+  ],
+  logic_gate: [
+    { key: "gate", label: "逻辑关系", hint: "all 表示全部满足；any 表示任一满足。", type: "select", default: "all", options: [["all", "全部满足（all）"], ["any", "任一满足（any）"]] },
+    { key: "invert", label: "结果取反", hint: "开启后反转逻辑门的计算结果。", type: "boolean", default: false },
+    { key: "inputs", label: "输入规则", hint: "每行一个规则 ID；可用 !rule_id 表示未命中，?rule_id 表示只要求已执行。", type: "list", default: [], fullWidth: true },
+  ],
+  rag_judge: [
+    { key: "knowledge_bases", label: "知识库列表", hint: "每行一个 AstrBot 知识库名称；至少填写一个。", type: "list", default: [], fullWidth: true },
+    { key: "top_k", label: "检索数量", hint: "每个知识库最多取回的候选数量。", type: "integer", default: 5 },
+    { key: "min_score", label: "最低分数", hint: "存在证据且分数达到此值时判为命中。", type: "number", default: 0.72 },
+    { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
+  ],
+  llm_review: [
+    { key: "provider_id", label: "审查 Provider", hint: "留空则跟随当前会话 Provider。", type: "provider", fullWidth: true },
+    { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
+    { key: "audit_prompt", label: "审查提示词", hint: "描述判断目标与希望记录的 payload；插件会自动要求 JSON 结构化输出。", type: "text", fullWidth: true },
+  ],
+  replace_input: [
+    { key: "replacement_text", label: "替换内容", hint: "将整段用户输入替换为此内容；留空会清空输入。", type: "text", fullWidth: true },
+  ],
+  strengthen_prompt: [
+    { key: "insertion_target", label: "注入位置", hint: "选择要写入系统提示、临时上下文或输入包装的位置。", type: "select", default: "temp_user_context", options: [["system_prefix", "系统提示开头（system_prefix）"], ["system_suffix", "系统提示结尾（system_suffix）"], ["temp_user_context", "临时用户上下文（temp_user_context）"], ["input_wrapper", "包装用户输入（input_wrapper）"]] },
+    { key: "insertion_text", label: "加固内容", hint: "写入所选位置的提示词内容。", type: "text", fullWidth: true },
+  ],
+  route_policy: [
+    { key: "provider_id", label: "目标 Provider", hint: "留空表示保持 AstrBot 本轮默认请求模型。", type: "provider", fullWidth: true },
+  ],
+};
 const systemOptionDescriptions = {
   default_action_on_hit: {
     observe: "仅记录命中结果（observe）",
@@ -485,30 +523,108 @@ function createRuleFieldHint(text) {
   hint.textContent = text;
   return hint;
 }
+function templateConfigValue(config, field) {
+  return Object.hasOwn(config, field.key) ? config[field.key] : field.default;
+}
+function createTemplateParameterControl(field, value) {
+  if (field.type === "provider") {
+    return createProviderSelector(String(value ?? ""));
+  }
+  if (field.type === "boolean") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "setting-checkbox";
+    input.checked = Boolean(value);
+    return input;
+  }
+  if (field.type === "select") {
+    const select = document.createElement("select");
+    for (const [optionValue, label] of field.options || []) {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = label;
+      select.append(option);
+    }
+    ensureOption(select, String(value ?? field.default ?? ""));
+    select.value = String(value ?? field.default ?? "");
+    return select;
+  }
+  if (field.type === "list" || field.type === "text") {
+    const textarea = document.createElement("textarea");
+    textarea.className = field.type === "list" ? "template-list-value" : "template-text-value";
+    textarea.spellcheck = field.type !== "list";
+    textarea.value = field.type === "list"
+      ? (Array.isArray(value) ? value.join("\n") : "")
+      : String(value ?? "");
+    return textarea;
+  }
+  const input = document.createElement("input");
+  input.type = "number";
+  input.step = field.type === "integer" ? "1" : "any";
+  input.value = String(value ?? field.default ?? "");
+  return input;
+}
+function createTemplateParameterForm(rule) {
+  const section = document.createElement("section");
+  section.className = "template-parameters";
+  const heading = document.createElement("div");
+  const title = document.createElement("h4");
+  const description = document.createElement("p");
+  title.textContent = "模板参数";
+  description.textContent = templateCreationDetails[rule.template_key] || "按此模板的业务字段配置规则。";
+  heading.append(title, description);
+  const grid = document.createElement("div");
+  grid.className = "form-grid template-parameter-grid";
+  const config = rule.template_config || {};
+  for (const field of templateParameterFields[rule.template_key] || []) {
+    const label = document.createElement("label");
+    if (field.fullWidth) label.classList.add("full-width");
+    label.textContent = field.label;
+    const control = createTemplateParameterControl(field, templateConfigValue(config, field));
+    control.dataset.templateField = field.key;
+    label.append(createRuleFieldHint(field.hint), control);
+    grid.append(label);
+  }
+  section.append(heading, grid);
+  return section;
+}
+function collectTemplateConfig(editor, rule) {
+  const config = structuredClone(rule.template_config || {});
+  for (const field of templateParameterFields[rule.template_key] || []) {
+    const control = editor.querySelector(`[data-template-field="${field.key}"]`);
+    if (!control) continue;
+    if (field.type === "provider") {
+      config[field.key] = typeof control.providerValue === "function"
+        ? control.providerValue()
+        : "";
+    } else if (field.type === "boolean") {
+      config[field.key] = control.checked;
+    } else if (field.type === "list") {
+      config[field.key] = control.value
+        .split("\n")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    } else if (field.type === "integer") {
+      const value = Number.parseInt(control.value, 10);
+      config[field.key] = Number.isNaN(value) ? field.default : value;
+    } else if (field.type === "number") {
+      const value = Number.parseFloat(control.value);
+      config[field.key] = Number.isNaN(value) ? field.default : value;
+    } else {
+      config[field.key] = control.value;
+    }
+  }
+  return config;
+}
 function syncRuleEditor(editor) {
   const rule = ruleLibrary.rules.find((item) => item.rule_id === editor.dataset.ruleId);
   if (!rule) return true;
-  let templateConfig;
-  try {
-    templateConfig = JSON.parse(editor.querySelector("textarea").value);
-  } catch (error) {
-    ruleStatus.textContent = `模板参数 JSON 格式错误：${error instanceof Error ? error.message : String(error)}`;
-    return false;
-  }
-  if (
-    !templateConfig ||
-    Array.isArray(templateConfig) ||
-    typeof templateConfig !== "object"
-  ) {
-    ruleStatus.textContent = "模板参数必须是 JSON 对象。";
-    return false;
-  }
+  const templateConfig = collectTemplateConfig(editor, rule);
   const priority = Number.parseInt(editor.querySelector('input[type="number"]').value, 10);
-  const selects = editor.querySelectorAll("select");
   rule.description = editor.querySelector(".rule-description").value.trim();
   rule.default_priority = Number.isNaN(priority) ? 100 : priority;
-  rule.default_action_on_hit = selects[0].value;
-  rule.default_action_on_error = selects[1].value;
+  rule.default_action_on_hit = editor.querySelector(".rule-hit-action").value;
+  rule.default_action_on_error = editor.querySelector(".rule-error-action").value;
   rule.template_config = templateConfig;
   return true;
 }
@@ -544,12 +660,12 @@ function createRuleEditor(rule) {
   const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(createRuleFieldHint("用于规则列表的说明，不影响实际执行。"), description);
   const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
   const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(createRuleFieldHint("数值越小越先执行；策略编排可覆盖此值。"), priority);
-  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 当前会回退为 Step 默认动作。"), createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit));
-  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；retry_generation 当前会回退为 Step 默认动作。"), createActionSelect(errorActions, rule.default_action_on_error));
+  const hitAction = createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit); hitAction.className = "rule-hit-action";
+  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 当前会回退为 Step 默认动作。"), hitAction);
+  const errorAction = createActionSelect(errorActions, rule.default_action_on_error); errorAction.className = "rule-error-action";
+  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；retry_generation 当前会回退为 Step 默认动作。"), errorAction);
   grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
-  const configLabel = document.createElement("label"); configLabel.className = "full-width"; configLabel.textContent = "模板参数（JSON）";
-  const config = document.createElement("textarea"); config.spellcheck = false; config.value = JSON.stringify(rule.template_config || {}, null, 2); configLabel.append(createRuleFieldHint("仅填写当前模板的业务参数；必须是 JSON 对象。规则 ID 与模板类型创建后不可修改。"), config);
-  editor.append(heading, grid, configLabel);
+  editor.append(heading, grid, createTemplateParameterForm(rule));
   editor.addEventListener("input", () => editor.classList.add("is-dirty"));
   editor.addEventListener("change", () => editor.classList.add("is-dirty"));
   return editor;

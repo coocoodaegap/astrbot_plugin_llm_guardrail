@@ -454,6 +454,46 @@ label {
     line-height: 1.45
 }
 
+.template-parameters {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0
+}
+
+.template-parameters h4,
+.template-parameters p {
+    margin: 0
+}
+
+.template-parameters h4 {
+    color: #26334a;
+    font-size: 1rem
+}
+
+.template-parameters p {
+    margin-top: 5px;
+    color: #64748b;
+    font-size: .84rem
+}
+
+.template-parameter-grid {
+    margin-top: 14px
+}
+
+.template-parameter-grid .full-width {
+    grid-column: span 2;
+    margin-top: 0
+}
+
+.template-list-value {
+    min-height: 92px
+}
+
+.template-text-value {
+    min-height: 128px;
+    font-family: inherit
+}
+
 input,
 select,
 textarea {

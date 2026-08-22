@@ -41,8 +41,17 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function hitActionsForTemplate", javascript)
         self.assertIn('action !== "sanitize"', javascript)
         self.assertIn("function createRuleFieldHint", javascript)
-        self.assertIn("规则 ID 与模板类型创建后不可修改", javascript)
+        self.assertIn("function createTemplateParameterForm", javascript)
+        self.assertIn("function collectTemplateConfig", javascript)
+        self.assertIn("templateParameterFields", javascript)
+        self.assertNotIn('JSON.parse(editor.querySelector("textarea").value)', javascript)
+        for template_key in (
+            "plain_keywords", "regex_pattern", "logic_gate", "rag_judge",
+            "llm_review", "replace_input", "strengthen_prompt", "route_policy",
+        ):
+            self.assertIn(template_key, javascript)
         self.assertIn(".rule-field-hint", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
+        self.assertIn(".template-parameters", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
         self.assertIn("function startRuleCreation", javascript)
         self.assertIn("ruleCreationStatus", javascript)
         self.assertIn("ruleLibraryPanel.hidden = true", javascript)
