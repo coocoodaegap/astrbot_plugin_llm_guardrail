@@ -226,6 +226,7 @@ let currentRevision = null,
     selectedRail: null,
     dependencySelection: null,
     pendingDependencySourceId: null,
+    dirtyNodeIds: new Set(),
     draft: null,
     renderFrame: 0,
     animationFrame: 0,
@@ -683,6 +684,7 @@ function buildPolicyGraphModel(policy) {
       bindingEnabled: binding.enabled !== false,
       stepEnabled,
       isLogicGate: rule?.template_key === "logic_gate",
+      isDirty: policyGraphState.dirtyNodeIds.has(String(binding.rule_id || "")),
       issues: [],
       state: "available",
       depth: 0,
@@ -1064,8 +1066,8 @@ function layoutPolicyGraph(model, width, height) {
   return { laneLayouts, width, height };
 }
 function graphColorForEdge(edge) {
-  if (edge.invalid || edge.source?.state === "unavailable" || edge.target?.state === "unavailable") return "#ff6b74";
   if (edge.source?.state === "disabled" || edge.target?.state === "disabled") return "#718096";
+  if (edge.invalid || edge.source?.state === "unavailable" || edge.target?.state === "unavailable") return "#ff6b74";
   if (edge.kind === "logic_input") return "#e2e8f0";
   return edge.target?.theme?.color || "#cbd5e1";
 }
@@ -1144,9 +1146,12 @@ function drawPolicyGraphArrow(context, source, target, edge) {
 }
 function graphGlowForNode(node) {
   if (node.state === "disabled") return null;
-  if (node.state === "unavailable") return "#ff4d5e";
-  if (node.state === "warning") return "#ffbe4d";
+  if (node.state === "warning") return "#ffe85b";
+  if (node.state === "unavailable") return "#ff2638";
   return "#ffffff";
+}
+function markPolicyGraphNodeDirty(ruleId) {
+  if (ruleId) policyGraphState.dirtyNodeIds.add(String(ruleId));
 }
 function policyGraphDependencyCandidates(dependentId) {
   const model = policyGraphState.model;
@@ -1222,6 +1227,7 @@ function applyPolicyDependencySelection() {
   if (!binding) return;
   const prefix = { matched: "", not_matched: "!", executed: "?" }[policyDependencyMode.value] ?? "";
   binding.depend_on = `${prefix}${sourceId}`;
+  markPolicyGraphNodeDirty(dependentId);
   policyDependencyModeDialog.close();
   policyGraphState.dependencySelection = null;
   policyGraphState.pendingDependencySourceId = null;
@@ -1273,16 +1279,40 @@ function removePolicyBinding() {
 }
 function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   if (!isPolicyGraphNodeVisible(node)) return;
-  const color = node.state === "disabled" ? "#94a3b8" : node.theme?.color || "#e2e8f0";
+  const color = node.state === "disabled"
+    ? "#94a3b8"
+    : node.state === "unavailable"
+      ? "#ff5968"
+      : node.state === "warning"
+        ? "#ffd84d"
+      : node.theme?.color || "#e2e8f0";
   const glow = graphGlowForNode(node);
   context.save();
   context.strokeStyle = color;
   context.lineWidth = node.isLogicGate ? 2.6 : 2.2;
   if (glow) {
     context.shadowColor = glow;
-    context.shadowBlur = node.state === "available" ? 10 : 13;
+    context.shadowBlur = node.state === "unavailable"
+      ? 24
+      : node.state === "warning"
+        ? 18
+        : 10;
   }
-  if (node.isLogicGate) {
+  if (node.state === "unavailable" || node.state === "warning") {
+    const radius = 9;
+    context.beginPath();
+    if (node.state === "warning") {
+      context.moveTo(node.x - radius, node.y - radius * .8);
+      context.lineTo(node.x + radius, node.y - radius * .8);
+      context.lineTo(node.x, node.y + radius);
+    } else {
+      context.moveTo(node.x, node.y - radius);
+      context.lineTo(node.x + radius, node.y + radius * .8);
+      context.lineTo(node.x - radius, node.y + radius * .8);
+    }
+    context.closePath();
+    context.stroke();
+  } else if (node.isLogicGate) {
     const radius = 8;
     context.beginPath();
     context.moveTo(node.x, node.y - radius);
@@ -1301,8 +1331,9 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
     context.arc(node.x, node.y, 7, 0, Math.PI * 2);
     context.stroke();
   }
-  if (policyGraphState.selectedNodeId === node.id) {
-    const phase = reducedMotion ? 0 : (timestamp / 900) % 1;
+  const selected = policyGraphState.selectedNodeId === node.id;
+  if (node.isDirty || selected) {
+    const phase = selected && !reducedMotion ? (timestamp / 900) % 1 : 0;
     context.shadowBlur = 0;
     context.strokeStyle = "#ffffff";
     context.lineWidth = 1.4;
@@ -1325,7 +1356,13 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   }
   context.shadowBlur = 0;
   context.setLineDash([]);
-  context.fillStyle = "#eef6ff";
+  context.fillStyle = node.state === "disabled"
+    ? "#94a3b8"
+    : node.state === "unavailable"
+      ? "#ff7884"
+      : node.state === "warning"
+        ? "#ffe783"
+      : "#eef6ff";
   context.font = "500 11px Inter, system-ui, sans-serif";
   context.fillText(node.id || "未命名", node.x + 11, node.y + 4);
   context.restore();
@@ -1542,7 +1579,7 @@ function updatePolicyStepSetting(rail, key, type, control) {
   else railSettings[key] = value;
   settings[rail] = railSettings;
   setPolicyGraphEditorStatus("修改已暂存；点击“保存策略”后写入快照。");
-  if (key === "enabled") renderPolicyGraph(draft);
+  renderPolicyGraph(draft);
 }
 function createPolicyBindingActionSelect(values, value) {
   const select = document.createElement("select");
@@ -1573,6 +1610,7 @@ function updatePolicyBinding(ruleId, field, control) {
     if (!value) delete binding[field];
     else binding[field] = value;
   }
+  markPolicyGraphNodeDirty(ruleId);
   setPolicyGraphEditorStatus("修改已暂存；点击“保存策略”后写入快照。");
   renderPolicyGraph(draft);
 }
@@ -1685,6 +1723,7 @@ function renderPolicyGraphNodeEditor(node) {
       const currentBinding = draft?.bindings.find((item) => item.rule_id === node.id);
       if (!currentBinding) return;
       delete currentBinding.depend_on;
+      markPolicyGraphNodeDirty(node.id);
       renderPolicyGraph(draft);
       renderPolicyGraphEditor();
       setPolicyGraphEditorStatus("已暂存移除依赖；点击“保存策略”后写入快照。");
@@ -1776,6 +1815,7 @@ function renderPolicyDetail(policy) {
     document.createTextNode(` · 规则绑定：${bindings.length} 条`),
   );
   policyGraphState.draft = structuredClone(policy);
+  policyGraphState.dirtyNodeIds.clear();
   renderPolicyGraph(policyGraphState.draft, { resetSelection: true });
   renderPolicyGraphEditor();
   policyUmoList.replaceChildren();
