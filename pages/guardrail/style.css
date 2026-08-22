@@ -255,7 +255,7 @@ button:disabled {
 .floating-action-group {
     position: fixed;
     right: 24px;
-    bottom: 46px;
+    bottom: 32px;
     z-index: 20;
     display: grid;
     gap: 8px;
@@ -294,7 +294,10 @@ button:disabled {
 
 @media (min-width: 1580px) {
     .floating-action-group {
-        right: calc((100vw - 1180px) / 2 - 172px)
+        top: 50%;
+        right: calc((100vw - 1180px) / 2 - 172px);
+        bottom: auto;
+        transform: translateY(-50%)
     }
 }
 
