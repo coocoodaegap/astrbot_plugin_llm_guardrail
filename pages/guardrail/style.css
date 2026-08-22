@@ -221,10 +221,12 @@ button:disabled {
     gap: 16px
 }
 
-.rule-list-panel,
-.rule-editor-panel {
-    min-height: 450px
+.rule-workspace[hidden],
+.rule-library-panel[hidden],
+.rule-creation-panel[hidden] {
+    display: none
 }
+
 
 .count-badge {
     min-width: 22px;
@@ -281,11 +283,65 @@ button:disabled {
 }
 
 .empty-state {
-    display: grid;
-    min-height: 400px;
-    place-items: center;
+    padding: 24px 0;
     color: #718096;
-    text-align: center
+    text-align: center;
+}
+
+.rule-creation-panel {
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #dfe6f0;
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 3%)
+}
+
+.creation-fields {
+    margin-bottom: 18px
+}
+
+.creation-fields label:first-child {
+    grid-column: auto
+}
+
+.template-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px
+}
+
+.template-option {
+    display: grid;
+    min-height: 112px;
+    gap: 8px;
+    padding: 14px;
+    color: #26334a;
+    background: #fff;
+    border: 1px solid #dfe6f0;
+    text-align: left;
+    white-space: normal
+}
+
+.template-option:hover {
+    background: #f7faff
+}
+
+.template-option.is-selected {
+    color: #164fc4;
+    background: #eff5ff;
+    border-color: #8ab1fb
+}
+
+.template-option span {
+    color: #64748b;
+    font-size: .86rem;
+    line-height: 1.45
+}
+
+.creation-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px
 }
 
 .form-heading {

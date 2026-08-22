@@ -48,6 +48,7 @@
       </section>
     </section>
     <section class="tab-panel" id="panel-rules" role="tabpanel" aria-labelledby="tab-rules" data-panel="rules" hidden>
+      <div id="rule-library-panel">
       <div class="card-heading rules-heading">
         <div>
           <p class="eyebrow">RULE LIBRARY</p>
@@ -58,7 +59,7 @@
             id="save-rule-library" type="button">保存规则库</button></div>
       </div>
       <p id="rule-library-status" class="muted" aria-live="polite"></p>
-      <div class="rule-workspace">
+      <div id="rule-workspace" class="rule-workspace">
         <aside class="rule-list-panel" aria-label="规则列表">
           <div class="list-heading"><strong>全部规则</strong><span id="rule-count" class="count-badge">0</span></div>
           <div id="rule-list" class="rule-list"></div>
@@ -72,15 +73,26 @@
                 <p>保存时将先校验整套规则库。</p>
               </div><button id="delete-rule" type="button" class="danger-button">删除</button>
             </div>
-            <div class="form-grid"><label>规则 ID<input id="rule-id" autocomplete="off" required
-                  pattern="[a-z][a-z0-9_]{0,63}" /></label><label>规则描述<input id="rule-description" autocomplete="off" placeholder="简述这条规则的用途" /></label><label>模板<select
-                  id="rule-template"></select></label><label>默认优先级<input id="rule-priority" type="number"
+            <div class="form-grid"><label>规则描述<input id="rule-description" autocomplete="off" placeholder="简述这条规则的用途" /></label><label>默认优先级<input id="rule-priority" type="number"
                   value="100" /></label><label>默认命中动作<select id="rule-action-hit"></select></label><label>默认错误动作<select
                   id="rule-action-error"></select></label></div><label class="full-width">模板参数（JSON）<textarea
                 id="rule-template-config" spellcheck="false" aria-label="模板参数 JSON"></textarea></label>
           </form>
         </section>
       </div>
+      </div>
+      <section id="rule-creation-panel" class="rule-creation-panel" hidden aria-label="新建规则">
+        <div class="form-heading">
+          <div><p class="eyebrow">CREATE RULE</p><h3>选择规则类型</h3><p>创建后模板类型将固定，业务参数可在下一步编辑。</p></div>
+          <button id="cancel-rule-creation" type="button" class="button-secondary">取消</button>
+        </div>
+        <div class="form-grid creation-fields">
+          <label>规则 ID<input id="new-rule-id" autocomplete="off" placeholder="例如 input_keywords" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
+          <label>规则描述<input id="new-rule-description" autocomplete="off" placeholder="简述这条规则的用途" /></label>
+        </div>
+        <div id="template-options" class="template-options" role="listbox" aria-label="规则类型"></div>
+        <div class="creation-actions"><button id="confirm-rule-creation" type="button">创建规则</button></div>
+      </section>
     </section>
     <section class="tab-panel" id="panel-policies" role="tabpanel" aria-labelledby="tab-policies" data-panel="policies"
       hidden>

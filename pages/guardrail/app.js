@@ -10,14 +10,20 @@ const status = $("status"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
+  ruleLibraryPanel = $("rule-library-panel"),
+  ruleWorkspace = $("rule-workspace"),
+  ruleCreationPanel = $("rule-creation-panel"),
+  templateOptions = $("template-options"),
   ruleEditor = $("rule-editor"),
   ruleEmptyState = $("rule-empty-state"),
   saveRuleLibrary = $("save-rule-library"),
   newRule = $("new-rule"),
+  cancelRuleCreation = $("cancel-rule-creation"),
+  confirmRuleCreation = $("confirm-rule-creation"),
+  newRuleId = $("new-rule-id"),
+  newRuleDescription = $("new-rule-description"),
   deleteRule = $("delete-rule"),
-  ruleId = $("rule-id"),
   ruleDescription = $("rule-description"),
-  ruleTemplate = $("rule-template"),
   rulePriority = $("rule-priority"),
   ruleActionHit = $("rule-action-hit"),
   ruleActionError = $("rule-action-error"),
@@ -63,6 +69,26 @@ const ruleActionDescriptions = {
   discard: "丢弃本次规则结果（discard）",
   record: "记录可被依赖的错误结果（record）",
 };
+const templateDescriptions = {
+  plain_keywords: "关键词匹配",
+  regex_pattern: "正则匹配",
+  logic_gate: "逻辑门",
+  rag_judge: "知识库裁判",
+  llm_review: "LLM 审查",
+  replace_input: "替换输入",
+  strengthen_prompt: "增强提示词",
+  route_policy: "模型路由",
+};
+const templateCreationDetails = {
+  plain_keywords: "按关键词或短语匹配输入、请求或输出内容。",
+  regex_pattern: "使用正则表达式匹配结构化或复杂文本模式。",
+  logic_gate: "组合其他规则的结果，构建 all / any 等逻辑判断。",
+  rag_judge: "以知识库检索结果为证据进行风险裁判。",
+  llm_review: "调用旁路 LLM 对内容进行结构化审查。",
+  replace_input: "将输入中的指定文本替换为安全内容。",
+  strengthen_prompt: "向请求注入额外约束或上下文提示。",
+  route_policy: "根据规则命中结果选择目标模型 Provider。",
+};
 const systemOptionDescriptions = {
   default_action_on_hit: {
     observe: "仅记录命中结果（observe）",
@@ -91,16 +117,9 @@ const systemOptionDescriptions = {
 let currentRevision = null,
   ruleLibrary = { rules: [] },
   selectedRuleId = null,
+  selectedNewTemplate = null,
   systemSettingsSchema = {},
   registeredProviders = [];
-function populateOptions(select, values) {
-  for (const value of values) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
-    select.append(option);
-  }
-}
 function populateRuleActionOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -120,7 +139,6 @@ function ensureOption(select, value) {
     select.append(option);
   }
 }
-populateOptions(ruleTemplate, templates);
 populateRuleActionOptions(ruleActionHit, hitActions);
 populateRuleActionOptions(ruleActionError, errorActions);
 function switchTab(name) {
@@ -432,13 +450,9 @@ function renderRuleEditor() {
   ruleEmptyState.hidden = hasRule;
   if (!rule) return;
   $("rule-editor-title").textContent = `编辑：${rule.rule_id}`;
-  ruleId.value = rule.rule_id;
   ruleDescription.value = rule.description || "";
-  ensureOption(ruleTemplate, rule.template_key);
   ensureOption(ruleActionHit, rule.default_action_on_hit);
   ensureOption(ruleActionError, rule.default_action_on_error);
-  ruleTemplate.value = rule.template_key || templates[0];
-  ruleTemplate.disabled = true;
   rulePriority.value = String(
     Number.isInteger(rule.default_priority) ? rule.default_priority : 100,
   );
@@ -464,7 +478,8 @@ function renderRuleList() {
     title.textContent = rule.rule_id || "未命名规则";
     summaryText.textContent = ruleSummary(rule);
     chip.className = "template-chip";
-    chip.textContent = rule.template_key || "未选择模板";
+    chip.textContent =
+      templateDescriptions[rule.template_key] || rule.template_key || "未选择模板";
     item.append(title, summaryText, chip);
     item.addEventListener("click", () => {
       selectedRuleId = rule.rule_id;
@@ -493,48 +508,80 @@ function syncSelectedRule() {
     ruleStatus.textContent = "模板参数必须是 JSON 对象。";
     return false;
   }
-  const nextId = ruleId.value.trim();
-  if (!/^[a-z][a-z0-9_]{0,63}$/.test(nextId)) {
-    ruleStatus.textContent =
-      "规则 ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
-    return false;
-  }
-  if (
-    nextId !== rule.rule_id &&
-    ruleLibrary.rules.some((item) => item.rule_id === nextId)
-  ) {
-    ruleStatus.textContent = "规则 ID 已存在。";
-    return false;
-  }
   const priority = Number.parseInt(rulePriority.value, 10);
-  rule.rule_id = nextId;
   rule.description = ruleDescription.value.trim();
   rule.default_priority = Number.isNaN(priority) ? 100 : priority;
   rule.default_action_on_hit = ruleActionHit.value;
   rule.default_action_on_error = ruleActionError.value;
   rule.template_config = templateConfig;
-  selectedRuleId = nextId;
   return true;
 }
-function createRule() {
+function renderTemplateOptions() {
+  templateOptions.replaceChildren();
+  for (const templateKey of templates) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "template-option";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(templateKey === selectedNewTemplate));
+    option.classList.toggle("is-selected", templateKey === selectedNewTemplate);
+    const title = document.createElement("strong");
+    const description = document.createElement("span");
+    title.textContent = templateDescriptions[templateKey] || templateKey;
+    description.textContent = templateCreationDetails[templateKey] || "暂无说明。";
+    option.append(title, description);
+    option.addEventListener("click", () => {
+      selectedNewTemplate = templateKey;
+      renderTemplateOptions();
+    });
+    templateOptions.append(option);
+  }
+}
+function startRuleCreation() {
   if (!syncSelectedRule()) return;
-  let index = ruleLibrary.rules.length + 1,
-    id = `rule_${index}`;
-  while (ruleLibrary.rules.some((rule) => rule.rule_id === id)) {
-    index += 1;
-    id = `rule_${index}`;
+  selectedNewTemplate = null;
+  newRuleId.value = "";
+  newRuleDescription.value = "";
+  ruleLibraryPanel.hidden = true;
+  ruleCreationPanel.hidden = false;
+  newRule.disabled = true;
+  saveRuleLibrary.disabled = true;
+  renderTemplateOptions();
+  newRuleId.focus();
+}
+function cancelNewRuleCreation() {
+  ruleCreationPanel.hidden = true;
+  ruleLibraryPanel.hidden = false;
+  newRule.disabled = false;
+  saveRuleLibrary.disabled = false;
+  selectedNewTemplate = null;
+}
+function createRule() {
+  const id = newRuleId.value.trim();
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) {
+    ruleStatus.textContent = "规则 ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
+    return;
+  }
+  if (ruleLibrary.rules.some((rule) => rule.rule_id === id)) {
+    ruleStatus.textContent = "规则 ID 已存在。";
+    return;
+  }
+  if (!selectedNewTemplate) {
+    ruleStatus.textContent = "请先选择规则类型。";
+    return;
   }
   ruleLibrary.rules.push({
     rule_id: id,
-    template_key: "plain_keywords",
-    description: "",
-    template_config: { keywords: [] },
+    template_key: selectedNewTemplate,
+    description: newRuleDescription.value.trim(),
+    template_config: {},
     default_priority: 100,
     default_action_on_hit: "default",
     default_action_on_error: "default",
   });
   selectedRuleId = id;
   ruleStatus.textContent = "已新建规则，保存后才会发布。";
+  cancelNewRuleCreation();
   renderRuleList();
 }
 function deleteSelectedRule() {
@@ -580,7 +627,9 @@ async function refresh() {
     : `已加载规则库 revision ${ruleResult.revision}。`;
   status.textContent = `已加载配置快照 revision ${currentRevision}`;
 }
-newRule.addEventListener("click", createRule);
+newRule.addEventListener("click", startRuleCreation);
+cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
+confirmRuleCreation.addEventListener("click", createRule);
 deleteRule.addEventListener("click", deleteSelectedRule);
 saveRuleLibrary.addEventListener("click", async () => {
   if (!Number.isInteger(currentRevision) || !syncSelectedRule()) return;
