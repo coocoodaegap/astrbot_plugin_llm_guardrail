@@ -473,9 +473,35 @@ button:disabled {
     border-color: #dce3ee
 }
 
+.policy-graph-state-toggle {
+    border-style: dashed;
+}
+
+.policy-graph-state-toggle.is-disabled.is-expanded {
+    color: #475569;
+    background: #f1f5f9;
+    border-color: #94a3b8;
+}
+
+.policy-graph-state-toggle.is-warning.is-expanded {
+    color: #9a5b00;
+    background: #fff8e6;
+    border-color: #e9b84f;
+}
+
+.policy-graph-state-toggle.is-unavailable.is-expanded {
+    color: #b42335;
+    background: #fff0f1;
+    border-color: #ee8a95;
+}
+
 .policy-graph-stage {
     position: relative;
-    min-height: 280px;
+    box-sizing: border-box;
+    height: 680px;
+    min-height: 540px;
+    max-height: calc(100vh - 140px);
+    resize: vertical;
     overflow: hidden;
     background: #101927;
     border: 1px solid #24334b;
@@ -486,7 +512,7 @@ button:disabled {
 .policy-graph-stage canvas {
     display: block;
     width: 100%;
-    height: 580px;
+    min-height: 100%;
     cursor: default
 }
 

@@ -206,6 +206,7 @@ let currentRevision = null,
     model: null,
     layout: null,
     collapsedRails: new Set(),
+    hiddenNodeStates: new Set(),
     selectedNodeId: null,
     renderFrame: 0,
     animationFrame: 0,
@@ -735,10 +736,15 @@ function buildPolicyGraphModel(policy) {
   return { policy, nodes, nodeById, edges };
 }
 function policyGraphCanvasHeight() {
-  return policyGraphSteps.reduce(
+  const lanesHeight = policyGraphSteps.reduce(
     (height, step) => height + (policyGraphState.collapsedRails.has(step.rail) ? 42 : 104),
     0,
   );
+  return Math.max(lanesHeight, policyGraphStage?.clientHeight || 0);
+}
+function isPolicyGraphNodeVisible(node) {
+  return !policyGraphState.collapsedRails.has(node.rail)
+    && !policyGraphState.hiddenNodeStates.has(node.state);
 }
 function renderPolicyGraphStepToggles(model) {
   policyGraphStepToggles.replaceChildren();
@@ -755,6 +761,36 @@ function renderPolicyGraphStepToggles(model) {
     button.addEventListener("click", () => {
       if (collapsed) policyGraphState.collapsedRails.delete(step.rail);
       else policyGraphState.collapsedRails.add(step.rail);
+      renderPolicyGraphStepToggles(model);
+      schedulePolicyGraphRender();
+    });
+    policyGraphStepToggles.append(button);
+  }
+  const filters = [
+    { state: "disabled", label: "未启用" },
+    { state: "warning", label: "警告" },
+    { state: "unavailable", label: "不可用" },
+  ];
+  for (const filter of filters) {
+    const count = model.nodes.filter((node) => node.state === filter.state).length;
+    const hidden = policyGraphState.hiddenNodeStates.has(filter.state);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "policy-graph-step-toggle policy-graph-state-toggle";
+    button.classList.toggle("is-expanded", !hidden);
+    button.classList.toggle("is-collapsed", hidden);
+    button.classList.toggle(`is-${filter.state}`, true);
+    button.setAttribute("aria-pressed", String(!hidden));
+    button.textContent = `${filter.label} · ${count}`;
+    button.title = hidden ? `显示${filter.label}节点` : `隐藏${filter.label}节点`;
+    button.addEventListener("click", () => {
+      if (hidden) policyGraphState.hiddenNodeStates.delete(filter.state);
+      else policyGraphState.hiddenNodeStates.add(filter.state);
+      if (policyGraphState.selectedNodeId
+        && policyGraphState.model?.nodeById.get(policyGraphState.selectedNodeId)?.state === filter.state
+        && !hidden) {
+        policyGraphState.selectedNodeId = null;
+      }
       renderPolicyGraphStepToggles(model);
       schedulePolicyGraphRender();
     });
@@ -801,10 +837,18 @@ function updatePolicyGraphAnimation() {
 }
 function layoutPolicyGraph(model, width, height) {
   const laneLayouts = new Map();
+  const collapsedHeight = 42;
+  const expandedSteps = policyGraphSteps.filter(
+    (step) => !policyGraphState.collapsedRails.has(step.rail),
+  );
+  const collapsedTotal = (policyGraphSteps.length - expandedSteps.length) * collapsedHeight;
+  const expandedHeight = expandedSteps.length
+    ? Math.max(104, (height - collapsedTotal) / expandedSteps.length)
+    : collapsedHeight;
   let top = 0;
   for (const step of policyGraphSteps) {
     const collapsed = policyGraphState.collapsedRails.has(step.rail);
-    const laneHeight = collapsed ? 42 : 104;
+    const laneHeight = collapsed ? collapsedHeight : expandedHeight;
     laneLayouts.set(step.rail, { step, top, height: laneHeight, collapsed });
     top += laneHeight;
   }
@@ -895,7 +939,7 @@ function graphGlowForNode(node) {
   return "#ffffff";
 }
 function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
-  if (policyGraphState.collapsedRails.has(node.rail)) return;
+  if (!isPolicyGraphNodeVisible(node)) return;
   const color = node.state === "disabled" ? "#94a3b8" : node.theme?.color || "#e2e8f0";
   const glow = graphGlowForNode(node);
   context.save();
@@ -974,7 +1018,7 @@ function drawPolicyGraph(timestamp = performance.now()) {
     }
   }
   for (const edge of model.edges) {
-    if (!edge.source || policyGraphState.collapsedRails.has(edge.source.rail) || policyGraphState.collapsedRails.has(edge.target.rail)) continue;
+    if (!edge.source || !isPolicyGraphNodeVisible(edge.source) || !isPolicyGraphNodeVisible(edge.target)) continue;
     drawPolicyGraphArrow(context, edge.source, edge.target, edge);
   }
   for (const node of model.nodes) drawPolicyGraphNode(context, node, timestamp, reducedMotion);
@@ -984,7 +1028,7 @@ function policyGraphNodeAt(clientX, clientY) {
   const x = clientX - rect.left;
   const y = clientY - rect.top;
   return policyGraphState.model?.nodes.find((node) => (
-    !policyGraphState.collapsedRails.has(node.rail)
+    isPolicyGraphNodeVisible(node)
       && Math.hypot(node.x - x, node.y - y) <= 15
   )) || null;
 }

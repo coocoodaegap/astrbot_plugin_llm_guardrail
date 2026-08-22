@@ -110,6 +110,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function buildPolicyGraphModel", javascript)
         self.assertIn("function drawPolicyGraph", javascript)
         self.assertIn("function updatePolicyGraphAnimation", javascript)
+        self.assertIn("hiddenNodeStates", javascript)
+        self.assertIn("function isPolicyGraphNodeVisible", javascript)
         self.assertIn("ResizeObserver", javascript)
         self.assertIn("function syncPolicyBindingsJson", javascript)
         self.assertIn("function saveCurrentPolicy", javascript)
