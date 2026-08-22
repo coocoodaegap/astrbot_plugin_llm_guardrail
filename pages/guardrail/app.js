@@ -764,13 +764,15 @@ function renderPolicyGraphStepToggles(model) {
   for (const step of policyGraphSteps) {
     const count = model.nodes.filter((node) => node.rail === step.rail).length;
     const collapsed = policyGraphState.collapsedRails.has(step.rail);
+    const stepEnabled = model.policy?.rail_settings?.[step.rail]?.enabled !== false;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "policy-graph-step-toggle";
     button.classList.toggle("is-expanded", !collapsed);
     button.classList.toggle("is-collapsed", collapsed);
+    button.classList.toggle("is-step-disabled", !stepEnabled);
     button.setAttribute("aria-pressed", String(!collapsed));
-    button.textContent = `${step.label} · ${count}`;
+    button.textContent = `${step.label}${stepEnabled ? "" : " · 已关闭"} · ${count}`;
     button.addEventListener("click", () => {
       if (collapsed) policyGraphState.collapsedRails.delete(step.rail);
       else {
@@ -1050,15 +1052,16 @@ function graphColorForEdge(edge) {
   if (edge.kind === "logic_input") return "#e2e8f0";
   return edge.target?.theme?.color || "#cbd5e1";
 }
-function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion) {
-  context.fillStyle = lane.step.fill;
+function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion, stepEnabled) {
+  const color = stepEnabled ? lane.step.color : "#94a3b8";
+  context.fillStyle = stepEnabled ? lane.step.fill : "#1e293b";
   context.fillRect(0, lane.top, lane.width, lane.height);
   if (policyGraphState.selectedRail === lane.step.rail) {
-    context.fillStyle = `${lane.step.color}18`;
+    context.fillStyle = stepEnabled ? `${lane.step.color}18` : "#94a3b814";
     context.fillRect(0, lane.top, lane.width, lane.height);
   }
-  const offset = reducedMotion ? 0 : (timestamp / 7000) % 24;
-  context.strokeStyle = `${lane.step.color}35`;
+  const offset = reducedMotion || !stepEnabled ? 0 : (timestamp / 7000) % 24;
+  context.strokeStyle = stepEnabled ? `${color}35` : "#94a3b822";
   context.lineWidth = policyGraphState.selectedRail === lane.step.rail ? 1.4 : 1;
   for (let x = -24 + offset; x < lane.width; x += 24) {
     context.beginPath();
@@ -1072,11 +1075,11 @@ function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion) {
     context.lineTo(lane.width, y);
     context.stroke();
   }
-  context.strokeStyle = `${lane.step.color}aa`;
+  context.strokeStyle = stepEnabled ? `${color}aa` : "#64748baa";
   context.strokeRect(.5, lane.top + .5, lane.width - 1, lane.height - 1);
-  context.fillStyle = lane.step.color;
+  context.fillStyle = stepEnabled ? color : "#a8b6c8";
   context.font = "600 14px Inter, system-ui, sans-serif";
-  context.fillText(lane.step.label, 14, lane.top + 22);
+  context.fillText(`${lane.step.label}${stepEnabled ? "" : " · 已关闭"}`, 14, lane.top + 22);
 }
 function drawPolicyGraphArrow(context, source, target, edge) {
   const color = graphColorForEdge(edge);
@@ -1205,7 +1208,8 @@ function drawPolicyGraph(timestamp = performance.now()) {
   const reducedMotion = policyGraphReducedMotion();
   for (const lane of layout.laneLayouts.values()) {
     lane.width = rect.width;
-    drawPolicyGraphGrid(context, lane, timestamp, reducedMotion);
+    const stepEnabled = model.policy?.rail_settings?.[lane.step.rail]?.enabled !== false;
+    drawPolicyGraphGrid(context, lane, timestamp, reducedMotion, stepEnabled);
     if (lane.collapsed) {
       const count = model.nodes.filter((node) => node.rail === lane.step.rail).length;
       context.fillStyle = "#d8e7f7";

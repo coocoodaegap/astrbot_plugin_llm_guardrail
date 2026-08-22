@@ -114,6 +114,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function updatePolicyGraphAnimation", javascript)
         self.assertIn("function policyGraphLaneRanks", javascript)
         self.assertIn("function clampPolicyGraphNodesInLane", javascript)
+        self.assertIn("is-step-disabled", javascript)
         self.assertIn("hiddenNodeStates", javascript)
         self.assertIn("function isPolicyGraphNodeVisible", javascript)
         self.assertIn("ResizeObserver", javascript)

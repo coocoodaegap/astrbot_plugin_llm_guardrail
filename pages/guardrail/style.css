@@ -467,6 +467,13 @@ button:disabled {
     border-color: #dce3ee
 }
 
+.policy-graph-step-toggle.is-step-disabled {
+    color: #64748b;
+    background: #eef2f6;
+    border-color: #cbd5e1;
+    text-decoration: line-through
+}
+
 .policy-graph-state-toggle {
     border-style: dashed;
 }
