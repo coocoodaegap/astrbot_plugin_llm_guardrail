@@ -109,6 +109,7 @@ class PolicyDefinition:
     name: str
     description: str = ""
     bindings: tuple[PolicyRuleBinding, ...] = ()
+    umo_list: tuple[str, ...] = ()
     session_scope: dict[str, Any] = field(default_factory=dict)
     builtin: bool = False
 
@@ -118,6 +119,7 @@ class PolicyDefinition:
             "name": self.name,
             "description": self.description,
             "bindings": [binding.to_dict() for binding in self.bindings],
+            "umo_list": list(self.umo_list),
             "session_scope": copy.deepcopy(self.session_scope),
             "builtin": self.builtin,
         }
@@ -125,6 +127,7 @@ class PolicyDefinition:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "PolicyDefinition":
         bindings = value.get("bindings")
+        umo_list = value.get("umo_list")
         return cls(
             policy_id=str(value.get("policy_id") or "").strip(),
             name=str(value.get("name") or "").strip(),
@@ -136,6 +139,7 @@ class PolicyDefinition:
             )
             if isinstance(bindings, list)
             else (),
+            umo_list=tuple(_clean_string_list(umo_list)),
             session_scope=_copy_dict(value.get("session_scope")),
             builtin=bool(value.get("builtin", False)),
         )
@@ -176,13 +180,24 @@ class PolicyLibrary:
         )
 
     def with_default_policy(self) -> "PolicyLibrary":
-        if any(policy.policy_id == DEFAULT_POLICY_ID for policy in self.policies):
-            return self
-        return PolicyLibrary(
+        policies = self.policies
+        if not any(policy.policy_id == DEFAULT_POLICY_ID for policy in policies):
+            policies = (*policies, self.default_policy())
+        active_policy_id = self.active_policy_id
+        if not any(policy.policy_id == active_policy_id for policy in policies):
+            active_policy_id = DEFAULT_POLICY_ID
+        library = PolicyLibrary(
             rules=self.rules,
-            policies=(*self.policies, self.default_policy()),
-            active_policy_id=self.active_policy_id,
+            policies=policies,
+            active_policy_id=active_policy_id,
         )
+        if active_policy_id not in library._usable_policy_ids():
+            return PolicyLibrary(
+                rules=library.rules,
+                policies=library.policies,
+                active_policy_id=DEFAULT_POLICY_ID,
+            )
+        return library
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -216,6 +231,38 @@ class PolicyLibrary:
     def get_policy(self, policy_id: str | None = None) -> PolicyDefinition | None:
         target = str(policy_id or self.active_policy_id).strip()
         return next((policy for policy in self.policies if policy.policy_id == target), None)
+
+    def select_policy_for_umo(self, umo: str) -> PolicyDefinition:
+        """Select the first usable UMO override, then the configured default."""
+
+        usable_ids = self._usable_policy_ids()
+        normalized_umo = str(umo or "").strip()
+        if normalized_umo:
+            for policy in self.policies:
+                if (
+                    normalized_umo in policy.umo_list
+                    and policy.policy_id in usable_ids
+                ):
+                    return policy
+        default_policy = self.get_policy()
+        if default_policy is not None and default_policy.policy_id in usable_ids:
+            return default_policy
+        builtin_default = self.get_policy(DEFAULT_POLICY_ID)
+        if builtin_default is not None:
+            return builtin_default
+        return self.default_policy()
+
+    def _usable_policy_ids(self) -> set[str]:
+        usable: set[str] = set()
+        for policy in self.policies:
+            candidate = PolicyLibrary(
+                rules=self.rules,
+                policies=(policy,),
+                active_policy_id=policy.policy_id,
+            )
+            if candidate.validate().valid:
+                usable.add(policy.policy_id)
+        return usable
 
     def validate(self) -> LibraryValidation:
         fatal_errors: list[str] = []
@@ -408,6 +455,12 @@ def _as_optional_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _clean_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
 
 
 def _is_sanitize_action(action: str | None) -> bool:

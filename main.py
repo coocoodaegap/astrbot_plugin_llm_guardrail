@@ -216,7 +216,10 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         """Build a pipeline from the snapshot fixed to this request event."""
 
         snapshot = self.snapshot_manager.bind_event(self.adapter, event)
-        return GuardrailPipeline(snapshot.runtime_config, self.adapter)
+        _policy_id, runtime_config = snapshot.runtime_config_for_umo(
+            self.adapter.get_umo(event)
+        )
+        return GuardrailPipeline(runtime_config, self.adapter)
 
     @staticmethod
     def _snapshot_path() -> Path | None:
@@ -279,6 +282,8 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             if rail_context.session_scope_decision
             else "-"
         )
+        snapshot = self.snapshot_manager.bind_event(self.adapter, rail_context.event)
+        policy_id, _runtime_config = snapshot.runtime_config_for_umo(rail_context.umo)
         mutations = [
             ":".join(
                 str(part)
@@ -292,9 +297,10 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             for item in rail_context.prompt_mutations
         ]
         logger.info(
-            "[LLMGuardrail] %s | umo=%s | session=%s | executed=%s | matched=%s | errors=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s",
+            "[LLMGuardrail] %s | umo=%s | policy=%s | session=%s | executed=%s | matched=%s | errors=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s",
             phase,
             rail_context.umo,
+            policy_id,
             session_action,
             ",".join(executed[:10]) or "-",
             ",".join(matched[:10]) or "-",

@@ -118,6 +118,26 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(observed["input_rail"]["rule_list"][0]["action_on_hit"], "observe")
         self.assertEqual(blocked["request_rail"]["rule_list"][0]["action_on_hit"], "block")
 
+    def test_umo_override_uses_first_usable_policy_then_default(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "broken",
+                    "Broken",
+                    bindings=(PolicyRuleBinding("missing", "input_rail"),),
+                    umo_list=("umo:shared",),
+                ),
+                PolicyDefinition("first", "First", umo_list=("umo:shared",)),
+                PolicyDefinition("second", "Second", umo_list=("umo:shared",)),
+                PolicyDefinition("fallback", "Fallback"),
+            ),
+            active_policy_id="fallback",
+        )
+
+        self.assertEqual(library.select_policy_for_umo("umo:shared").policy_id, "first")
+        self.assertEqual(library.select_policy_for_umo("umo:other").policy_id, "fallback")
+
     def test_missing_rule_binding_is_fatal(self):
         library = PolicyLibrary(
             policies=(

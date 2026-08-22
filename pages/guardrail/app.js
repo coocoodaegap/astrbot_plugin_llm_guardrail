@@ -20,6 +20,10 @@ const status = $("status"),
   policyDetailMeta = $("policy-detail-meta"),
   policyBindingsJson = $("policy-bindings-json"),
   policyBindingsJsonStatus = $("policy-bindings-json-status"),
+  policyUmoList = $("policy-umo-list"),
+  setDefaultPolicy = $("set-default-policy"),
+  savePolicySession = $("save-policy-session"),
+  policySessionStatus = $("policy-session-status"),
   backToPolicyList = $("back-to-policy-list"),
   newPolicy = $("new-policy"),
   savePolicyAs = $("save-policy-as"),
@@ -570,7 +574,8 @@ function renderPolicyList() {
     title.textContent = policy.name || policy.policy_id || "未命名策略";
     description.textContent = String(policy.description || "").trim() || "未说明";
     const bindingCount = Array.isArray(policy.bindings) ? policy.bindings.length : 0;
-    metadata.textContent = `${bindingCount} 条规则绑定${policy.policy_id === policyLibrary.active_policy_id ? " · 当前活动" : ""}`;
+    const umoCount = Array.isArray(policy.umo_list) ? policy.umo_list.length : 0;
+    metadata.textContent = `${bindingCount} 条规则绑定 · ${umoCount} 个 UMO${policy.policy_id === policyLibrary.active_policy_id ? " · 默认策略" : ""}`;
     item.append(title, description, metadata);
     item.addEventListener("click", () => showPolicyDetail(policy.policy_id));
     policyList.append(item);
@@ -597,6 +602,14 @@ function renderPolicyDetail(policy) {
   policyBindingsJson.value = JSON.stringify(bindings, null, 2);
   policyBindingsJson.classList.remove("is-invalid", "is-dirty");
   policyBindingsJsonStatus.textContent = "";
+  policyUmoList.replaceChildren();
+  policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
+  policyUmoList.append(policyUmoList.umoEditor);
+  setDefaultPolicy.disabled = policy.policy_id === policyLibrary.active_policy_id;
+  setDefaultPolicy.textContent = policy.policy_id === policyLibrary.active_policy_id
+    ? "当前默认策略"
+    : "设为默认策略";
+  policySessionStatus.textContent = "";
   savePolicyAs.hidden = policy.builtin;
   deletePolicyButton.hidden = policy.builtin;
 }
@@ -639,6 +652,33 @@ async function persistPolicyLibrary(successMessage) {
     policyLibraryStatus.textContent = `保存策略失败：${error instanceof Error ? error.message : String(error)}`;
     return false;
   }
+}
+async function savePolicySessionAssignment(makeDefault = false) {
+  const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
+  const editor = policyUmoList.umoEditor;
+  if (!policy || !editor || !syncPolicyBindingsJson()) return false;
+  const previousUmoList = policy.umo_list;
+  const previousDefaultPolicyId = policyLibrary.active_policy_id;
+  policy.umo_list = Array.isArray(editor.umoValues) ? [...editor.umoValues] : [];
+  if (makeDefault) policyLibrary.active_policy_id = policy.policy_id;
+  savePolicySession.disabled = true;
+  setDefaultPolicy.disabled = true;
+  const saved = await persistPolicyLibrary((revision) => makeDefault
+    ? `策略“${policy.name || policy.policy_id}”已设为默认策略，revision ${revision}。`
+    : `策略“${policy.name || policy.policy_id}”的会话分配已保存为 revision ${revision}。`);
+  savePolicySession.disabled = false;
+  setDefaultPolicy.disabled = false;
+  if (!saved) {
+    policy.umo_list = previousUmoList;
+    policyLibrary.active_policy_id = previousDefaultPolicyId;
+    return false;
+  }
+  renderPolicyList();
+  renderPolicyDetail(policy);
+  policySessionStatus.textContent = makeDefault
+    ? "默认策略已更新。"
+    : "UMO 列表已保存。";
+  return true;
 }
 function openCreatePolicyDialog() {
   newPolicyId.value = "";
@@ -1130,6 +1170,8 @@ cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
 backToPolicyList.addEventListener("click", showPolicyList);
 policyBindingsJson.addEventListener("input", syncPolicyBindingsJson);
+savePolicySession.addEventListener("click", () => savePolicySessionAssignment());
+setDefaultPolicy.addEventListener("click", () => savePolicySessionAssignment(true));
 newPolicy.addEventListener("click", openCreatePolicyDialog);
 cancelCreatePolicy.addEventListener("click", () => createPolicyDialog.close());
 confirmCreatePolicy.addEventListener("click", createPolicy);

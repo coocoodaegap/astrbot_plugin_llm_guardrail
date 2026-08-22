@@ -142,6 +142,18 @@
           <textarea id="policy-bindings-json" class="json-editor" spellcheck="false" aria-label="规则绑定 JSON"></textarea>
           <p id="policy-bindings-json-status" class="form-status" aria-live="polite"></p>
         </section>
+        <section class="policy-session-assignment">
+          <div class="form-heading">
+            <div>
+              <h3>会话策略分配</h3>
+              <p>指定 UMO 会优先采用此策略；多个策略指定同一 UMO 时，按策略列表顺序选择第一个合法策略。</p>
+            </div>
+            <button id="set-default-policy" type="button" class="button-secondary">设为默认策略</button>
+          </div>
+          <div id="policy-umo-list" aria-label="策略 UMO 列表"></div>
+          <div class="button-group policy-session-actions"><button id="save-policy-session" type="button">保存会话分配</button></div>
+          <p id="policy-session-status" class="form-status" aria-live="polite"></p>
+        </section>
       </section>
       <dialog id="create-policy-dialog" class="save-rule-as-dialog">
         <form method="dialog">

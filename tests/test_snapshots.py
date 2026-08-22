@@ -205,6 +205,43 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertIsNotNone(default_policy)
         self.assertTrue(default_policy.builtin)
 
+    def test_missing_or_invalid_default_pointer_falls_back_to_builtin_default(self):
+        manager = ConfigSnapshotManager(
+            {
+                "policy_library": {
+                    "policies": [{"policy_id": "custom", "name": "Custom"}],
+                    "active_policy_id": "missing",
+                }
+            }
+        )
+
+        self.assertEqual(manager.current.policy_library.active_policy_id, "_default")
+
+    def test_snapshot_selects_policy_runtime_config_by_umo(self):
+        manager = ConfigSnapshotManager({})
+        library = PolicyLibrary(
+            rules=(RuleDefinition("risk", "plain_keywords", {"keywords": ["secret"]}),),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "protected",
+                    "Protected",
+                    bindings=(PolicyRuleBinding("risk", "input_rail"),),
+                    umo_list=("umo:protected",),
+                ),
+            ),
+            active_policy_id="_default",
+        )
+        result = asyncio.run(manager.publish_policy_library(library, 0))
+
+        policy_id, config = result.snapshot.runtime_config_for_umo("umo:protected")
+        fallback_policy_id, fallback_config = result.snapshot.runtime_config_for_umo("umo:other")
+
+        self.assertEqual(policy_id, "protected")
+        self.assertEqual(config.rails["input_rail"].rules[0].rule_id, "risk")
+        self.assertEqual(fallback_policy_id, "_default")
+        self.assertEqual(fallback_config.rails["input_rail"].rules, [])
+
 
 if __name__ == "__main__":
     unittest.main()

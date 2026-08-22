@@ -48,8 +48,16 @@ class ConfigSnapshot:
     policy_library: PolicyLibrary
     library_validation: LibraryValidation
     runtime_config: NormalizedConfig
+    policy_runtime_configs: Mapping[str, NormalizedConfig]
     graph: GraphIndex
     diagnostics: tuple[str, ...]
+
+    def runtime_config_for_umo(self, umo: str) -> tuple[str, NormalizedConfig]:
+        policy = self.policy_library.select_policy_for_umo(umo)
+        return policy.policy_id, self.policy_runtime_configs.get(
+            policy.policy_id,
+            self.runtime_config,
+        )
 
 
 @dataclass(frozen=True)
@@ -302,6 +310,16 @@ class ConfigSnapshotManager:
             library,
         )
         runtime_config = normalize_config(compiled_config)
+        policy_runtime_configs = {
+            policy.policy_id: normalize_config(
+                compile_policy_to_runtime_config(
+                    source_config,
+                    library,
+                    policy.policy_id,
+                )[0]
+            )
+            for policy in library.policies
+        }
         graph = build_graph_index(runtime_config)
         diagnostics = list(self._startup_diagnostics)
         diagnostics.extend(library_validation.fatal_errors)
@@ -316,6 +334,7 @@ class ConfigSnapshotManager:
             policy_library=library,
             library_validation=library_validation,
             runtime_config=runtime_config,
+            policy_runtime_configs=policy_runtime_configs,
             graph=graph,
             diagnostics=tuple(diagnostics),
         )

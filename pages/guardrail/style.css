@@ -334,6 +334,22 @@ button:disabled {
     border-top: 1px solid #e2e8f0
 }
 
+.policy-session-assignment {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0
+}
+
+.policy-session-assignment h3 {
+    margin: 0 0 8px;
+    color: #26334a;
+    font-size: 1rem
+}
+
+.policy-session-actions {
+    margin-top: 12px
+}
+
 .policy-json-editor h3 {
     margin: 0 0 12px;
     color: #26334a;
