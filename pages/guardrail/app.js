@@ -57,6 +57,15 @@ const status = $("status"),
   policyDependencyMode = $("policy-dependency-mode"),
   cancelPolicyDependencyMode = $("cancel-policy-dependency-mode"),
   confirmPolicyDependencyMode = $("confirm-policy-dependency-mode"),
+  confirmPolicyBindingRemoveDialog = $("confirm-policy-binding-remove-dialog"),
+  confirmPolicyBindingRemoveMessage = $("confirm-policy-binding-remove-message"),
+  cancelPolicyBindingRemove = $("cancel-policy-binding-remove"),
+  confirmPolicyBindingRemove = $("confirm-policy-binding-remove"),
+  policySaveIssuesDialog = $("policy-save-issues-dialog"),
+  policySaveIssuesTitle = $("policy-save-issues-title"),
+  policySaveIssuesIntro = $("policy-save-issues-intro"),
+  policySaveIssuesList = $("policy-save-issues-list"),
+  closePolicySaveIssues = $("close-policy-save-issues"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationDialog = $("rule-creation-dialog"),
@@ -202,6 +211,7 @@ let currentRevision = null,
   openRuleIds = [],
   selectedPolicyId = null,
   pendingPolicyDeletionId = null,
+  pendingPolicyBindingRemovalId = null,
   saveAsSourceRuleId = null,
   pendingRuleDeletionId = null,
   selectedNewTemplate = null,
@@ -1220,6 +1230,47 @@ function applyPolicyDependencySelection() {
   renderPolicyGraphEditor();
   setPolicyGraphEditorStatus(`已暂存依赖：${dependentId} ← ${binding.depend_on}。点击“保存策略”后写入快照。`);
 }
+function policyGraphDependentsOf(ruleId) {
+  const model = policyGraphState.model;
+  if (!model) return [];
+  return [...new Set(model.edges
+    .filter((edge) => edge.sourceId === ruleId)
+    .map((edge) => edge.targetId)
+    .filter((id) => id && id !== ruleId))];
+}
+function requestPolicyBindingRemoval(ruleId) {
+  const node = policyGraphState.model?.nodeById.get(ruleId);
+  if (!node) return;
+  pendingPolicyBindingRemovalId = ruleId;
+  const dependents = policyGraphDependentsOf(ruleId);
+  const dependentNote = dependents.length
+    ? `仍引用它的节点：${dependents.join("、")}。移除后这些节点会保留原依赖，并在图中标红；必须修复后才能保存策略。`
+    : "没有其他节点依赖它；移除不会自动修改规则库本体。";
+  confirmPolicyBindingRemoveMessage.textContent = `将仅从当前策略移除规则“${ruleId}”。该节点自身的依赖会一并移除。${dependentNote}`;
+  confirmPolicyBindingRemoveDialog.showModal();
+}
+function removePolicyBinding() {
+  const ruleId = pendingPolicyBindingRemovalId;
+  const draft = getPolicyGraphDraft();
+  if (!ruleId || !draft) return;
+  const originalCount = draft.bindings.length;
+  draft.bindings = draft.bindings.filter((binding) => binding.rule_id !== ruleId);
+  if (draft.bindings.length === originalCount) return;
+  pendingPolicyBindingRemovalId = null;
+  confirmPolicyBindingRemoveDialog.close();
+  policyGraphState.dependencySelection = null;
+  policyGraphState.pendingDependencySourceId = null;
+  policyGraphCanvas.classList.remove("is-dependency-selecting");
+  renderPolicyGraph(draft, { resetSelection: true });
+  renderPolicyGraphEditor();
+  const unresolved = policyGraphDependentsOf(ruleId).length;
+  setPolicyGraphEditorStatus(
+    unresolved
+      ? `已暂存移除“${ruleId}”。仍依赖它的节点已标红；请修复它们后再保存策略。`
+      : `已暂存从当前策略移除“${ruleId}”；点击“保存策略”后写入快照。`,
+    unresolved > 0,
+  );
+}
 function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   if (!isPolicyGraphNodeVisible(node)) return;
   const color = node.state === "disabled" ? "#94a3b8" : node.theme?.color || "#e2e8f0";
@@ -1641,6 +1692,12 @@ function renderPolicyGraphNodeEditor(node) {
     dependencyActions.append(clearDependencyButton);
   }
   editor.append(dependencyActions);
+  const removeBindingButton = document.createElement("button");
+  removeBindingButton.type = "button";
+  removeBindingButton.className = "danger-button policy-graph-editor-action";
+  removeBindingButton.textContent = "从当前策略移除";
+  removeBindingButton.addEventListener("click", () => requestPolicyBindingRemoval(node.id));
+  editor.append(removeBindingButton);
   if (node.isLogicGate) {
     const inputs = graphRuleInputs(rule);
     const logicNote = document.createElement("p");
@@ -1754,7 +1811,30 @@ function collectPolicyDetailDraft(policy) {
 function validCustomPolicyId(id) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(id) && id !== "_default";
 }
-async function persistPolicyLibrary(successMessage) {
+function currentPolicyGraphIssues() {
+  return policyGraphState.model?.nodes
+    .flatMap((node) => node.issues.map((issue) => `${node.id}：${issue.message}`)) || [];
+}
+function showPolicySaveIssues(title, messages, intro = "请修复以下问题后再试。") {
+  const uniqueMessages = [...new Set(messages.map((message) => String(message || "").trim()).filter(Boolean))];
+  policySaveIssuesTitle.textContent = title;
+  policySaveIssuesIntro.textContent = intro;
+  policySaveIssuesList.replaceChildren();
+  for (const message of uniqueMessages.length ? uniqueMessages : ["保存请求未完成，请检查策略配置后重试。"]) {
+    const item = document.createElement("li");
+    item.textContent = message;
+    policySaveIssuesList.append(item);
+  }
+  if (!policySaveIssuesDialog.open) policySaveIssuesDialog.showModal();
+}
+function policySaveFailureMessages(result) {
+  const messages = [];
+  if (Array.isArray(result?.diagnostics)) messages.push(...result.diagnostics);
+  if (typeof result?.detail === "string") messages.push(...result.detail.split(/\r?\n/));
+  if (!messages.length && result?.error) messages.push(result.error);
+  return [...currentPolicyGraphIssues(), ...messages];
+}
+async function persistPolicyLibrary(successMessage, { showIssues = false, operation = "保存策略" } = {}) {
   if (!Number.isInteger(currentRevision)) return false;
   try {
     const result = await bridge.apiPost("save_policy_library", {
@@ -1763,13 +1843,16 @@ async function persistPolicyLibrary(successMessage) {
     });
     if (!result.success) {
       policyLibraryStatus.textContent = result.detail || result.error || "保存策略失败。";
+      if (showIssues) showPolicySaveIssues(`${operation}失败`, policySaveFailureMessages(result));
       return false;
     }
     currentRevision = result.revision;
     policyLibraryStatus.textContent = successMessage(result.revision);
     return true;
   } catch (error) {
-    policyLibraryStatus.textContent = `保存策略失败：${error instanceof Error ? error.message : String(error)}`;
+    const message = error instanceof Error ? error.message : String(error);
+    policyLibraryStatus.textContent = `保存策略失败：${message}`;
+    if (showIssues) showPolicySaveIssues(`${operation}失败`, [...currentPolicyGraphIssues(), message]);
     return false;
   }
 }
@@ -1777,7 +1860,10 @@ async function saveCurrentPolicy(makeDefault = false) {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
   if (!policy) return false;
   const draft = collectPolicyDetailDraft(policy);
-  if (!draft) return false;
+  if (!draft) {
+    showPolicySaveIssues("策略暂不能保存", [policyBasicStatus.textContent || "策略基本信息不完整。"]);
+    return false;
+  }
   const previousPolicy = structuredClone(policy);
   const previousDefaultPolicyId = policyLibrary.active_policy_id;
   Object.assign(policy, draft);
@@ -1786,7 +1872,10 @@ async function saveCurrentPolicy(makeDefault = false) {
   setDefaultPolicy.disabled = true;
   const saved = await persistPolicyLibrary((revision) => makeDefault
     ? `策略“${policy.name || policy.policy_id}”已设为默认策略，revision ${revision}。`
-    : `策略“${policy.name || policy.policy_id}”已保存为 revision ${revision}。`);
+    : `策略“${policy.name || policy.policy_id}”已保存为 revision ${revision}。`, {
+    showIssues: true,
+    operation: makeDefault ? "设置默认策略" : "保存策略",
+  });
   savePolicy.disabled = false;
   setDefaultPolicy.disabled = false;
   if (!saved) {
@@ -1834,6 +1923,19 @@ async function createPolicy() {
 function openSavePolicyAsDialog() {
   const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
   if (!source || source.builtin) return;
+  const draft = collectPolicyDetailDraft(source);
+  const issues = currentPolicyGraphIssues();
+  if (!draft || issues.length) {
+    showPolicySaveIssues(
+      "策略暂不能另存为",
+      [
+        ...issues,
+        ...(!draft ? [policyBasicStatus.textContent || "策略基本信息不完整。"] : []),
+      ],
+      "请先修复当前策略草稿的问题，再创建副本。",
+    );
+    return;
+  }
   saveAsPolicyId.value = "";
   saveAsPolicyName.value = `${policyNameInput.value.trim() || source.name || source.policy_id} 副本`;
   saveAsPolicyDescription.value = policyDescriptionInput.value.trim();
@@ -1846,15 +1948,36 @@ async function savePolicyAsCopy() {
   const name = saveAsPolicyName.value.trim();
   const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
   if (!source || source.builtin) return;
-  if (!validCustomPolicyId(id)) { saveAsPolicyStatus.textContent = "新策略 ID 格式无效。"; return; }
-  if (!name) { saveAsPolicyStatus.textContent = "请填写策略名称。"; return; }
-  if (policyLibrary.policies.some((policy) => policy.policy_id === id)) { saveAsPolicyStatus.textContent = "策略 ID 已存在。"; return; }
+  if (!validCustomPolicyId(id)) {
+    const message = "新策略 ID 格式无效。";
+    saveAsPolicyStatus.textContent = message;
+    showPolicySaveIssues("策略另存为失败", [message]);
+    return;
+  }
+  if (!name) {
+    const message = "请填写策略名称。";
+    saveAsPolicyStatus.textContent = message;
+    showPolicySaveIssues("策略另存为失败", [message]);
+    return;
+  }
+  if (policyLibrary.policies.some((policy) => policy.policy_id === id)) {
+    const message = "策略 ID 已存在。";
+    saveAsPolicyStatus.textContent = message;
+    showPolicySaveIssues("策略另存为失败", [message]);
+    return;
+  }
   const draft = collectPolicyDetailDraft(source);
-  if (!draft) return;
+  if (!draft) {
+    showPolicySaveIssues("策略另存为失败", [policyBasicStatus.textContent || "策略基本信息不完整。"]);
+    return;
+  }
   const copy = { ...draft, policy_id: id, name, description: saveAsPolicyDescription.value.trim(), builtin: false };
   policyLibrary.policies.push(copy);
   confirmSavePolicyAs.disabled = true;
-  const saved = await persistPolicyLibrary((revision) => `策略“${name}”已另存为 revision ${revision}。`);
+  const saved = await persistPolicyLibrary(
+    (revision) => `策略“${name}”已另存为 revision ${revision}。`,
+    { showIssues: true, operation: "策略另存为" },
+  );
   confirmSavePolicyAs.disabled = false;
   if (!saved) { policyLibrary.policies = policyLibrary.policies.filter((item) => item !== copy); return; }
   savePolicyAsDialog.close();
@@ -2330,6 +2453,12 @@ confirmPolicyDependencyMode.addEventListener("click", applyPolicyDependencySelec
 policyDependencyModeDialog.addEventListener("cancel", () => {
   cancelPolicyDependencySelection("已取消依赖项选择。");
 });
+cancelPolicyBindingRemove.addEventListener("click", () => {
+  pendingPolicyBindingRemovalId = null;
+  confirmPolicyBindingRemoveDialog.close();
+});
+confirmPolicyBindingRemove.addEventListener("click", removePolicyBinding);
+closePolicySaveIssues.addEventListener("click", () => policySaveIssuesDialog.close());
 if (window.ResizeObserver) {
   new window.ResizeObserver(() => {
     if (policyGraphIsVisible()) schedulePolicyGraphRender();

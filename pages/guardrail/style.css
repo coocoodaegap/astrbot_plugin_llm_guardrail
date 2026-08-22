@@ -813,6 +813,51 @@ button:disabled {
     background: rgb(15 23 42 / 38%)
 }
 
+.policy-save-issues-dialog {
+    width: min(620px, calc(100vw - 32px));
+    max-height: min(680px, calc(100vh - 32px));
+    overflow: auto;
+    padding: 20px;
+    color: #172033;
+    background: #fff;
+    border: 1px solid #f1b7b7;
+    border-radius: 12px;
+    box-shadow: 0 20px 45px rgb(15 23 42 / 24%)
+}
+
+.policy-save-issues-dialog::backdrop {
+    background: rgb(15 23 42 / 38%)
+}
+
+.policy-save-issues-dialog h3 {
+    margin: 3px 0 7px;
+    color: #a61b28
+}
+
+.policy-save-issues-dialog p:not(.eyebrow) {
+    margin: 0;
+    color: #64748b
+}
+
+.policy-save-issues-list {
+    display: grid;
+    gap: 8px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none
+}
+
+.policy-save-issues-list li {
+    padding: 9px 11px;
+    color: #8f1d29;
+    background: #fff4f4;
+    border: 1px solid #fecaca;
+    border-radius: 7px;
+    font-size: .88rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere
+}
+
 .confirm-rule-delete-dialog::backdrop {
     background: rgb(15 23 42 / 38%)
 }

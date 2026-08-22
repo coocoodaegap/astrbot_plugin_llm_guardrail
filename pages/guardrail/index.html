@@ -226,6 +226,14 @@
           <div class="dialog-actions"><button id="cancel-policy-dependency-mode" type="button" class="button-secondary">取消</button><button id="confirm-policy-dependency-mode" type="button">确认连接</button></div>
         </form>
       </dialog>
+      <dialog id="confirm-policy-binding-remove-dialog" class="confirm-rule-delete-dialog">
+        <div><p class="eyebrow">REMOVE POLICY BINDING</p><h3>从当前策略移除此节点？</h3><p id="confirm-policy-binding-remove-message" class="danger-notice"></p></div>
+        <div class="dialog-actions"><button id="cancel-policy-binding-remove" type="button" class="button-secondary">取消</button><button id="confirm-policy-binding-remove" type="button" class="danger-button">移除节点</button></div>
+      </dialog>
+      <dialog id="policy-save-issues-dialog" class="policy-save-issues-dialog" aria-labelledby="policy-save-issues-title">
+        <div><p class="eyebrow">POLICY VALIDATION</p><h3 id="policy-save-issues-title">策略暂不能保存</h3><p id="policy-save-issues-intro">请修复以下问题后再试。</p><ul id="policy-save-issues-list" class="policy-save-issues-list"></ul></div>
+        <div class="dialog-actions"><button id="close-policy-save-issues" type="button">我知道了</button></div>
+      </dialog>
     </section>
     <section class="tab-panel" id="panel-access" role="tabpanel" aria-labelledby="tab-access" data-panel="access"
       hidden>
