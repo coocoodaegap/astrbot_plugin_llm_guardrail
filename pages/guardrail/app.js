@@ -736,10 +736,9 @@ function buildPolicyGraphModel(policy) {
   return { policy, nodes, nodeById, edges };
 }
 function policyGraphCanvasHeight() {
-  const lanesHeight = policyGraphSteps.reduce(
-    (height, step) => height + (policyGraphState.collapsedRails.has(step.rail) ? 42 : 104),
-    0,
-  );
+  const lanesHeight = policyGraphSteps.reduce((height, step) => (
+    height + policyGraphMinimumLaneHeight(step, policyGraphState.model)
+  ), 0);
   return Math.max(lanesHeight, policyGraphStage?.clientHeight || 0);
 }
 function isPolicyGraphNodeVisible(node) {
@@ -809,6 +808,14 @@ function policyGraphIsVisible() {
 function policyGraphReducedMotion() {
   return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
 }
+function policyGraphLayoutKey(width, height) {
+  return [
+    Math.round(width),
+    Math.round(height),
+    [...policyGraphState.collapsedRails].sort().join(","),
+    [...policyGraphState.hiddenNodeStates].sort().join(","),
+  ].join("|");
+}
 function schedulePolicyGraphRender() {
   if (policyGraphState.renderFrame) return;
   policyGraphState.renderFrame = requestAnimationFrame((timestamp) => {
@@ -835,44 +842,183 @@ function updatePolicyGraphAnimation() {
   };
   policyGraphState.animationFrame = requestAnimationFrame(animate);
 }
+function policyGraphNodesByRail(model) {
+  const nodesByRail = new Map(policyGraphSteps.map((step) => [step.rail, []]));
+  for (const node of model.nodes) {
+    if (isPolicyGraphNodeVisible(node)) nodesByRail.get(node.rail)?.push(node);
+  }
+  for (const nodes of nodesByRail.values()) {
+    nodes.sort((leftNode, rightNode) => (
+      leftNode.priority - rightNode.priority || leftNode.id.localeCompare(rightNode.id)
+    ));
+  }
+  return nodesByRail;
+}
+function policyGraphMinimumLaneHeight(step, model) {
+  if (policyGraphState.collapsedRails.has(step.rail)) return 42;
+  const nodes = (model?.nodes || []).filter((node) => (
+    node.rail === step.rail && isPolicyGraphNodeVisible(node)
+  ));
+  const { maxRank } = policyGraphLaneRanks(nodes, model);
+  // 标题区约 42px，底部和节点半径约 20px；每个依赖层之间至少留出 42px。
+  return Math.max(104, 62 + maxRank * 42);
+}
+function policyGraphNeighborMap(model, visibleNodeIds) {
+  const neighbors = new Map([...visibleNodeIds].map((nodeId) => [nodeId, []]));
+  for (const edge of model?.edges || []) {
+    if (edge.invalid || !edge.source || !edge.target || edge.source === edge.target
+      || !visibleNodeIds.has(edge.source.id) || !visibleNodeIds.has(edge.target.id)) continue;
+    const distance = Math.max(1, Math.abs(edge.source.step - edge.target.step));
+    const weight = 1 / distance;
+    neighbors.get(edge.source.id)?.push({ node: edge.target, weight });
+    neighbors.get(edge.target.id)?.push({ node: edge.source, weight });
+  }
+  return neighbors;
+}
+function policyGraphLaneRanks(nodes, model) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const outgoing = new Map(nodes.map((node) => [node.id, new Set()]));
+  const incomingCount = new Map(nodes.map((node) => [node.id, 0]));
+  for (const edge of model?.edges || []) {
+    if (edge.invalid || !edge.source || !edge.target || edge.source.rail !== edge.target.rail
+      || !nodeById.has(edge.source.id) || !nodeById.has(edge.target.id)) continue;
+    const targets = outgoing.get(edge.source.id);
+    if (!targets?.has(edge.target.id)) {
+      targets.add(edge.target.id);
+      incomingCount.set(edge.target.id, (incomingCount.get(edge.target.id) || 0) + 1);
+    }
+  }
+  const compareNodes = (leftNode, rightNode) => (
+    leftNode.priority - rightNode.priority || leftNode.id.localeCompare(rightNode.id)
+  );
+  const ready = nodes.filter((node) => !incomingCount.get(node.id)).sort(compareNodes);
+  const rankById = new Map(nodes.map((node) => [node.id, 0]));
+  const processedIds = new Set();
+  while (ready.length) {
+    const node = ready.shift();
+    processedIds.add(node.id);
+    for (const targetId of outgoing.get(node.id) || []) {
+      rankById.set(targetId, Math.max(
+        rankById.get(targetId) || 0,
+        (rankById.get(node.id) || 0) + 1,
+      ));
+      const nextCount = (incomingCount.get(targetId) || 0) - 1;
+      incomingCount.set(targetId, nextCount);
+      if (!nextCount) {
+        ready.push(nodeById.get(targetId));
+        ready.sort(compareNodes);
+      }
+    }
+  }
+  // 循环依赖本身已标为错误。它不参与硬性分层，以免坏数据挤压合法节点。
+  for (const node of nodes) {
+    if (!processedIds.has(node.id)) rankById.set(node.id, 0);
+  }
+  const maxRank = Math.max(0, ...rankById.values());
+  return { rankById, maxRank };
+}
+function clampPolicyGraphNodesInLane(nodes, desired, left, right) {
+  if (!nodes.length) return;
+  const usableLeft = left + 10;
+  const usableRight = Math.max(usableLeft, right - 10);
+  if (nodes.length === 1) {
+    nodes[0].x = Math.min(
+      usableRight,
+      Math.max(usableLeft, desired.get(nodes[0].id) ?? (usableLeft + usableRight) / 2),
+    );
+    return;
+  }
+  const gap = Math.min(108, (usableRight - usableLeft) / (nodes.length - 1));
+  for (let index = 0; index < nodes.length; index += 1) {
+    const fallback = usableLeft + (usableRight - usableLeft) * index / (nodes.length - 1);
+    const wanted = desired.get(nodes[index].id) ?? fallback;
+    const minimum = usableLeft + gap * index;
+    const maximum = usableRight - gap * (nodes.length - index - 1);
+    nodes[index].x = Math.max(minimum, Math.min(maximum, wanted));
+  }
+  for (let index = nodes.length - 2; index >= 0; index -= 1) {
+    nodes[index].x = Math.min(nodes[index].x, nodes[index + 1].x - gap);
+  }
+}
 function layoutPolicyGraph(model, width, height) {
   const laneLayouts = new Map();
-  const collapsedHeight = 42;
   const expandedSteps = policyGraphSteps.filter(
     (step) => !policyGraphState.collapsedRails.has(step.rail),
   );
-  const collapsedTotal = (policyGraphSteps.length - expandedSteps.length) * collapsedHeight;
-  const expandedHeight = expandedSteps.length
-    ? Math.max(104, (height - collapsedTotal) / expandedSteps.length)
-    : collapsedHeight;
+  const minimumHeights = new Map(
+    policyGraphSteps.map((step) => [step.rail, policyGraphMinimumLaneHeight(step, model)]),
+  );
+  const minimumTotal = [...minimumHeights.values()].reduce((total, value) => total + value, 0);
+  const extraHeight = expandedSteps.length ? Math.max(0, height - minimumTotal) / expandedSteps.length : 0;
   let top = 0;
   for (const step of policyGraphSteps) {
     const collapsed = policyGraphState.collapsedRails.has(step.rail);
-    const laneHeight = collapsed ? collapsedHeight : expandedHeight;
+    const laneHeight = minimumHeights.get(step.rail) + (collapsed ? 0 : extraHeight);
     laneLayouts.set(step.rail, { step, top, height: laneHeight, collapsed });
     top += laneHeight;
   }
   const left = 92;
   const right = Math.max(left + 90, width - 34);
+  const nodesByRail = policyGraphNodesByRail(model);
+  const visibleNodeIds = new Set(
+    [...nodesByRail.values()].flatMap((nodes) => nodes.map((node) => node.id)),
+  );
+  const neighbors = policyGraphNeighborMap(model, visibleNodeIds);
+  const anchors = new Map();
+  const rowsByRail = new Map();
   for (const step of policyGraphSteps) {
     const lane = laneLayouts.get(step.rail);
-    const nodes = model.nodes
-      .filter((node) => node.rail === step.rail)
-      .sort((leftNode, rightNode) => (
+    if (lane.collapsed) continue;
+    const nodes = nodesByRail.get(step.rail) || [];
+    const { rankById, maxRank } = policyGraphLaneRanks(nodes, model);
+    const rows = new Map();
+    for (const node of nodes) {
+      const rank = rankById.get(node.id) || 0;
+      if (!rows.has(rank)) rows.set(rank, []);
+      rows.get(rank).push(node);
+    }
+    for (const rowNodes of rows.values()) {
+      rowNodes.sort((leftNode, rightNode) => (
         leftNode.priority - rightNode.priority || leftNode.id.localeCompare(rightNode.id)
       ));
-    if (lane.collapsed) continue;
-    const depthCounts = new Map();
-    for (const node of nodes) depthCounts.set(node.depth, (depthCounts.get(node.depth) || 0) + 1);
-    const depthOffsets = new Map();
-    nodes.forEach((node, index) => {
-      const availableWidth = Math.max(1, right - left);
-      node.x = nodes.length === 1 ? left + availableWidth / 2 : left + (availableWidth * index) / (nodes.length - 1);
-      const offset = depthOffsets.get(node.depth) || 0;
-      depthOffsets.set(node.depth, offset + 1);
-      const depthY = lane.top + 38 + node.depth * 25 + offset * 16;
-      node.y = Math.min(lane.top + lane.height - 18, depthY);
-    });
+      rowNodes.forEach((node, index) => {
+        anchors.set(node.id, left + (right - left) * (index + .5) / rowNodes.length);
+        node.x = anchors.get(node.id);
+      });
+    }
+    const topY = lane.top + 42;
+    const bottomY = lane.top + lane.height - 20;
+    for (const [rank, rowNodes] of rows) {
+      const y = maxRank === 0
+        ? topY + 10
+        : topY + (bottomY - topY) * rank / maxRank;
+      rowNodes.forEach((node) => { node.y = y; });
+    }
+    rowsByRail.set(step.rail, rows);
+  }
+  // 同一依赖层保持优先级顺序和最小间距，再向相邻节点横向对齐。
+  for (let pass = 0; pass < 18; pass += 1) {
+    const currentX = new Map(model.nodes.map((node) => [node.id, node.x]));
+    for (const step of policyGraphSteps) {
+      const lane = laneLayouts.get(step.rail);
+      if (lane.collapsed) continue;
+      for (const nodes of rowsByRail.get(step.rail)?.values() || []) {
+        const desired = new Map();
+        for (const node of nodes) {
+          let total = 0;
+          let weightTotal = 0;
+          for (const item of neighbors.get(node.id) || []) {
+            const x = currentX.get(item.node.id);
+            if (!Number.isFinite(x)) continue;
+            total += x * item.weight;
+            weightTotal += item.weight;
+          }
+          const anchor = anchors.get(node.id) ?? left + (right - left) / 2;
+          desired.set(node.id, weightTotal ? anchor * .38 + (total / weightTotal) * .62 : anchor);
+        }
+        clampPolicyGraphNodesInLane(nodes, desired, left, right);
+      }
+    }
   }
   return { laneLayouts, width, height };
 }
@@ -916,18 +1062,36 @@ function drawPolicyGraphArrow(context, source, target, edge) {
   else if (edge.mode === "not_matched") context.setLineDash([7, 5]);
   else if (edge.mode === "executed") context.setLineDash([2, 5]);
   else context.setLineDash([]);
-  const controlX = Math.max(24, Math.abs(target.x - source.x) * .38);
+  const sourceRadius = source.isLogicGate ? 10 : 8;
+  const targetRadius = target.isLogicGate ? 10 : 8;
+  const deltaY = target.y - source.y;
+  const direction = Math.sign(deltaY) || 1;
+  const startX = source.x;
+  const startY = source.y + direction * sourceRadius;
+  const endX = target.x;
+  const endY = target.y - direction * targetRadius;
   context.beginPath();
-  context.moveTo(source.x, source.y);
-  context.bezierCurveTo(source.x + controlX, source.y, target.x - controlX, target.y, target.x, target.y);
+  context.moveTo(startX, startY);
+  if (Math.abs(deltaY) < sourceRadius + targetRadius + 4) {
+    context.lineTo(endX, endY);
+  } else {
+    const controlY = Math.max(20, Math.abs(endY - startY) * .42);
+    context.bezierCurveTo(
+      startX, startY + direction * controlY,
+      endX, endY - direction * controlY,
+      endX, endY,
+    );
+  }
   context.stroke();
-  const angle = Math.atan2(target.y - source.y, target.x - source.x);
+  const angle = Math.abs(deltaY) < sourceRadius + targetRadius + 4
+    ? Math.atan2(endY - startY, endX - startX)
+    : direction > 0 ? Math.PI / 2 : -Math.PI / 2;
   const size = 6;
   context.setLineDash([]);
   context.beginPath();
-  context.moveTo(target.x, target.y);
-  context.lineTo(target.x - size * Math.cos(angle - Math.PI / 6), target.y - size * Math.sin(angle - Math.PI / 6));
-  context.lineTo(target.x - size * Math.cos(angle + Math.PI / 6), target.y - size * Math.sin(angle + Math.PI / 6));
+  context.moveTo(endX, endY);
+  context.lineTo(endX - size * Math.cos(angle - Math.PI / 6), endY - size * Math.sin(angle - Math.PI / 6));
+  context.lineTo(endX - size * Math.cos(angle + Math.PI / 6), endY - size * Math.sin(angle + Math.PI / 6));
   context.closePath();
   context.fill();
   context.restore();
@@ -1004,8 +1168,14 @@ function drawPolicyGraph(timestamp = performance.now()) {
   if (!context) return;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
   context.clearRect(0, 0, rect.width, rect.height);
-  const layout = layoutPolicyGraph(model, rect.width, rect.height);
-  policyGraphState.layout = layout;
+  const layoutKey = policyGraphLayoutKey(rect.width, rect.height);
+  let layout = policyGraphState.layout;
+  if (!layout || layout.model !== model || layout.key !== layoutKey) {
+    layout = layoutPolicyGraph(model, rect.width, rect.height);
+    layout.model = model;
+    layout.key = layoutKey;
+    policyGraphState.layout = layout;
+  }
   const reducedMotion = policyGraphReducedMotion();
   for (const lane of layout.laneLayouts.values()) {
     lane.width = rect.width;
@@ -1034,6 +1204,7 @@ function policyGraphNodeAt(clientX, clientY) {
 }
 function renderPolicyGraph(policy) {
   policyGraphState.selectedNodeId = null;
+  policyGraphState.layout = null;
   policyGraphState.model = buildPolicyGraphModel(policy);
   renderPolicyGraphStepToggles(policyGraphState.model);
   const issues = policyGraphState.model.nodes.flatMap((node) => node.issues);

@@ -502,7 +502,7 @@ button:disabled {
     min-height: 540px;
     max-height: calc(100vh - 140px);
     resize: vertical;
-    overflow: hidden;
+    overflow: auto;
     background: #101927;
     border: 1px solid #24334b;
     border-radius: 12px;
