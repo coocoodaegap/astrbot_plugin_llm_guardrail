@@ -318,6 +318,106 @@ class PolicyLibraryTests(unittest.TestCase):
         )[0]
         self.assertEqual(compiled["input_rail"]["rule_list"][0]["threshold"], 3)
 
+    def test_policy_rejects_dependency_on_a_later_step(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("early", "plain_keywords", {"keywords": ["early"]}),
+                RuleDefinition("late", "plain_keywords", {"keywords": ["late"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "invalid_order",
+                    "Invalid order",
+                    bindings=(
+                        PolicyRuleBinding("early", "input_rail", depend_on="late"),
+                        PolicyRuleBinding("late", "request_rail"),
+                    ),
+                ),
+            ),
+            active_policy_id="invalid_order",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("cannot depend on late in later Step 3" in error for error in validation.fatal_errors))
+
+    def test_policy_rejects_cyclic_dependencies(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("first", "plain_keywords", {"keywords": ["first"]}),
+                RuleDefinition("second", "plain_keywords", {"keywords": ["second"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "cycle",
+                    "Cycle",
+                    bindings=(
+                        PolicyRuleBinding("first", "input_rail", depend_on="second"),
+                        PolicyRuleBinding("second", "input_rail", depend_on="first"),
+                    ),
+                ),
+            ),
+            active_policy_id="cycle",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("has cyclic dependency" in error for error in validation.fatal_errors))
+
+    def test_policy_rejects_dependency_on_disabled_node(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),
+                RuleDefinition("dependent", "plain_keywords", {"keywords": ["dependent"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "disabled_dependency",
+                    "Disabled dependency",
+                    bindings=(
+                        PolicyRuleBinding("source", "input_rail", enabled=False),
+                        PolicyRuleBinding("dependent", "request_rail", depend_on="source"),
+                    ),
+                ),
+            ),
+            active_policy_id="disabled_dependency",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("references disabled rule source" in error for error in validation.fatal_errors))
+
+    def test_logic_gate_inputs_obey_policy_dependency_step_order(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("gate", "logic_gate", {"inputs": ["source"]}),
+                RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "invalid_gate_order",
+                    "Invalid gate order",
+                    bindings=(
+                        PolicyRuleBinding("gate", "input_rail"),
+                        PolicyRuleBinding("source", "request_rail"),
+                    ),
+                ),
+            ),
+            active_policy_id="invalid_gate_order",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("gate in Step 1 cannot depend on source in later Step 3" in error for error in validation.fatal_errors))
+
 
 if __name__ == "__main__":
     unittest.main()

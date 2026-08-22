@@ -242,6 +242,61 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(fallback_policy_id, "_default")
         self.assertEqual(fallback_config.rails["input_rail"].rules, [])
 
+    def test_publish_rejects_dependency_target_that_normalizes_as_unavailable(self):
+        manager = ConfigSnapshotManager({})
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("broken_regex", "regex_pattern", {"pattern": "["}),
+                RuleDefinition("dependent", "plain_keywords", {"keywords": ["dependent"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "invalid_target",
+                    "Invalid target",
+                    bindings=(
+                        PolicyRuleBinding("broken_regex", "input_rail"),
+                        PolicyRuleBinding("dependent", "input_rail", depend_on="broken_regex"),
+                    ),
+                ),
+            ),
+            active_policy_id="invalid_target",
+        )
+
+        result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
+
+        self.assertFalse(result.success)
+        self.assertEqual(manager.current.revision, 0)
+        self.assertTrue(any("depends on unavailable rule broken_regex" in item for item in result.diagnostics))
+
+    def test_publish_rejects_dependency_target_in_a_disabled_step(self):
+        manager = ConfigSnapshotManager({})
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),
+                RuleDefinition("dependent", "plain_keywords", {"keywords": ["dependent"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "disabled_step",
+                    "Disabled step",
+                    rail_settings={"input_rail": {"enabled": False}},
+                    bindings=(
+                        PolicyRuleBinding("source", "input_rail"),
+                        PolicyRuleBinding("dependent", "request_rail", depend_on="source"),
+                    ),
+                ),
+            ),
+            active_policy_id="disabled_step",
+        )
+
+        result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
+
+        self.assertFalse(result.success)
+        self.assertEqual(manager.current.revision, 0)
+        self.assertTrue(any("but Step input_rail is disabled" in item for item in result.diagnostics))
+
 
 if __name__ == "__main__":
     unittest.main()

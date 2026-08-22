@@ -320,6 +320,16 @@ class ConfigSnapshotManager:
             )
             for policy in library.policies
         }
+        if library_validation.valid:
+            dependency_errors = _runtime_dependency_errors(
+                library,
+                policy_runtime_configs,
+            )
+            if dependency_errors:
+                library_validation = LibraryValidation(
+                    fatal_errors=(*library_validation.fatal_errors, *dependency_errors),
+                    warnings=library_validation.warnings,
+                )
         graph = build_graph_index(runtime_config)
         diagnostics = list(self._startup_diagnostics)
         diagnostics.extend(library_validation.fatal_errors)
@@ -391,6 +401,79 @@ class ConfigSnapshotManager:
         except (OSError, TypeError, ValueError):
             temporary.unlink(missing_ok=True)
             raise
+
+
+def _runtime_dependency_target(value: Any) -> str:
+    text = str(value or "").strip()
+    if text[:1] in {"!", "?"}:
+        text = text[1:].strip()
+    return text
+
+
+def _runtime_dependency_references(
+    policy: PolicyDefinition,
+    rule_by_id: Mapping[str, RuleDefinition],
+) -> list[tuple[str, str]]:
+    references: list[tuple[str, str]] = []
+    for binding in policy.bindings:
+        if binding.depend_on:
+            references.append((binding.rule_id, binding.depend_on))
+        rule = rule_by_id.get(binding.rule_id)
+        inputs = rule.template_config.get("inputs") if rule and rule.template_key == "logic_gate" else None
+        if isinstance(inputs, list):
+            references.extend((binding.rule_id, str(item)) for item in inputs if str(item).strip())
+    return references
+
+
+def _runtime_dependency_errors(
+    library: PolicyLibrary,
+    policy_runtime_configs: Mapping[str, NormalizedConfig],
+) -> tuple[str, ...]:
+    """Reject policies whose structurally valid dependency target cannot run.
+
+    Template validity is intentionally read from ``normalize_config`` rather
+    than duplicated here.  This keeps regex, RAG, LLM, and future template
+    validation aligned with the runtime compiler.
+    """
+
+    errors: list[str] = []
+    rule_by_id = {rule.rule_id: rule for rule in library.rules}
+    emitted: set[tuple[str, str, str, str]] = set()
+    for policy in library.policies:
+        config = policy_runtime_configs.get(policy.policy_id)
+        if config is None:
+            continue
+        normalized_by_id = {
+            rule.user_rule_id: rule
+            for rail in config.rails.values()
+            for rule in rail.rules
+            if rule.user_rule_id
+        }
+        for dependent_id, raw_reference in _runtime_dependency_references(policy, rule_by_id):
+            target_id = _runtime_dependency_target(raw_reference)
+            target = normalized_by_id.get(target_id)
+            if target is None:
+                # Structural validation reports references outside this policy.
+                continue
+            target_rail = config.rails.get(target.rail)
+            if target_rail is not None and not target_rail.enabled:
+                key = (policy.policy_id, dependent_id, target_id, "step_disabled")
+                message = (
+                    f"policy {policy.policy_id} rule {dependent_id} depends on {target_id}, "
+                    f"but Step {target.rail} is disabled"
+                )
+            elif not target.enabled or not target.valid:
+                key = (policy.policy_id, dependent_id, target_id, "target_unavailable")
+                message = (
+                    f"policy {policy.policy_id} rule {dependent_id} depends on unavailable "
+                    f"rule {target_id}"
+                )
+            else:
+                continue
+            if key not in emitted:
+                emitted.add(key)
+                errors.append(message)
+    return tuple(errors)
 
 
 def _copy_config(raw_config: Any) -> dict[str, Any]:

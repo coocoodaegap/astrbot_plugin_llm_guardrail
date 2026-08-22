@@ -430,6 +430,75 @@ button:disabled {
     border-top: 1px solid #e2e8f0
 }
 
+.policy-graph-section {
+    margin-top: 22px;
+    padding-top: 20px;
+    border-top: 1px solid #e2e8f0
+}
+
+.policy-graph-section .form-heading {
+    margin-bottom: 12px
+}
+
+.policy-graph-section h3 {
+    margin-bottom: 6px
+}
+
+.policy-graph-step-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 0 0 12px
+}
+
+.policy-graph-step-toggle {
+    padding: 6px 9px;
+    color: #334155;
+    background: #f8fafc;
+    border: 1px solid #d7e1ef;
+    border-radius: 999px;
+    font-size: .78rem
+}
+
+.policy-graph-step-toggle:hover,
+.policy-graph-step-toggle.is-expanded {
+    color: #164fc4;
+    background: #eff5ff;
+    border-color: #9dbcf5
+}
+
+.policy-graph-step-toggle.is-collapsed {
+    color: #64748b;
+    background: #f1f5f9;
+    border-color: #dce3ee
+}
+
+.policy-graph-stage {
+    position: relative;
+    min-height: 280px;
+    overflow: hidden;
+    background: #101927;
+    border: 1px solid #24334b;
+    border-radius: 12px;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%), 0 8px 20px rgb(15 23 42 / 12%)
+}
+
+.policy-graph-stage canvas {
+    display: block;
+    width: 100%;
+    height: 580px;
+    cursor: default
+}
+
+.policy-graph-stage canvas.is-interactive {
+    cursor: pointer
+}
+
+.policy-graph-section > .muted {
+    margin: 9px 0 0;
+    font-size: .82rem
+}
+
 .policy-step-settings {
     display: grid;
     gap: 12px

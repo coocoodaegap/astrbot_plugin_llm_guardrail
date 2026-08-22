@@ -20,6 +20,10 @@ const status = $("status"),
   policyNameInput = $("policy-name-input"),
   policyDescriptionInput = $("policy-description-input"),
   policyBasicStatus = $("policy-basic-status"),
+  policyGraphStepToggles = $("policy-graph-step-toggles"),
+  policyGraphStage = $("policy-graph-stage"),
+  policyGraphCanvas = $("policy-graph-canvas"),
+  policyGraphStatus = $("policy-graph-status"),
   savePolicy = $("save-policy"),
   policyStepSettings = $("policy-step-settings"),
   policyStepSettingsStatus = $("policy-step-settings-status"),
@@ -197,7 +201,15 @@ let currentRevision = null,
   pendingRuleDeletionId = null,
   selectedNewTemplate = null,
   systemSettingsSchema = {},
-  registeredProviders = [];
+  registeredProviders = [],
+  policyGraphState = {
+    model: null,
+    layout: null,
+    collapsedRails: new Set(),
+    selectedNodeId: null,
+    renderFrame: 0,
+    animationFrame: 0,
+  };
 function populateRuleActionOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -226,6 +238,7 @@ function switchTab(name) {
   document.querySelectorAll("[data-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.panel !== name;
   });
+  updatePolicyGraphAnimation();
 }
 document
   .querySelectorAll("[data-tab]")
@@ -537,6 +550,7 @@ function showPolicyList() {
   policyListPanel.hidden = false;
   selectedPolicyId = null;
   renderPolicyList();
+  updatePolicyGraphAnimation();
 }
 function showPolicyDetail(policyId) {
   const policy = policyLibrary.policies.find((item) => item.policy_id === policyId);
@@ -590,6 +604,401 @@ const policyStepDefinitions = [
     ["block_message", "默认阻断提示", "text"],
   ] },
 ];
+const policyGraphSteps = [
+  { rail: "input_rail", step: 1, label: "Step 1 · 输入分析", color: "#ff5a78", fill: "#401d31" },
+  { rail: "routing_rail", step: 2, label: "Step 2 · 模型路由", color: "#ff963f", fill: "#41291c" },
+  { rail: "request_rail", step: 3, label: "Step 3 · 请求审查", color: "#eadb41", fill: "#3c3819" },
+  { rail: "prompt_rail", step: 4, label: "Step 4 · 提示词增强", color: "#4ee19a", fill: "#17372b" },
+  { rail: "output_rail", step: 5, label: "Step 5 · 输出检查", color: "#56b9ff", fill: "#17334a" },
+];
+const policyGraphStepByRail = new Map(
+  policyGraphSteps.map((item) => [item.rail, item]),
+);
+function parsePolicyGraphReference(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return { raw, targetId: "", mode: "none" };
+  if (raw.startsWith("!")) return { raw, targetId: raw.slice(1).trim(), mode: "not_matched" };
+  if (raw.startsWith("?")) return { raw, targetId: raw.slice(1).trim(), mode: "executed" };
+  return { raw, targetId: raw, mode: "matched" };
+}
+function graphRuleInputs(rule) {
+  const inputs = rule?.template_config?.inputs;
+  return Array.isArray(inputs)
+    ? inputs.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+}
+function graphPriority(binding, rule) {
+  const value = binding?.priority;
+  if (Number.isFinite(Number(value))) return Number(value);
+  return Number.isFinite(Number(rule?.default_priority)) ? Number(rule.default_priority) : 100;
+}
+function buildPolicyGraphModel(policy) {
+  const ruleById = new Map(
+    (Array.isArray(ruleLibrary.rules) ? ruleLibrary.rules : []).map((rule) => [rule.rule_id, rule]),
+  );
+  const nodes = [];
+  const nodeById = new Map();
+  for (const binding of Array.isArray(policy?.bindings) ? policy.bindings : []) {
+    const rule = ruleById.get(binding.rule_id) || null;
+    const theme = policyGraphStepByRail.get(binding.rail);
+    const node = {
+      id: String(binding.rule_id || ""),
+      binding,
+      rule,
+      rail: binding.rail,
+      step: theme?.step || 0,
+      theme,
+      priority: graphPriority(binding, rule),
+      enabled: binding.enabled !== false,
+      isLogicGate: rule?.template_key === "logic_gate",
+      issues: [],
+      state: "available",
+      depth: 0,
+      x: 0,
+      y: 0,
+    };
+    if (!rule) node.issues.push({ level: "error", message: "规则库中找不到该规则。" });
+    if (!theme) node.issues.push({ level: "error", message: "规则绑定到未知 Step。" });
+    nodes.push(node);
+    if (node.id && !nodeById.has(node.id)) nodeById.set(node.id, node);
+  }
+  const edges = [];
+  const addEdge = (dependent, rawReference, kind) => {
+    const reference = parsePolicyGraphReference(rawReference);
+    if (!reference.targetId) {
+      dependent.issues.push({ level: "error", message: `${kind === "logic_input" ? "逻辑门输入" : "依赖项"}为空。` });
+      return;
+    }
+    const source = nodeById.get(reference.targetId) || null;
+    const edge = {
+      id: `${kind}:${reference.raw}:${dependent.id}`,
+      sourceId: reference.targetId,
+      targetId: dependent.id,
+      source,
+      target: dependent,
+      kind,
+      mode: reference.mode,
+      invalid: !source,
+    };
+    if (!source) {
+      dependent.issues.push({ level: "error", message: `依赖目标“${reference.targetId}”不在当前策略中。` });
+    } else {
+      if (!source.enabled) {
+        edge.invalid = true;
+        dependent.issues.push({ level: "warning", message: `依赖目标“${source.id}”已禁用。` });
+      }
+      if (source.step > dependent.step) {
+        edge.invalid = true;
+        dependent.issues.push({ level: "error", message: `不能依赖较晚的 ${source.theme?.label || source.rail}。` });
+      }
+    }
+    edges.push(edge);
+  };
+  for (const node of nodes) {
+    if (node.binding.depend_on) addEdge(node, node.binding.depend_on, "depend_on");
+    if (node.isLogicGate) {
+      for (const input of graphRuleInputs(node.rule)) addEdge(node, input, "logic_input");
+    }
+  }
+  const incoming = new Map(nodes.map((node) => [node.id, []]));
+  for (const edge of edges) {
+    if (edge.source && edge.target) incoming.get(edge.target.id)?.push(edge.source.id);
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  const cycleNodes = new Set();
+  const depthFor = (nodeId) => {
+    if (visiting.has(nodeId)) {
+      cycleNodes.add(nodeId);
+      return 0;
+    }
+    if (visited.has(nodeId)) return nodeById.get(nodeId)?.depth || 0;
+    visiting.add(nodeId);
+    let depth = 0;
+    for (const sourceId of incoming.get(nodeId) || []) {
+      if (visiting.has(sourceId)) cycleNodes.add(sourceId);
+      depth = Math.max(depth, depthFor(sourceId) + 1);
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+    const node = nodeById.get(nodeId);
+    if (node) node.depth = depth;
+    return depth;
+  };
+  for (const node of nodes) depthFor(node.id);
+  for (const node of nodes) {
+    if (cycleNodes.has(node.id)) node.issues.push({ level: "error", message: "存在循环依赖。" });
+    if (!node.enabled) node.state = "disabled";
+    else if (node.issues.some((issue) => issue.level === "error")) node.state = "unavailable";
+    else if (node.issues.length) node.state = "warning";
+  }
+  return { policy, nodes, nodeById, edges };
+}
+function policyGraphCanvasHeight() {
+  return policyGraphSteps.reduce(
+    (height, step) => height + (policyGraphState.collapsedRails.has(step.rail) ? 42 : 104),
+    0,
+  );
+}
+function renderPolicyGraphStepToggles(model) {
+  policyGraphStepToggles.replaceChildren();
+  for (const step of policyGraphSteps) {
+    const count = model.nodes.filter((node) => node.rail === step.rail).length;
+    const collapsed = policyGraphState.collapsedRails.has(step.rail);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "policy-graph-step-toggle";
+    button.classList.toggle("is-expanded", !collapsed);
+    button.classList.toggle("is-collapsed", collapsed);
+    button.setAttribute("aria-pressed", String(!collapsed));
+    button.textContent = `${step.label} · ${count}`;
+    button.addEventListener("click", () => {
+      if (collapsed) policyGraphState.collapsedRails.delete(step.rail);
+      else policyGraphState.collapsedRails.add(step.rail);
+      renderPolicyGraphStepToggles(model);
+      schedulePolicyGraphRender();
+    });
+    policyGraphStepToggles.append(button);
+  }
+}
+function policyGraphIsVisible() {
+  return Boolean(
+    policyGraphState.model
+      && selectedPolicyId
+      && !policyDetailPanel.hidden
+      && !$("panel-policies").hidden
+      && document.visibilityState !== "hidden",
+  );
+}
+function policyGraphReducedMotion() {
+  return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
+function schedulePolicyGraphRender() {
+  if (policyGraphState.renderFrame) return;
+  policyGraphState.renderFrame = requestAnimationFrame((timestamp) => {
+    policyGraphState.renderFrame = 0;
+    drawPolicyGraph(timestamp);
+  });
+}
+function updatePolicyGraphAnimation() {
+  if (policyGraphState.animationFrame) {
+    cancelAnimationFrame(policyGraphState.animationFrame);
+    policyGraphState.animationFrame = 0;
+  }
+  if (!policyGraphIsVisible() || policyGraphReducedMotion()) {
+    schedulePolicyGraphRender();
+    return;
+  }
+  const animate = (timestamp) => {
+    drawPolicyGraph(timestamp);
+    if (policyGraphIsVisible() && !policyGraphReducedMotion()) {
+      policyGraphState.animationFrame = requestAnimationFrame(animate);
+    } else {
+      policyGraphState.animationFrame = 0;
+    }
+  };
+  policyGraphState.animationFrame = requestAnimationFrame(animate);
+}
+function layoutPolicyGraph(model, width, height) {
+  const laneLayouts = new Map();
+  let top = 0;
+  for (const step of policyGraphSteps) {
+    const collapsed = policyGraphState.collapsedRails.has(step.rail);
+    const laneHeight = collapsed ? 42 : 104;
+    laneLayouts.set(step.rail, { step, top, height: laneHeight, collapsed });
+    top += laneHeight;
+  }
+  const left = 92;
+  const right = Math.max(left + 90, width - 34);
+  for (const step of policyGraphSteps) {
+    const lane = laneLayouts.get(step.rail);
+    const nodes = model.nodes
+      .filter((node) => node.rail === step.rail)
+      .sort((leftNode, rightNode) => (
+        leftNode.priority - rightNode.priority || leftNode.id.localeCompare(rightNode.id)
+      ));
+    if (lane.collapsed) continue;
+    const depthCounts = new Map();
+    for (const node of nodes) depthCounts.set(node.depth, (depthCounts.get(node.depth) || 0) + 1);
+    const depthOffsets = new Map();
+    nodes.forEach((node, index) => {
+      const availableWidth = Math.max(1, right - left);
+      node.x = nodes.length === 1 ? left + availableWidth / 2 : left + (availableWidth * index) / (nodes.length - 1);
+      const offset = depthOffsets.get(node.depth) || 0;
+      depthOffsets.set(node.depth, offset + 1);
+      const depthY = lane.top + 38 + node.depth * 25 + offset * 16;
+      node.y = Math.min(lane.top + lane.height - 18, depthY);
+    });
+  }
+  return { laneLayouts, width, height };
+}
+function graphColorForEdge(edge) {
+  if (edge.invalid || edge.source?.state === "unavailable" || edge.target?.state === "unavailable") return "#ff6b74";
+  if (edge.source?.state === "disabled" || edge.target?.state === "disabled") return "#718096";
+  if (edge.kind === "logic_input") return "#e2e8f0";
+  return edge.target?.theme?.color || "#cbd5e1";
+}
+function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion) {
+  context.fillStyle = lane.step.fill;
+  context.fillRect(0, lane.top, lane.width, lane.height);
+  const offset = reducedMotion ? 0 : (timestamp / 7000) % 24;
+  context.strokeStyle = `${lane.step.color}35`;
+  context.lineWidth = 1;
+  for (let x = -24 + offset; x < lane.width; x += 24) {
+    context.beginPath();
+    context.moveTo(x, lane.top);
+    context.lineTo(x, lane.top + lane.height);
+    context.stroke();
+  }
+  for (let y = lane.top + 10; y < lane.top + lane.height; y += 24) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(lane.width, y);
+    context.stroke();
+  }
+  context.strokeStyle = `${lane.step.color}aa`;
+  context.strokeRect(.5, lane.top + .5, lane.width - 1, lane.height - 1);
+  context.fillStyle = lane.step.color;
+  context.font = "600 14px Inter, system-ui, sans-serif";
+  context.fillText(lane.step.label, 14, lane.top + 22);
+}
+function drawPolicyGraphArrow(context, source, target, edge) {
+  const color = graphColorForEdge(edge);
+  context.save();
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = edge.kind === "logic_input" ? 2.2 : 2;
+  if (edge.kind === "logic_input") context.setLineDash([3, 4]);
+  else if (edge.mode === "not_matched") context.setLineDash([7, 5]);
+  else if (edge.mode === "executed") context.setLineDash([2, 5]);
+  else context.setLineDash([]);
+  const controlX = Math.max(24, Math.abs(target.x - source.x) * .38);
+  context.beginPath();
+  context.moveTo(source.x, source.y);
+  context.bezierCurveTo(source.x + controlX, source.y, target.x - controlX, target.y, target.x, target.y);
+  context.stroke();
+  const angle = Math.atan2(target.y - source.y, target.x - source.x);
+  const size = 6;
+  context.setLineDash([]);
+  context.beginPath();
+  context.moveTo(target.x, target.y);
+  context.lineTo(target.x - size * Math.cos(angle - Math.PI / 6), target.y - size * Math.sin(angle - Math.PI / 6));
+  context.lineTo(target.x - size * Math.cos(angle + Math.PI / 6), target.y - size * Math.sin(angle + Math.PI / 6));
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+function graphGlowForNode(node) {
+  if (node.state === "disabled") return null;
+  if (node.state === "unavailable") return "#ff4d5e";
+  if (node.state === "warning") return "#ffbe4d";
+  return "#ffffff";
+}
+function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
+  if (policyGraphState.collapsedRails.has(node.rail)) return;
+  const color = node.state === "disabled" ? "#94a3b8" : node.theme?.color || "#e2e8f0";
+  const glow = graphGlowForNode(node);
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = node.isLogicGate ? 2.6 : 2.2;
+  if (glow) {
+    context.shadowColor = glow;
+    context.shadowBlur = node.state === "available" ? 10 : 13;
+  }
+  if (node.isLogicGate) {
+    const radius = 8;
+    context.beginPath();
+    context.moveTo(node.x, node.y - radius);
+    context.lineTo(node.x + radius, node.y);
+    context.lineTo(node.x, node.y + radius);
+    context.lineTo(node.x - radius, node.y);
+    context.closePath();
+    context.stroke();
+    context.shadowBlur = 0;
+    context.fillStyle = color;
+    context.font = "600 9px Inter, system-ui, sans-serif";
+    const symbol = node.rule?.template_config?.gate === "any" ? "∨" : "∧";
+    context.fillText(symbol, node.x - 3, node.y + 3);
+  } else {
+    context.beginPath();
+    context.arc(node.x, node.y, 7, 0, Math.PI * 2);
+    context.stroke();
+  }
+  if (policyGraphState.selectedNodeId === node.id) {
+    const phase = reducedMotion ? 0 : (timestamp / 900) % 1;
+    context.shadowBlur = 0;
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1.4;
+    context.setLineDash([3, 3]);
+    context.lineDashOffset = -phase * 12;
+    context.beginPath();
+    context.arc(node.x, node.y, 13, 0, Math.PI * 2);
+    context.stroke();
+  }
+  context.shadowBlur = 0;
+  context.setLineDash([]);
+  context.fillStyle = "#eef6ff";
+  context.font = "500 11px Inter, system-ui, sans-serif";
+  context.fillText(node.id || "未命名", node.x + 11, node.y + 4);
+  context.restore();
+}
+function drawPolicyGraph(timestamp = performance.now()) {
+  const model = policyGraphState.model;
+  if (!model || !policyGraphCanvas || !policyGraphIsVisible()) return;
+  const canvasHeight = policyGraphCanvasHeight();
+  policyGraphCanvas.style.height = `${canvasHeight}px`;
+  const rect = policyGraphCanvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const pixelWidth = Math.round(rect.width * dpr);
+  const pixelHeight = Math.round(rect.height * dpr);
+  if (policyGraphCanvas.width !== pixelWidth || policyGraphCanvas.height !== pixelHeight) {
+    policyGraphCanvas.width = pixelWidth;
+    policyGraphCanvas.height = pixelHeight;
+  }
+  const context = policyGraphCanvas.getContext("2d");
+  if (!context) return;
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, rect.width, rect.height);
+  const layout = layoutPolicyGraph(model, rect.width, rect.height);
+  policyGraphState.layout = layout;
+  const reducedMotion = policyGraphReducedMotion();
+  for (const lane of layout.laneLayouts.values()) {
+    lane.width = rect.width;
+    drawPolicyGraphGrid(context, lane, timestamp, reducedMotion);
+    if (lane.collapsed) {
+      const count = model.nodes.filter((node) => node.rail === lane.step.rail).length;
+      context.fillStyle = "#d8e7f7";
+      context.font = "500 11px Inter, system-ui, sans-serif";
+      context.fillText(`${count} 个节点已折叠`, rect.width - 88, lane.top + 22);
+    }
+  }
+  for (const edge of model.edges) {
+    if (!edge.source || policyGraphState.collapsedRails.has(edge.source.rail) || policyGraphState.collapsedRails.has(edge.target.rail)) continue;
+    drawPolicyGraphArrow(context, edge.source, edge.target, edge);
+  }
+  for (const node of model.nodes) drawPolicyGraphNode(context, node, timestamp, reducedMotion);
+}
+function policyGraphNodeAt(clientX, clientY) {
+  const rect = policyGraphCanvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  return policyGraphState.model?.nodes.find((node) => (
+    !policyGraphState.collapsedRails.has(node.rail)
+      && Math.hypot(node.x - x, node.y - y) <= 15
+  )) || null;
+}
+function renderPolicyGraph(policy) {
+  policyGraphState.selectedNodeId = null;
+  policyGraphState.model = buildPolicyGraphModel(policy);
+  renderPolicyGraphStepToggles(policyGraphState.model);
+  const issues = policyGraphState.model.nodes.flatMap((node) => node.issues);
+  policyGraphStatus.textContent = issues.length
+    ? `图中有 ${issues.length} 项需要处理的问题；保存时以后端校验为准。`
+    : `共 ${policyGraphState.model.nodes.length} 个节点、${policyGraphState.model.edges.length} 条依赖。`;
+  policyGraphCanvas.classList.toggle("is-interactive", policyGraphState.model.nodes.length > 0);
+  updatePolicyGraphAnimation();
+}
 function createPolicyStepControl(type, value, options) {
   if (type === "boolean") {
     const input = document.createElement("input");
@@ -689,6 +1098,7 @@ function renderPolicyDetail(policy) {
     Object.assign(document.createElement("code"), { textContent: policy.policy_id || "未设置" }),
     document.createTextNode(` · 规则绑定：${bindings.length} 条`),
   );
+  renderPolicyGraph(policy);
   renderPolicyStepSettings(policy);
   policyUmoList.replaceChildren();
   policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
@@ -1290,6 +1700,36 @@ async function refresh() {
     : `已加载规则库 revision ${ruleResult.revision}。`;
   status.textContent = `已加载配置快照 revision ${currentRevision}`;
 }
+policyGraphCanvas.addEventListener("click", (event) => {
+  const node = policyGraphNodeAt(event.clientX, event.clientY);
+  policyGraphState.selectedNodeId = node?.id || null;
+  if (node) {
+    const stateLabel = {
+      available: "可用",
+      disabled: "禁用",
+      warning: "警告",
+      unavailable: "不可用",
+    }[node.state] || node.state;
+    const issueText = node.issues.length ? ` · ${node.issues[0].message}` : "";
+    policyGraphStatus.textContent = `已选中 ${node.id} · ${templateDescriptions[node.rule?.template_key] || node.rule?.template_key || "未知规则"} · ${stateLabel}${issueText}`;
+  } else if (policyGraphState.model) {
+    policyGraphStatus.textContent = `共 ${policyGraphState.model.nodes.length} 个节点、${policyGraphState.model.edges.length} 条依赖。`;
+  }
+  schedulePolicyGraphRender();
+});
+policyGraphCanvas.addEventListener("mousemove", (event) => {
+  const node = policyGraphNodeAt(event.clientX, event.clientY);
+  policyGraphCanvas.title = node
+    ? `${node.id} · ${templateDescriptions[node.rule?.template_key] || node.rule?.template_key || "未知规则"}`
+    : "";
+});
+if (window.ResizeObserver) {
+  new window.ResizeObserver(() => {
+    if (policyGraphIsVisible()) schedulePolicyGraphRender();
+  }).observe(policyGraphStage);
+}
+window.addEventListener("resize", schedulePolicyGraphRender);
+document.addEventListener("visibilitychange", updatePolicyGraphAnimation);
 newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);

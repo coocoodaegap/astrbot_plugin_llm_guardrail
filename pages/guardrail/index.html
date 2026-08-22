@@ -145,6 +145,20 @@
             <p id="policy-basic-status" class="form-status" aria-live="polite"></p>
           </section>
         </section>
+        <section class="policy-graph-section" aria-labelledby="policy-graph-heading">
+          <div class="form-heading">
+            <div>
+              <p class="eyebrow">POLICY GRAPH</p>
+              <h3 id="policy-graph-heading">策略依赖图</h3>
+              <p>按执行 Step 查看规则绑定、优先级与依赖关系。当前为只读图，后续将在此直接编排节点和连接。</p>
+            </div>
+          </div>
+          <div id="policy-graph-step-toggles" class="policy-graph-step-toggles" aria-label="Step 显示控制"></div>
+          <div id="policy-graph-stage" class="policy-graph-stage">
+            <canvas id="policy-graph-canvas" role="img" aria-label="当前策略的规则依赖图"></canvas>
+          </div>
+          <p id="policy-graph-status" class="muted" aria-live="polite"></p>
+        </section>
         <section class="policy-step-settings-section">
           <div class="form-heading">
             <div>

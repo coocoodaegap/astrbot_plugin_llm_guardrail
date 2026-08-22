@@ -366,6 +366,10 @@ class PolicyLibrary:
                         f"template {rule.template_key} in {binding.rail}"
                     )
 
+        rule_by_id = {rule.rule_id: rule for rule in self.rules}
+        for policy in self.policies:
+            fatal_errors.extend(_validate_policy_dependency_graph(policy, rule_by_id))
+
         if self.active_policy_id not in policy_ids:
             fatal_errors.append(f"active policy does not exist: {self.active_policy_id}")
         return LibraryValidation(tuple(fatal_errors), tuple(warnings))
@@ -477,6 +481,123 @@ def _clean_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+
+
+def _dependency_target(value: Any) -> str:
+    """Return the referenced rule ID from the public dependency syntax."""
+
+    text = str(value or "").strip()
+    if text[:1] in {"!", "?"}:
+        text = text[1:].strip()
+    return text
+
+
+def _policy_dependency_references(
+    policy: PolicyDefinition,
+    rule_by_id: Mapping[str, RuleDefinition],
+) -> list[tuple[str, str, str]]:
+    """Return (dependent, raw reference, source kind) tuples for one policy."""
+
+    references: list[tuple[str, str, str]] = []
+    for binding in policy.bindings:
+        if binding.depend_on:
+            references.append((binding.rule_id, binding.depend_on, "depend_on"))
+        rule = rule_by_id.get(binding.rule_id)
+        if rule is None or rule.template_key != "logic_gate":
+            continue
+        for value in _clean_string_list(rule.template_config.get("inputs")):
+            references.append((binding.rule_id, value, "logic input"))
+    return references
+
+
+def _validate_policy_dependency_graph(
+    policy: PolicyDefinition,
+    rule_by_id: Mapping[str, RuleDefinition],
+) -> list[str]:
+    """Validate references that must be safe before a policy can be published.
+
+    Runtime Rails run from Step 1 through Step 5.  A dependency can therefore
+    point to a rule in the same or an earlier Step, but never to a later Step.
+    These checks intentionally operate on policy bindings, rather than the
+    reusable rule definitions, because rail placement and enabled state belong
+    to the policy.
+    """
+
+    errors: list[str] = []
+    bindings_by_id = {binding.rule_id: binding for binding in policy.bindings}
+    adjacency: dict[str, set[str]] = {binding.rule_id: set() for binding in policy.bindings}
+
+    for dependent_id, raw_reference, source_kind in _policy_dependency_references(
+        policy, rule_by_id
+    ):
+        target_id = _dependency_target(raw_reference)
+        if not target_id:
+            errors.append(
+                f"policy {policy.policy_id} rule {dependent_id} has an empty {source_kind} reference"
+            )
+            continue
+        dependent = bindings_by_id.get(dependent_id)
+        target = bindings_by_id.get(target_id)
+        if dependent is None or target is None:
+            errors.append(
+                f"policy {policy.policy_id} rule {dependent_id} {source_kind} references "
+                f"{target_id}, which is not bound in this policy"
+            )
+            continue
+        adjacency.setdefault(dependent_id, set()).add(target_id)
+        if not target.enabled:
+            errors.append(
+                f"policy {policy.policy_id} rule {dependent_id} {source_kind} references "
+                f"disabled rule {target_id}"
+            )
+        if dependent.rail in STEP_BY_RAIL and target.rail in STEP_BY_RAIL:
+            dependent_step = STEP_BY_RAIL[dependent.rail]
+            target_step = STEP_BY_RAIL[target.rail]
+            if target_step > dependent_step:
+                errors.append(
+                    f"policy {policy.policy_id} rule {dependent_id} in Step {dependent_step} "
+                    f"cannot depend on {target_id} in later Step {target_step}"
+                )
+
+    errors.extend(_find_dependency_cycles(policy.policy_id, adjacency))
+    return errors
+
+
+def _find_dependency_cycles(
+    policy_id: str,
+    adjacency: Mapping[str, set[str]],
+) -> list[str]:
+    """Return one deterministic error for each directed dependency cycle."""
+
+    errors: list[str] = []
+    visited: set[str] = set()
+    active: list[str] = []
+    active_set: set[str] = set()
+    reported: set[tuple[str, ...]] = set()
+
+    def visit(node: str) -> None:
+        visited.add(node)
+        active.append(node)
+        active_set.add(node)
+        for target in sorted(adjacency.get(node, ())):
+            if target not in visited:
+                visit(target)
+            elif target in active_set:
+                start = active.index(target)
+                cycle = tuple(active[start:] + [target])
+                canonical = tuple(sorted(cycle[:-1]))
+                if canonical not in reported:
+                    reported.add(canonical)
+                    errors.append(
+                        f"policy {policy_id} has cyclic dependency: {' -> '.join(cycle)}"
+                    )
+        active.pop()
+        active_set.remove(node)
+
+    for node in sorted(adjacency):
+        if node not in visited:
+            visit(node)
+    return errors
 
 
 def _is_sanitize_action(action: str | None) -> bool:
