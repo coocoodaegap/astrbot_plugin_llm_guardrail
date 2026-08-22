@@ -9,15 +9,16 @@
 </head>
 
 <body>
-  <main class="page-shell">
-    <header class="page-header">
+  <div class="page-sticky-header">
+    <div class="page-sticky-header-content">
+      <header class="page-header">
       <div>
         <p class="eyebrow">ASTRBOT PLUGIN PAGE</p>
         <h1>LLM Guardrail</h1>
       </div>
       <p id="status" class="status">正在读取运行状态…</p>
-    </header>
-    <nav class="tabs" aria-label="Guardrail 功能页面" role="tablist">
+      </header>
+      <nav class="tabs" aria-label="Guardrail 功能页面" role="tablist">
       <button class="tab is-active" id="tab-overview" type="button" role="tab" aria-selected="true"
         aria-controls="panel-overview" data-tab="overview">总览</button><button class="tab" id="tab-rules" type="button"
         role="tab" aria-selected="false" aria-controls="panel-rules" data-tab="rules">规则库</button><button class="tab"
@@ -30,7 +31,10 @@
         id="tab-token" type="button" role="tab" aria-selected="false" aria-controls="panel-token" data-tab="token">Token
         监控</button><button class="tab" id="tab-system" type="button" role="tab" aria-selected="false"
         aria-controls="panel-system" data-tab="system">系统设置</button>
-    </nav>
+      </nav>
+    </div>
+  </div>
+  <main class="page-shell">
     <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
       <div class="overview-grid">
         <section class="card">
@@ -51,8 +55,6 @@
           <h2>规则库</h2>
           <p>规则本体可复用于多个策略；Rail、依赖与命中动作在“策略编排”中配置。</p>
         </div>
-        <div class="button-group"><button id="new-rule" type="button" class="button-secondary">新建规则</button><button
-            id="save-rule-library" type="button">保存所有打开规则</button></div>
       </div>
       <p id="rule-library-status" class="muted" aria-live="polite"></p>
       <div id="rule-workspace" class="rule-workspace">
@@ -65,8 +67,13 @@
           <div id="open-rule-editors" class="open-rule-editors"></div>
         </section>
       </div>
+      <div class="floating-action-group" aria-label="规则库操作">
+        <button id="new-rule" type="button" class="button-secondary">新建规则</button>
+        <button id="save-rule-library" type="button">保存所有打开规则</button>
       </div>
-      <section id="rule-creation-panel" class="rule-creation-panel" hidden aria-label="新建规则">
+      </div>
+      <dialog id="rule-creation-dialog" class="rule-creation-dialog" aria-label="新建规则">
+        <form method="dialog">
         <div class="form-heading">
           <div><p class="eyebrow">CREATE RULE</p><h3>选择规则类型</h3><p>创建后模板类型将固定，业务参数可在下一步编辑。</p></div>
           <button id="cancel-rule-creation" type="button" class="button-secondary">取消</button>
@@ -78,7 +85,8 @@
         <p id="rule-creation-status" class="form-status" aria-live="polite"></p>
         <div id="template-options" class="template-options" role="listbox" aria-label="规则类型"></div>
         <div class="creation-actions"><button id="confirm-rule-creation" type="button">创建规则</button></div>
-      </section>
+        </form>
+      </dialog>
       <dialog id="save-rule-as-dialog" class="save-rule-as-dialog">
         <form method="dialog">
           <div class="form-heading"><div><p class="eyebrow">SAVE AS</p><h3>另存为新规则</h3><p>新规则会继承当前模板类型和业务参数。</p></div></div>
@@ -112,11 +120,14 @@
         <section class="custom-policy-list-card" aria-labelledby="custom-policy-list-heading">
           <div class="list-heading">
             <strong id="custom-policy-list-heading">自定义策略列表</strong>
-            <div class="button-group"><span id="policy-count" class="count-badge">0</span><button id="new-policy" type="button" class="button-secondary">新建策略</button></div>
+            <span id="policy-count" class="count-badge">0</span>
           </div>
           <p id="policy-library-status" class="muted" aria-live="polite"></p>
           <div id="policy-list" class="policy-list"></div>
         </section>
+        <div class="floating-action-group" aria-label="策略列表操作">
+          <button id="new-policy" type="button" class="button-secondary">新建策略</button>
+        </div>
       </section>
       <section id="policy-detail-panel" class="policy-detail-panel" aria-label="策略详情" hidden>
         <div class="card-heading">
@@ -124,8 +135,8 @@
             <p class="eyebrow">POLICY DETAILS</p>
             <h2 id="policy-detail-name">策略详情</h2>
             <p id="policy-detail-description"></p>
+            <p id="policy-detail-meta" class="policy-detail-meta"></p>
           </div>
-          <div class="button-group"><button id="save-policy" type="button">保存策略</button><button id="save-policy-as" type="button" class="button-secondary">另存为</button><button id="delete-policy" type="button" class="danger-button">删除</button><button id="back-to-policy-list" type="button" class="button-secondary">返回策略列表</button></div>
         </div>
         <section class="policy-basic-editor">
           <div class="form-grid">
@@ -134,7 +145,6 @@
           </div>
           <p id="policy-basic-status" class="form-status" aria-live="polite"></p>
         </section>
-        <div id="policy-detail-meta" class="policy-detail-meta"></div>
         <section class="policy-step-settings-section">
           <div class="form-heading">
             <div>
@@ -156,6 +166,12 @@
           <div id="policy-umo-list" aria-label="策略 UMO 列表"></div>
           <p id="policy-session-status" class="form-status" aria-live="polite"></p>
         </section>
+        <div class="floating-action-group" aria-label="策略操作">
+          <button id="save-policy" type="button">保存策略</button>
+          <button id="save-policy-as" type="button" class="button-secondary">另存为</button>
+          <button id="delete-policy" type="button" class="danger-button">删除</button>
+          <button id="back-to-policy-list" type="button" class="button-secondary">返回策略列表</button>
+        </div>
       </section>
       <dialog id="create-policy-dialog" class="save-rule-as-dialog">
         <form method="dialog">

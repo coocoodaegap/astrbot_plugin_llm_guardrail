@@ -50,7 +50,7 @@ const status = $("status"),
   confirmPolicyDelete = $("confirm-policy-delete"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleWorkspace = $("rule-workspace"),
-  ruleCreationPanel = $("rule-creation-panel"),
+  ruleCreationDialog = $("rule-creation-dialog"),
   templateOptions = $("template-options"),
   ruleEmptyState = $("rule-empty-state"),
   openRuleEditors = $("open-rule-editors"),
@@ -570,15 +570,6 @@ function renderPolicyList() {
     policyList.append(item);
   }
 }
-function addPolicyDetail(label, value) {
-  const item = document.createElement("div");
-  const term = document.createElement("span");
-  const detail = document.createElement("strong");
-  term.textContent = label;
-  detail.textContent = value;
-  item.append(term, detail);
-  policyDetailMeta.append(item);
-}
 const policyStepDefinitions = [
   { rail: "input_rail", title: "Step 1 · 输入分析", fields: [
     ["enabled", "启用 Step 1", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
@@ -692,10 +683,12 @@ function renderPolicyDetail(policy) {
   policyNameInput.value = policy.name || "";
   policyDescriptionInput.value = policy.description || "";
   policyBasicStatus.textContent = "";
-  policyDetailMeta.replaceChildren();
-  addPolicyDetail("策略 ID", policy.policy_id || "未设置");
   const bindings = Array.isArray(policy.bindings) ? policy.bindings : [];
-  addPolicyDetail("规则绑定", `${bindings.length} 条`);
+  policyDetailMeta.replaceChildren(
+    document.createTextNode("策略 ID："),
+    Object.assign(document.createElement("code"), { textContent: policy.policy_id || "未设置" }),
+    document.createTextNode(` · 规则绑定：${bindings.length} 条`),
+  );
   renderPolicyStepSettings(policy);
   policyUmoList.replaceChildren();
   policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
@@ -1198,18 +1191,12 @@ function startRuleCreation() {
   newRuleId.value = "";
   newRuleDescription.value = "";
   ruleCreationStatus.textContent = "";
-  ruleLibraryPanel.hidden = true;
-  ruleCreationPanel.hidden = false;
-  newRule.disabled = true;
-  saveRuleLibrary.disabled = true;
   renderTemplateOptions();
+  ruleCreationDialog.showModal();
   newRuleId.focus();
 }
 function cancelNewRuleCreation() {
-  ruleCreationPanel.hidden = true;
-  ruleLibraryPanel.hidden = false;
-  newRule.disabled = false;
-  saveRuleLibrary.disabled = false;
+  ruleCreationDialog.close();
   selectedNewTemplate = null;
   ruleCreationStatus.textContent = "";
 }
