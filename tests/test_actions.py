@@ -108,6 +108,30 @@ class HitActionPlanTests(unittest.TestCase):
         self.assertFalse(plan.block)
         self.assertFalse(plan.mutate_text)
 
+    def test_retry_generation_hit_action_uses_the_step_default_until_implemented(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["risk"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ]
+                }
+            }
+        )
+
+        plan = resolve_hit_action_plan(
+            cfg.rails["input_rail"],
+            evaluate_plain_keywords(cfg.rails["input_rail"].rules[0], "risk"),
+        )
+
+        self.assertEqual(plan.action, "block")
+        self.assertTrue(plan.block)
+
 
 class ErrorActionPlanTests(unittest.TestCase):
     def test_input_default_error_action_targets_input_when_blocking(self):
@@ -154,6 +178,30 @@ class ErrorActionPlanTests(unittest.TestCase):
         self.assertEqual(plan.action, "record")
         self.assertEqual(plan.target, "none")
         self.assertTrue(plan.record)
+        self.assertFalse(plan.block)
+
+    def test_retry_generation_error_action_uses_the_step_default_until_implemented(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["risk"],
+                            "action_on_error": "retry_generation",
+                        }
+                    ]
+                }
+            }
+        )
+
+        plan = resolve_error_action_plan(
+            cfg.rails["output_rail"], "retry", "retry_generation"
+        )
+
+        self.assertEqual(plan.action, "discard")
+        self.assertTrue(plan.discard)
         self.assertFalse(plan.block)
 
 

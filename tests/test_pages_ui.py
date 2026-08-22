@@ -38,6 +38,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("expected_revision: currentRevision", javascript)
         self.assertIn("function switchTab", javascript)
         self.assertIn("function renderRuleList", javascript)
+        self.assertIn("function hitActionsForTemplate", javascript)
+        self.assertIn('action !== "sanitize"', javascript)
         self.assertIn("function startRuleCreation", javascript)
         self.assertIn("ruleCreationStatus", javascript)
         self.assertIn("ruleLibraryPanel.hidden = true", javascript)

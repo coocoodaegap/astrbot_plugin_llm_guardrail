@@ -121,7 +121,7 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertFalse(rule.valid)
         self.assertFalse(rule.enabled)
 
-    def test_output_retry_generation_is_unsupported_in_p0(self):
+    def test_output_retry_generation_is_valid_at_step_five(self):
         cfg = normalize_config(
             {
                 "output_rail": {
@@ -138,8 +138,49 @@ class ConfigNormalizerTests(unittest.TestCase):
         )
 
         rule = cfg.rails["output_rail"].rules[0]
-        self.assertFalse(rule.valid)
-        self.assertFalse(rule.enabled)
+        self.assertTrue(rule.valid)
+        self.assertTrue(rule.enabled)
+        self.assertEqual(rule.config["action_on_hit"], "retry_generation")
+
+    def test_sanitize_is_rejected_for_non_text_matching_templates(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "gate",
+                            "action_on_hit": "sanitize",
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertEqual(rule.config["action_on_hit"], "default")
+        self.assertTrue(any("only supported" in warning for warning in rule.warnings))
+
+    def test_retry_generation_is_accepted_as_a_rule_error_action(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry_error",
+                            "keywords": ["risk"],
+                            "action_on_error": "retry_generation",
+                        }
+                    ]
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.rails["input_rail"].rules[0].config["action_on_error"],
+            "retry_generation",
+        )
 
     def test_request_rail_keyword_rule_is_normalized(self):
         cfg = normalize_config(

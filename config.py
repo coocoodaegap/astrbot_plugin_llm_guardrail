@@ -44,6 +44,7 @@ SUPPORTED_TEMPLATES: dict[str, set[str]] = {
 INPUT_ACTIONS = {
     "default",
     "observe",
+    "retry_generation",
     "block",
     "sanitize",
     "block_input",
@@ -58,7 +59,7 @@ OUTPUT_ACTIONS = {
     "block_output",
     "sanitize_output",
 }
-ERROR_ACTIONS = {"default", "discard", "record", "block"}
+ERROR_ACTIONS = {"default", "discard", "record", "retry_generation", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 LOGIC_GATES = {"all", "any"}
 INSERTION_TARGETS = {
@@ -344,17 +345,16 @@ def _normalize_rule(
         raw_action = raw_action_on_hit
         action = _normalize_action_alias(raw_action)
         config["action_on_hit"] = action
+        if action == "sanitize" and template_key not in {"plain_keywords", "regex_pattern"}:
+            warnings.append(
+                f"{rule_id}.action_on_hit=sanitize is only supported by plain_keywords and regex_pattern; fallback to default"
+            )
+            config["action_on_hit"] = "default"
         if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
             warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
             config["action_on_hit"] = "default"
         elif rail_name == "output_rail":
-            if action == "retry_generation":
-                valid = False
-                enabled = False
-                warnings.append(
-                    f"{rule_id}.action_on_hit=retry_generation is unsupported in P0; skipped"
-                )
-            elif action not in OUTPUT_ACTIONS:
+            if action not in OUTPUT_ACTIONS:
                 warnings.append(
                     f"{rule_id}.action_on_hit is invalid; fallback to default"
                 )

@@ -54,22 +54,14 @@ const templates = [
     "observe",
     "block",
     "sanitize",
-    "block_input",
-    "sanitize_input",
-    "block_output",
-    "sanitize_output",
     "retry_generation",
   ],
-  errorActions = ["default", "discard", "record", "block"];
+  errorActions = ["default", "discard", "record", "retry_generation", "block"];
 const ruleActionDescriptions = {
   default: "使用系统默认动作（default）",
   observe: "仅记录命中，不改变请求或输出（observe）",
   block: "阻断本轮请求或输出（block）",
   sanitize: "净化命中内容后继续（sanitize）",
-  block_input: "阻断用户输入（block_input）",
-  sanitize_input: "净化用户输入后继续（sanitize_input）",
-  block_output: "阻断模型输出（block_output）",
-  sanitize_output: "净化模型输出后继续（sanitize_output）",
   retry_generation: "请求模型重新生成输出（retry_generation）",
   discard: "丢弃本次规则结果（discard）",
   record: "记录可被依赖的错误结果（record）",
@@ -474,6 +466,19 @@ function createActionSelect(values, value) {
   select.value = value || "default";
   return select;
 }
+function hitActionsForTemplate(templateKey) {
+  if (templateKey === "plain_keywords" || templateKey === "regex_pattern") {
+    return hitActions;
+  }
+  return hitActions.filter((action) => action !== "sanitize");
+}
+function createRuleHitActionSelect(templateKey, value) {
+  const values = hitActionsForTemplate(templateKey);
+  const select = document.createElement("select");
+  populateRuleActionOptions(select, values);
+  select.value = values.includes(value) ? value : "default";
+  return select;
+}
 function syncRuleEditor(editor) {
   const rule = ruleLibrary.rules.find((item) => item.rule_id === editor.dataset.ruleId);
   if (!rule) return true;
@@ -533,7 +538,7 @@ function createRuleEditor(rule) {
   const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(description);
   const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
   const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(priority);
-  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createActionSelect(hitActions, rule.default_action_on_hit));
+  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit));
   const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createActionSelect(errorActions, rule.default_action_on_error));
   grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
   const configLabel = document.createElement("label"); configLabel.className = "full-width"; configLabel.textContent = "模板参数（JSON）";

@@ -32,6 +32,21 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(restored.description, "拦截敏感词")
         self.assertNotIn("description", restored.template_config)
 
+    def test_legacy_hit_action_aliases_are_canonicalized_in_new_library_data(self):
+        rule = RuleDefinition.from_dict(
+            {
+                "rule_id": "legacy",
+                "template_key": "plain_keywords",
+                "default_action_on_hit": "sanitize_input",
+            }
+        )
+        binding = PolicyRuleBinding.from_dict(
+            {"rule_id": "legacy", "rail": "output_rail", "action_on_hit": "sanitize_output"}
+        )
+
+        self.assertEqual(rule.to_dict()["default_action_on_hit"], "sanitize")
+        self.assertEqual(binding.to_dict()["action_on_hit"], "sanitize")
+
     def test_policy_compiles_rule_defaults_and_binding_overrides(self):
         library = PolicyLibrary(
             rules=(
@@ -161,6 +176,94 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertFalse(validation.valid)
         self.assertIn("references missing rule missing", validation.fatal_errors[0])
+
+    def test_known_template_cannot_be_bound_to_an_unsupported_step(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("replace", "replace_input", {}),),
+            policies=(
+                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition(
+                    "invalid_step",
+                    "Invalid step",
+                    bindings=(PolicyRuleBinding("replace", "input_rail"),),
+                ),
+            ),
+            active_policy_id="invalid_step",
+        )
+
+        _raw, validation = compile_policy_to_legacy_config({}, library)
+
+        self.assertFalse(validation.valid)
+        self.assertIn("Step 1", validation.fatal_errors[0])
+
+    def test_sanitize_is_rejected_for_non_matching_rule_templates(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("gate", "logic_gate", {}),),
+            policies=(
+                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition(
+                    "invalid_action",
+                    "Invalid action",
+                    bindings=(PolicyRuleBinding("gate", "input_rail", action_on_hit="sanitize"),),
+                ),
+            ),
+            active_policy_id="invalid_action",
+        )
+
+        _raw, validation = compile_policy_to_legacy_config({}, library)
+
+        self.assertFalse(validation.valid)
+        self.assertIn("only available", validation.fatal_errors[0])
+
+    def test_rule_library_rejects_invalid_default_sanitize_without_a_binding(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("review", "llm_review", {}, default_action_on_hit="sanitize"),),
+            policies=(PolicyDefinition("none", "None", builtin=True),),
+            active_policy_id="none",
+        )
+
+        _raw, validation = compile_policy_to_legacy_config({}, library)
+
+        self.assertFalse(validation.valid)
+        self.assertIn("only available", validation.fatal_errors[0])
+
+    def test_retry_generation_warns_outside_step_five_without_rejecting_rule(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_hit="retry_generation"),),
+            policies=(
+                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition(
+                    "early_retry",
+                    "Early retry",
+                    bindings=(PolicyRuleBinding("retry", "input_rail"),),
+                ),
+            ),
+            active_policy_id="early_retry",
+        )
+
+        _raw, validation = compile_policy_to_legacy_config({}, library)
+
+        self.assertTrue(validation.valid)
+        self.assertTrue(any("outside Step 5" in warning for warning in validation.warnings))
+
+    def test_retry_generation_error_action_warns_outside_step_five(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_error="retry_generation"),),
+            policies=(
+                PolicyDefinition("none", "None", builtin=True),
+                PolicyDefinition(
+                    "early_retry",
+                    "Early retry",
+                    bindings=(PolicyRuleBinding("retry", "input_rail"),),
+                ),
+            ),
+            active_policy_id="early_retry",
+        )
+
+        _raw, validation = compile_policy_to_legacy_config({}, library)
+
+        self.assertTrue(validation.valid)
+        self.assertTrue(any("error action outside Step 5" in warning for warning in validation.warnings))
 
     def test_unsupported_legacy_template_is_preserved_as_warning(self):
         library = PolicyLibrary(

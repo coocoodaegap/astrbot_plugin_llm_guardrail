@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 try:
     from .config import RAIL_NAMES, SUPPORTED_TEMPLATES
@@ -23,6 +24,20 @@ RULE_METADATA_KEYS = {
     "priority",
     "action_on_hit",
     "action_on_error",
+}
+STEP_BY_RAIL = {
+    "input_rail": 1,
+    "routing_rail": 2,
+    "request_rail": 3,
+    "prompt_rail": 4,
+    "output_rail": 5,
+}
+KNOWN_TEMPLATE_KEYS = frozenset().union(*SUPPORTED_TEMPLATES.values())
+LEGACY_HIT_ACTION_ALIASES = {
+    "block_input": "block",
+    "block_output": "block",
+    "sanitize_input": "sanitize",
+    "sanitize_output": "sanitize",
 }
 
 
@@ -57,7 +72,9 @@ class RuleDefinition:
             description=str(value.get("description") or "").strip(),
             template_config=_copy_dict(value.get("template_config")),
             default_priority=_as_int(value.get("default_priority"), 100),
-            default_action_on_hit=str(value.get("default_action_on_hit") or "default"),
+            default_action_on_hit=_canonical_hit_action(
+                value.get("default_action_on_hit") or "default"
+            ),
             default_action_on_error=str(value.get("default_action_on_error") or "default"),
         )
 
@@ -92,7 +109,9 @@ class PolicyRuleBinding:
             rail=str(value.get("rail") or "").strip(),
             enabled=bool(value.get("enabled", True)),
             priority=_as_optional_int(value.get("priority")),
-            action_on_hit=_as_optional_string(value.get("action_on_hit")),
+            action_on_hit=_canonical_hit_action(
+                _as_optional_string(value.get("action_on_hit"))
+            ),
             action_on_error=_as_optional_string(value.get("action_on_error")),
             depend_on=str(value.get("depend_on") or "").strip(),
         )
@@ -218,6 +237,15 @@ class PolicyLibrary:
                 rule_ids.add(rule.rule_id)
             if not rule.template_key:
                 fatal_errors.append(f"rule {rule.rule_id or '(empty)'} has no template_key")
+            elif (
+                rule.template_key in KNOWN_TEMPLATE_KEYS
+                and _is_sanitize_action(rule.default_action_on_hit)
+                and rule.template_key not in {"plain_keywords", "regex_pattern"}
+            ):
+                fatal_errors.append(
+                    f"rule {rule.rule_id} uses sanitize, which is only available "
+                    "for plain_keywords and regex_pattern"
+                )
 
         for policy in self.policies:
             if not RULE_ID_PATTERN.fullmatch(policy.policy_id):
@@ -245,7 +273,49 @@ class PolicyLibrary:
         for policy in self.policies:
             for binding in policy.bindings:
                 rule = next((item for item in self.rules if item.rule_id == binding.rule_id), None)
-                if rule and binding.rail in RAIL_NAMES and rule.template_key not in SUPPORTED_TEMPLATES[binding.rail]:
+                if rule is None or binding.rail not in RAIL_NAMES:
+                    continue
+                if rule.template_key in KNOWN_TEMPLATE_KEYS:
+                    if rule.template_key not in SUPPORTED_TEMPLATES[binding.rail]:
+                        fatal_errors.append(
+                            f"policy {policy.policy_id} cannot bind {rule.rule_id} "
+                            f"({rule.template_key}) to Step {STEP_BY_RAIL[binding.rail]}"
+                        )
+                    action_on_hit = (
+                        binding.action_on_hit
+                        if binding.action_on_hit is not None
+                        else rule.default_action_on_hit
+                    )
+                    if (
+                        _is_sanitize_action(action_on_hit)
+                        and rule.template_key not in {"plain_keywords", "regex_pattern"}
+                    ):
+                        fatal_errors.append(
+                            f"rule {rule.rule_id} uses sanitize, which is only available "
+                            "for plain_keywords and regex_pattern"
+                        )
+                    if (
+                        _is_retry_generation_action(action_on_hit)
+                        and binding.rail != "output_rail"
+                    ):
+                        warnings.append(
+                            f"rule {rule.rule_id} uses retry_generation as its hit action outside Step 5; "
+                            "it will fall back to the Step default"
+                        )
+                    action_on_error = (
+                        binding.action_on_error
+                        if binding.action_on_error is not None
+                        else rule.default_action_on_error
+                    )
+                    if (
+                        _is_retry_generation_action(action_on_error)
+                        and binding.rail != "output_rail"
+                    ):
+                        warnings.append(
+                            f"rule {rule.rule_id} uses retry_generation as its error action outside Step 5; "
+                            "it will fall back to the Step default"
+                        )
+                else:
                     warnings.append(
                         f"policy {policy.policy_id} binds {rule.rule_id} to unsupported "
                         f"template {rule.template_key} in {binding.rail}"
@@ -329,7 +399,9 @@ def import_legacy_rule_list(raw_config: Mapping[str, Any] | None) -> tuple[Polic
                     template_key=template_key,
                     template_config=template_config,
                     default_priority=_as_int(raw_rule.get("priority"), 100),
-                    default_action_on_hit=str(raw_rule.get("action_on_hit") or "default"),
+                    default_action_on_hit=_canonical_hit_action(
+                        raw_rule.get("action_on_hit") or "default"
+                    ),
                     default_action_on_error=str(raw_rule.get("action_on_error") or "default"),
                 )
             )
@@ -339,7 +411,9 @@ def import_legacy_rule_list(raw_config: Mapping[str, Any] | None) -> tuple[Polic
                     rail=rail_name,
                     enabled=bool(raw_rule.get("enabled", True)),
                     priority=_as_optional_int(raw_rule.get("priority")),
-                    action_on_hit=_as_optional_string(raw_rule.get("action_on_hit")),
+                    action_on_hit=_canonical_hit_action(
+                        _as_optional_string(raw_rule.get("action_on_hit"))
+                    ),
                     action_on_error=_as_optional_string(raw_rule.get("action_on_error")),
                     depend_on=str(raw_rule.get("depend_on") or "").strip(),
                 )
@@ -417,3 +491,18 @@ def _as_optional_string(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _canonical_hit_action(value: Any) -> str | None:
+    if value is None:
+        return None
+    action = str(value).strip()
+    return LEGACY_HIT_ACTION_ALIASES.get(action, action)
+
+
+def _is_sanitize_action(action: str | None) -> bool:
+    return _canonical_hit_action(action) == "sanitize"
+
+
+def _is_retry_generation_action(action: str | None) -> bool:
+    return str(action or "").strip() == "retry_generation"
