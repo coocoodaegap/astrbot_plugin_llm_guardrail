@@ -21,6 +21,27 @@ const status = $("status"),
   policyBindingsJson = $("policy-bindings-json"),
   policyBindingsJsonStatus = $("policy-bindings-json-status"),
   backToPolicyList = $("back-to-policy-list"),
+  newPolicy = $("new-policy"),
+  savePolicyAs = $("save-policy-as"),
+  deletePolicyButton = $("delete-policy"),
+  createPolicyDialog = $("create-policy-dialog"),
+  newPolicyId = $("new-policy-id"),
+  newPolicyName = $("new-policy-name"),
+  newPolicyDescription = $("new-policy-description"),
+  createPolicyStatus = $("create-policy-status"),
+  cancelCreatePolicy = $("cancel-create-policy"),
+  confirmCreatePolicy = $("confirm-create-policy"),
+  savePolicyAsDialog = $("save-policy-as-dialog"),
+  saveAsPolicyId = $("save-as-policy-id"),
+  saveAsPolicyName = $("save-as-policy-name"),
+  saveAsPolicyDescription = $("save-as-policy-description"),
+  saveAsPolicyStatus = $("save-as-policy-status"),
+  cancelSavePolicyAs = $("cancel-save-policy-as"),
+  confirmSavePolicyAs = $("confirm-save-policy-as"),
+  confirmPolicyDeleteDialog = $("confirm-policy-delete-dialog"),
+  confirmPolicyDeleteMessage = $("confirm-policy-delete-message"),
+  cancelPolicyDelete = $("cancel-policy-delete"),
+  confirmPolicyDelete = $("confirm-policy-delete"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationPanel = $("rule-creation-panel"),
@@ -165,6 +186,7 @@ let currentRevision = null,
   policyLibrary = { policies: [], active_policy_id: "_default" },
   openRuleIds = [],
   selectedPolicyId = null,
+  pendingPolicyDeletionId = null,
   saveAsSourceRuleId = null,
   pendingRuleDeletionId = null,
   selectedNewTemplate = null,
@@ -531,10 +553,14 @@ function showPolicyDetail(policyId) {
   policyDetailPanel.hidden = false;
   renderPolicyDetail(policy);
 }
+function customPolicies() {
+  return policyLibrary.policies.filter((policy) => policy.policy_id !== "_default");
+}
 function renderPolicyList() {
   policyList.replaceChildren();
-  policyCount.textContent = String(policyLibrary.policies.length);
-  for (const policy of policyLibrary.policies) {
+  const policies = customPolicies();
+  policyCount.textContent = String(policies.length);
+  for (const policy of policies) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "policy-list-item";
@@ -571,22 +597,132 @@ function renderPolicyDetail(policy) {
   policyBindingsJson.value = JSON.stringify(bindings, null, 2);
   policyBindingsJson.classList.remove("is-invalid", "is-dirty");
   policyBindingsJsonStatus.textContent = "";
+  savePolicyAs.hidden = policy.builtin;
+  deletePolicyButton.hidden = policy.builtin;
 }
 function syncPolicyBindingsJson() {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
-  if (!policy) return;
+  if (!policy) return false;
   try {
     const bindings = JSON.parse(policyBindingsJson.value);
     if (!Array.isArray(bindings)) throw new TypeError("规则绑定必须是 JSON 数组");
     policy.bindings = bindings;
     policyBindingsJson.classList.remove("is-invalid");
     policyBindingsJson.classList.add("is-dirty");
-    policyBindingsJsonStatus.textContent = "JSON 有效，已更新当前编辑；保存策略功能接入后才会发布。";
+    policyBindingsJsonStatus.textContent = "JSON 有效，已更新当前编辑；执行策略操作时会一并发布。";
     renderPolicyList();
+    return true;
   } catch (error) {
     policyBindingsJson.classList.add("is-invalid");
     policyBindingsJsonStatus.textContent = `JSON 无效：${error.message}`;
+    return false;
   }
+}
+function validCustomPolicyId(id) {
+  return /^[a-z][a-z0-9_]{0,63}$/.test(id) && id !== "_default";
+}
+async function persistPolicyLibrary(successMessage) {
+  if (!Number.isInteger(currentRevision)) return false;
+  try {
+    const result = await bridge.apiPost("save_policy_library", {
+      expected_revision: currentRevision,
+      policy_library: policyLibrary,
+    });
+    if (!result.success) {
+      policyLibraryStatus.textContent = result.detail || result.error || "保存策略失败。";
+      return false;
+    }
+    currentRevision = result.revision;
+    policyLibraryStatus.textContent = successMessage(result.revision);
+    return true;
+  } catch (error) {
+    policyLibraryStatus.textContent = `保存策略失败：${error instanceof Error ? error.message : String(error)}`;
+    return false;
+  }
+}
+function openCreatePolicyDialog() {
+  newPolicyId.value = "";
+  newPolicyName.value = "";
+  newPolicyDescription.value = "";
+  createPolicyStatus.textContent = "";
+  createPolicyDialog.showModal();
+  newPolicyId.focus();
+}
+async function createPolicy() {
+  const id = newPolicyId.value.trim();
+  const name = newPolicyName.value.trim();
+  if (!validCustomPolicyId(id)) {
+    createPolicyStatus.textContent = "策略 ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
+    return;
+  }
+  if (!name) { createPolicyStatus.textContent = "请填写策略名称。"; return; }
+  if (policyLibrary.policies.some((policy) => policy.policy_id === id)) {
+    createPolicyStatus.textContent = "策略 ID 已存在。";
+    return;
+  }
+  const policy = { policy_id: id, name, description: newPolicyDescription.value.trim(), bindings: [], session_scope: {}, builtin: false };
+  policyLibrary.policies.push(policy);
+  confirmCreatePolicy.disabled = true;
+  const saved = await persistPolicyLibrary((revision) => `策略“${name}”已创建为 revision ${revision}。`);
+  confirmCreatePolicy.disabled = false;
+  if (!saved) { policyLibrary.policies = policyLibrary.policies.filter((item) => item !== policy); return; }
+  createPolicyDialog.close();
+  renderPolicyList();
+  showPolicyDetail(id);
+}
+function openSavePolicyAsDialog() {
+  const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
+  if (!source || source.builtin || !syncPolicyBindingsJson()) return;
+  saveAsPolicyId.value = "";
+  saveAsPolicyName.value = `${source.name || source.policy_id} 副本`;
+  saveAsPolicyDescription.value = source.description || "";
+  saveAsPolicyStatus.textContent = "";
+  savePolicyAsDialog.showModal();
+  saveAsPolicyId.focus();
+}
+async function savePolicyAsCopy() {
+  const id = saveAsPolicyId.value.trim();
+  const name = saveAsPolicyName.value.trim();
+  const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
+  if (!source || source.builtin || !syncPolicyBindingsJson()) return;
+  if (!validCustomPolicyId(id)) { saveAsPolicyStatus.textContent = "新策略 ID 格式无效。"; return; }
+  if (!name) { saveAsPolicyStatus.textContent = "请填写策略名称。"; return; }
+  if (policyLibrary.policies.some((policy) => policy.policy_id === id)) { saveAsPolicyStatus.textContent = "策略 ID 已存在。"; return; }
+  const copy = { ...structuredClone(source), policy_id: id, name, description: saveAsPolicyDescription.value.trim(), builtin: false };
+  policyLibrary.policies.push(copy);
+  confirmSavePolicyAs.disabled = true;
+  const saved = await persistPolicyLibrary((revision) => `策略“${name}”已另存为 revision ${revision}。`);
+  confirmSavePolicyAs.disabled = false;
+  if (!saved) { policyLibrary.policies = policyLibrary.policies.filter((item) => item !== copy); return; }
+  savePolicyAsDialog.close();
+  renderPolicyList();
+  showPolicyDetail(id);
+}
+function requestPolicyDeletion() {
+  const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
+  if (!policy || policy.builtin) return;
+  pendingPolicyDeletionId = policy.policy_id;
+  confirmPolicyDeleteMessage.textContent = `策略“${policy.name || policy.policy_id}”将被永久删除。`;
+  confirmPolicyDeleteDialog.showModal();
+}
+async function deleteSelectedPolicy() {
+  const policyId = pendingPolicyDeletionId;
+  const policy = policyLibrary.policies.find((item) => item.policy_id === policyId);
+  if (!policy || policy.builtin) return;
+  const previousActivePolicyId = policyLibrary.active_policy_id;
+  policyLibrary.policies = policyLibrary.policies.filter((item) => item.policy_id !== policyId);
+  if (policyLibrary.active_policy_id === policyId) policyLibrary.active_policy_id = "_default";
+  confirmPolicyDelete.disabled = true;
+  const saved = await persistPolicyLibrary((revision) => `策略“${policy.name || policyId}”已删除，revision ${revision}。`);
+  confirmPolicyDelete.disabled = false;
+  if (!saved) {
+    policyLibrary.policies.push(policy);
+    policyLibrary.active_policy_id = previousActivePolicyId;
+    return false;
+  }
+  confirmPolicyDeleteDialog.close();
+  showPolicyList();
+  return true;
 }
 function createActionSelect(values, value) {
   const select = document.createElement("select");
@@ -975,7 +1111,7 @@ async function refresh() {
   ];
   policyLibraryStatus.textContent = policyMessages.length
     ? policyMessages.join(" · ")
-    : `已加载 ${policyLibrary.policies.length} 条策略，revision ${policyResult.revision}。`;
+    : `已加载 ${customPolicies().length} 条自定义策略，revision ${policyResult.revision}。`;
   const validation = ruleResult.validation || {
       warnings: [],
       fatal_errors: [],
@@ -994,6 +1130,17 @@ cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
 backToPolicyList.addEventListener("click", showPolicyList);
 policyBindingsJson.addEventListener("input", syncPolicyBindingsJson);
+newPolicy.addEventListener("click", openCreatePolicyDialog);
+cancelCreatePolicy.addEventListener("click", () => createPolicyDialog.close());
+confirmCreatePolicy.addEventListener("click", createPolicy);
+savePolicyAs.addEventListener("click", openSavePolicyAsDialog);
+cancelSavePolicyAs.addEventListener("click", () => savePolicyAsDialog.close());
+confirmSavePolicyAs.addEventListener("click", savePolicyAsCopy);
+deletePolicyButton.addEventListener("click", requestPolicyDeletion);
+cancelPolicyDelete.addEventListener("click", () => confirmPolicyDeleteDialog.close());
+confirmPolicyDelete.addEventListener("click", async () => {
+  if (await deleteSelectedPolicy()) pendingPolicyDeletionId = null;
+});
 cancelSaveRuleAs.addEventListener("click", () => saveRuleAsDialog.close());
 confirmSaveRuleAs.addEventListener("click", saveRuleAs);
 cancelRuleDelete.addEventListener("click", () => confirmRuleDeleteDialog.close());

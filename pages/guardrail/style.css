@@ -229,13 +229,54 @@ button:disabled {
     display: none
 }
 
-.policy-list-panel,
 .policy-detail-panel {
     padding: 20px;
     background: #fff;
     border: 1px solid #dfe6f0;
     border-radius: 12px;
     box-shadow: 0 1px 2px rgb(15 23 42 / 3%)
+}
+
+.policy-list-panel {
+    display: grid;
+    gap: 20px
+}
+
+.default-policy-card,
+.custom-policy-list-card {
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #dfe6f0;
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 3%)
+}
+
+.default-policy-card {
+    border-color: #b9cef5;
+    background: linear-gradient(135deg, #f7faff, #fff 62%)
+}
+
+.default-policy-card h3 {
+    margin: 4px 0 10px;
+    color: #26334a
+}
+
+.default-policy-card p {
+    max-width: 780px;
+    margin: 8px 0;
+    color: #475569;
+    line-height: 1.65
+}
+
+.default-policy-card code {
+    padding: 1px 5px;
+    color: #315a9c;
+    background: #e6efff;
+    border-radius: 4px
+}
+
+.custom-policy-list-card .list-heading {
+    margin-bottom: 12px
 }
 
 .policy-list {
