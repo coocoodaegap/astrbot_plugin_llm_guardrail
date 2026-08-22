@@ -24,9 +24,9 @@ const status = $("status"),
   policyGraphStage = $("policy-graph-stage"),
   policyGraphCanvas = $("policy-graph-canvas"),
   policyGraphStatus = $("policy-graph-status"),
+  policyGraphEditor = $("policy-graph-editor"),
+  policyGraphEditorStatus = $("policy-graph-editor-status"),
   savePolicy = $("save-policy"),
-  policyStepSettings = $("policy-step-settings"),
-  policyStepSettingsStatus = $("policy-step-settings-status"),
   policyUmoList = $("policy-umo-list"),
   setDefaultPolicy = $("set-default-policy"),
   policySessionStatus = $("policy-session-status"),
@@ -208,6 +208,8 @@ let currentRevision = null,
     collapsedRails: new Set(),
     hiddenNodeStates: new Set(),
     selectedNodeId: null,
+    selectedRail: null,
+    draft: null,
     renderFrame: 0,
     animationFrame: 0,
   };
@@ -605,6 +607,15 @@ const policyStepDefinitions = [
     ["block_message", "默认阻断提示", "text"],
   ] },
 ];
+const policyStepSettingHints = {
+  enabled: "关闭后，该 Step 中的所有规则绑定都不会执行。",
+  max_text_chars: "限制该 Step 每次送入检查的文本长度；留空沿用系统设置。",
+  default_llm_provider: "该 Step 的 LLM 类规则默认使用的辅助 Provider；留空沿用系统设置。",
+  max_retries: "仅 Step 5 使用；限制 retry_generation 的最大重试次数。",
+  default_action_on_hit: "该 Step 未覆写命中动作时采用的默认处理方式。",
+  default_action_on_error: "该 Step 未覆写错误动作时采用的默认处理方式。",
+  block_message: "该 Step 阻断请求或输出时使用的默认提示；留空沿用系统设置。",
+};
 const policyGraphSteps = [
   { rail: "input_rail", step: 1, label: "Step 1 · 输入分析", color: "#ff5a78", fill: "#401d31" },
   { rail: "routing_rail", step: 2, label: "Step 2 · 模型路由", color: "#ff963f", fill: "#41291c" },
@@ -642,6 +653,7 @@ function buildPolicyGraphModel(policy) {
   for (const binding of Array.isArray(policy?.bindings) ? policy.bindings : []) {
     const rule = ruleById.get(binding.rule_id) || null;
     const theme = policyGraphStepByRail.get(binding.rail);
+    const stepEnabled = policy?.rail_settings?.[binding.rail]?.enabled !== false;
     const node = {
       id: String(binding.rule_id || ""),
       binding,
@@ -650,7 +662,9 @@ function buildPolicyGraphModel(policy) {
       step: theme?.step || 0,
       theme,
       priority: graphPriority(binding, rule),
-      enabled: binding.enabled !== false,
+      enabled: binding.enabled !== false && stepEnabled,
+      bindingEnabled: binding.enabled !== false,
+      stepEnabled,
       isLogicGate: rule?.template_key === "logic_gate",
       issues: [],
       state: "available",
@@ -759,8 +773,15 @@ function renderPolicyGraphStepToggles(model) {
     button.textContent = `${step.label} · ${count}`;
     button.addEventListener("click", () => {
       if (collapsed) policyGraphState.collapsedRails.delete(step.rail);
-      else policyGraphState.collapsedRails.add(step.rail);
+      else {
+        policyGraphState.collapsedRails.add(step.rail);
+        if (policyGraphState.selectedRail === step.rail) policyGraphState.selectedRail = null;
+        if (policyGraphState.model?.nodeById.get(policyGraphState.selectedNodeId)?.rail === step.rail) {
+          policyGraphState.selectedNodeId = null;
+        }
+      }
       renderPolicyGraphStepToggles(model);
+      renderPolicyGraphEditor();
       schedulePolicyGraphRender();
     });
     policyGraphStepToggles.append(button);
@@ -791,6 +812,7 @@ function renderPolicyGraphStepToggles(model) {
         policyGraphState.selectedNodeId = null;
       }
       renderPolicyGraphStepToggles(model);
+      renderPolicyGraphEditor();
       schedulePolicyGraphRender();
     });
     policyGraphStepToggles.append(button);
@@ -1031,9 +1053,13 @@ function graphColorForEdge(edge) {
 function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion) {
   context.fillStyle = lane.step.fill;
   context.fillRect(0, lane.top, lane.width, lane.height);
+  if (policyGraphState.selectedRail === lane.step.rail) {
+    context.fillStyle = `${lane.step.color}18`;
+    context.fillRect(0, lane.top, lane.width, lane.height);
+  }
   const offset = reducedMotion ? 0 : (timestamp / 7000) % 24;
   context.strokeStyle = `${lane.step.color}35`;
-  context.lineWidth = 1;
+  context.lineWidth = policyGraphState.selectedRail === lane.step.rail ? 1.4 : 1;
   for (let x = -24 + offset; x < lane.width; x += 24) {
     context.beginPath();
     context.moveTo(x, lane.top);
@@ -1202,8 +1228,21 @@ function policyGraphNodeAt(clientX, clientY) {
       && Math.hypot(node.x - x, node.y - y) <= 15
   )) || null;
 }
-function renderPolicyGraph(policy) {
-  policyGraphState.selectedNodeId = null;
+function policyGraphRailAt(clientX, clientY) {
+  const rect = policyGraphCanvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  if (x < 0 || x > rect.width || y < 0 || y > rect.height) return null;
+  for (const [rail, lane] of policyGraphState.layout?.laneLayouts || []) {
+    if (!lane.collapsed && y >= lane.top && y <= lane.top + lane.height) return rail;
+  }
+  return null;
+}
+function renderPolicyGraph(policy, { resetSelection = false } = {}) {
+  if (resetSelection) {
+    policyGraphState.selectedNodeId = null;
+    policyGraphState.selectedRail = null;
+  }
   policyGraphState.layout = null;
   policyGraphState.model = buildPolicyGraphModel(policy);
   renderPolicyGraphStepToggles(policyGraphState.model);
@@ -1240,66 +1279,256 @@ function createPolicyStepControl(type, value, options) {
   input.placeholder = "沿用系统设置";
   return input;
 }
-function renderPolicyStepSettings(policy) {
-  policyStepSettings.replaceChildren();
-  const settings = policy.rail_settings || {};
-  for (const definition of policyStepDefinitions) {
-    const card = document.createElement("section");
-    card.className = "policy-step-card";
-    const title = document.createElement("h4");
-    title.textContent = definition.title;
-    const grid = document.createElement("div");
-    grid.className = "form-grid";
-    const railSettings = settings[definition.rail] || {};
-    for (const [key, labelText, type, options] of definition.fields) {
-      const label = document.createElement("label");
-      label.textContent = labelText;
-      const control = createPolicyStepControl(type, railSettings[key], options);
-      control.dataset.policyRail = definition.rail;
-      control.dataset.policyRailSetting = key;
-      control.dataset.policyRailSettingType = type;
-      label.append(control);
-      grid.append(label);
-    }
-    const bindingsLabel = document.createElement("label");
-    bindingsLabel.className = "full-width";
-    bindingsLabel.textContent = "规则绑定（JSON）";
-    const bindingsJson = document.createElement("textarea");
-    bindingsJson.className = "json-editor policy-step-bindings-json";
-    bindingsJson.spellcheck = false;
-    bindingsJson.dataset.policyBindingsRail = definition.rail;
-    bindingsJson.setAttribute("aria-label", `${definition.title} 的规则绑定 JSON`);
-    bindingsJson.value = JSON.stringify(
-      (policy.bindings || []).filter((binding) => binding.rail === definition.rail),
-      null,
-      2,
-    );
-    bindingsLabel.append(bindingsJson);
-    card.append(title, grid, bindingsLabel);
-    policyStepSettings.append(card);
+function getPolicyGraphDraft(policy = null) {
+  const currentPolicy = policy || policyLibrary.policies.find(
+    (item) => item.policy_id === selectedPolicyId,
+  );
+  if (!currentPolicy) return null;
+  if (!policyGraphState.draft || policyGraphState.draft.policy_id !== currentPolicy.policy_id) {
+    policyGraphState.draft = structuredClone(currentPolicy);
   }
-  policyStepSettingsStatus.textContent = "";
+  if (!Array.isArray(policyGraphState.draft.bindings)) policyGraphState.draft.bindings = [];
+  if (!policyGraphState.draft.rail_settings || typeof policyGraphState.draft.rail_settings !== "object") {
+    policyGraphState.draft.rail_settings = {};
+  }
+  return policyGraphState.draft;
 }
-function collectPolicyStepSettings(policy) {
-  const settings = structuredClone(policy.rail_settings || {});
-  for (const definition of policyStepDefinitions) {
-    const railSettings = { ...(settings[definition.rail] || {}) };
-    for (const [key, _label, type] of definition.fields) {
-      const control = policyStepSettings.querySelector(
-        `[data-policy-rail="${definition.rail}"][data-policy-rail-setting="${key}"]`
-      );
-      if (!control) continue;
-      let value;
-      if (type === "boolean") value = control.checked;
-      else if (type === "provider") value = control.providerValue();
-      else if (type === "number") value = control.value === "" ? "" : Number(control.value);
-      else value = control.value;
-      if (value === "" || (typeof value === "number" && !Number.isFinite(value))) delete railSettings[key];
-      else railSettings[key] = value;
+function policyStepDefinition(rail) {
+  return policyStepDefinitions.find((definition) => definition.rail === rail) || null;
+}
+function setPolicyGraphEditorStatus(message = "", isError = false) {
+  policyGraphEditorStatus.textContent = message;
+  policyGraphEditorStatus.classList.toggle("is-error", isError);
+}
+function createPolicyGraphEditorField(labelText, hintText, control, fullWidth = false) {
+  const label = document.createElement("label");
+  if (fullWidth) label.classList.add("full-width");
+  const title = document.createElement("span");
+  title.textContent = labelText;
+  label.append(title);
+  if (hintText) label.append(createRuleFieldHint(hintText));
+  label.append(control);
+  return label;
+}
+function policyStepControlValue(type, control) {
+  if (type === "boolean") return control.checked;
+  if (type === "provider") return control.providerValue();
+  if (type === "number") return control.value.trim();
+  return control.value;
+}
+function updatePolicyStepSetting(rail, key, type, control) {
+  const draft = getPolicyGraphDraft();
+  if (!draft) return;
+  const settings = draft.rail_settings;
+  const railSettings = { ...(settings[rail] || {}) };
+  let value = policyStepControlValue(type, control);
+  if (type === "number" && value !== "") {
+    value = Number(value);
+    if (!Number.isFinite(value)) {
+      setPolicyGraphEditorStatus("数值设置必须是有效数字。", true);
+      return;
     }
-    settings[definition.rail] = railSettings;
   }
-  return settings;
+  if (value === "") delete railSettings[key];
+  else railSettings[key] = value;
+  settings[rail] = railSettings;
+  setPolicyGraphEditorStatus("修改已暂存；点击“保存策略”后写入快照。");
+  if (key === "enabled") renderPolicyGraph(draft);
+}
+function createPolicyBindingActionSelect(values, value) {
+  const select = document.createElement("select");
+  const inherit = document.createElement("option");
+  inherit.value = "";
+  inherit.textContent = "继承规则默认动作";
+  select.append(inherit);
+  populateRuleActionOptions(select, values);
+  ensureOption(select, String(value ?? ""));
+  select.value = String(value ?? "");
+  return select;
+}
+function updatePolicyBinding(ruleId, field, control) {
+  const draft = getPolicyGraphDraft();
+  const binding = draft?.bindings.find((item) => item.rule_id === ruleId);
+  if (!binding) return;
+  if (field === "enabled") {
+    binding.enabled = control.checked;
+  } else if (field === "priority") {
+    const raw = control.value.trim();
+    if (!raw) delete binding.priority;
+    else if (!Number.isInteger(Number(raw))) {
+      setPolicyGraphEditorStatus("优先级必须是整数；留空可继承规则默认优先级。", true);
+      return;
+    } else binding.priority = Number(raw);
+  } else {
+    const value = control.value;
+    if (!value) delete binding[field];
+    else binding[field] = value;
+  }
+  setPolicyGraphEditorStatus("修改已暂存；点击“保存策略”后写入快照。");
+  renderPolicyGraph(draft);
+}
+function appendPolicyGraphEditorHeading(container, eyebrow, titleText, descriptionText) {
+  const heading = document.createElement("div");
+  heading.className = "policy-graph-editor-heading";
+  const eyebrowElement = document.createElement("p");
+  eyebrowElement.className = "eyebrow";
+  eyebrowElement.textContent = eyebrow;
+  const title = document.createElement("h4");
+  title.textContent = titleText;
+  const description = document.createElement("p");
+  description.textContent = descriptionText;
+  heading.append(eyebrowElement, title, description);
+  container.append(heading);
+}
+function renderPolicyGraphNodeEditor(node) {
+  const editor = document.createElement("section");
+  editor.className = "policy-graph-editor-card";
+  const binding = node.binding;
+  const rule = node.rule;
+  const templateKey = rule?.template_key || "";
+  appendPolicyGraphEditorHeading(
+    editor,
+    "RULE BINDING",
+    `编辑规则绑定 · ${node.id || "未命名规则"}`,
+    rule?.description || "未说明。这里的修改只作用于当前策略，不会修改规则库本体。",
+  );
+  const summary = document.createElement("div");
+  summary.className = "policy-graph-editor-summary";
+  const step = policyGraphStepByRail.get(node.rail);
+  for (const [label, value] of [
+    ["规则 ID", node.id || "未命名"],
+    ["模板", templateDescriptions[templateKey] || templateKey || "未知模板"],
+    ["所属 Step", step?.label || node.rail],
+    ["依赖", binding.depend_on || "未设置"],
+  ]) {
+    const item = document.createElement("span");
+    item.textContent = `${label}：${value}`;
+    summary.append(item);
+  }
+  editor.append(summary);
+  const grid = document.createElement("div");
+  grid.className = "form-grid";
+  const enabled = document.createElement("input");
+  enabled.type = "checkbox";
+  enabled.className = "setting-checkbox";
+  enabled.checked = binding.enabled !== false;
+  enabled.addEventListener("change", () => updatePolicyBinding(node.id, "enabled", enabled));
+  grid.append(createPolicyGraphEditorField(
+    "启用此规则",
+    node.stepEnabled ? "关闭后该规则不会执行。" : "当前 Step 已关闭；此开关恢复后仍需重新启用 Step。",
+    enabled,
+  ));
+  const priority = document.createElement("input");
+  priority.type = "number";
+  priority.step = "1";
+  priority.value = binding.priority == null ? "" : String(binding.priority);
+  priority.placeholder = `继承规则默认值 ${rule?.default_priority ?? 100}`;
+  priority.addEventListener("change", () => updatePolicyBinding(node.id, "priority", priority));
+  grid.append(createPolicyGraphEditorField(
+    "优先级覆写",
+    "数值越小越先执行；留空继承规则默认优先级。",
+    priority,
+  ));
+  const hitAction = createPolicyBindingActionSelect(
+    hitActionsForTemplate(templateKey),
+    binding.action_on_hit,
+  );
+  hitAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_hit", hitAction));
+  grid.append(createPolicyGraphEditorField(
+    "命中动作覆写",
+    "留空继承规则默认动作；不可用动作已按模板限制隐藏。",
+    hitAction,
+  ));
+  const errorAction = createPolicyBindingActionSelect(errorActions, binding.action_on_error);
+  errorAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_error", errorAction));
+  grid.append(createPolicyGraphEditorField(
+    "错误动作覆写",
+    "留空继承规则默认动作。",
+    errorAction,
+  ));
+  editor.append(grid);
+  const dependencyHint = document.createElement("p");
+  dependencyHint.className = "policy-graph-editor-note";
+  dependencyHint.textContent = binding.depend_on
+    ? `当前依赖：${binding.depend_on}。依赖线的可视化选择将在下一阶段接入。`
+    : "当前未设置依赖。依赖线的可视化选择将在下一阶段接入。";
+  editor.append(dependencyHint);
+  if (node.isLogicGate) {
+    const inputs = graphRuleInputs(rule);
+    const logicNote = document.createElement("p");
+    logicNote.className = "policy-graph-editor-note is-warning";
+    logicNote.textContent = `逻辑门输入：${inputs.length ? inputs.join("、") : "未设置"}。逻辑门输入属于规则本体，修改会影响引用该规则的所有策略。`;
+    editor.append(logicNote);
+  }
+  if (rule) {
+    const openRuleButton = document.createElement("button");
+    openRuleButton.type = "button";
+    openRuleButton.className = "button-secondary policy-graph-editor-action";
+    openRuleButton.textContent = "打开规则本体";
+    openRuleButton.addEventListener("click", () => {
+      switchTab("rules");
+      openRule(rule.rule_id);
+      renderRuleList();
+    });
+    editor.append(openRuleButton);
+  }
+  if (node.issues.length) {
+    const issue = document.createElement("p");
+    issue.className = "form-status";
+    issue.textContent = node.issues.map((item) => item.message).join("；");
+    editor.append(issue);
+  }
+  return editor;
+}
+function renderPolicyGraphStepEditor(rail) {
+  const definition = policyStepDefinition(rail);
+  const editor = document.createElement("section");
+  editor.className = "policy-graph-editor-card";
+  if (!definition) {
+    appendPolicyGraphEditorHeading(editor, "STEP SETTINGS", "未知 Step", "无法编辑该 Step 的设置。");
+    return editor;
+  }
+  const draft = getPolicyGraphDraft();
+  const settings = draft?.rail_settings?.[rail] || {};
+  const nodeCount = (draft?.bindings || []).filter((binding) => binding.rail === rail).length;
+  appendPolicyGraphEditorHeading(
+    editor,
+    "STEP SETTINGS",
+    `编辑 ${definition.title}`,
+    `当前 Step 有 ${nodeCount} 条规则绑定。未填写的项会沿用系统默认设置。`,
+  );
+  const grid = document.createElement("div");
+  grid.className = "form-grid";
+  for (const [key, labelText, type, options] of definition.fields) {
+    const control = createPolicyStepControl(type, settings[key], options);
+    const apply = () => updatePolicyStepSetting(rail, key, type, control);
+    control.addEventListener("change", apply);
+    if (type !== "boolean" && type !== "number") control.addEventListener("input", apply);
+    grid.append(createPolicyGraphEditorField(labelText, policyStepSettingHints[key], control));
+  }
+  editor.append(grid);
+  return editor;
+}
+function renderPolicyGraphEditor() {
+  policyGraphEditor.replaceChildren();
+  setPolicyGraphEditorStatus("");
+  const draft = getPolicyGraphDraft();
+  if (!draft) return;
+  const node = policyGraphState.selectedNodeId
+    ? policyGraphState.model?.nodeById.get(policyGraphState.selectedNodeId)
+    : null;
+  if (node) {
+    policyGraphEditor.append(renderPolicyGraphNodeEditor(node));
+    return;
+  }
+  if (policyGraphState.selectedRail) {
+    policyGraphEditor.append(renderPolicyGraphStepEditor(policyGraphState.selectedRail));
+    return;
+  }
+  const placeholder = document.createElement("div");
+  placeholder.className = "policy-graph-editor-placeholder";
+  placeholder.textContent = "点击图中的规则节点，或点击某个 Step 的空白处以开始编辑。";
+  policyGraphEditor.append(placeholder);
 }
 function renderPolicyDetail(policy) {
   policyDetailName.textContent = policy.name || policy.policy_id || "未命名策略";
@@ -1313,8 +1542,9 @@ function renderPolicyDetail(policy) {
     Object.assign(document.createElement("code"), { textContent: policy.policy_id || "未设置" }),
     document.createTextNode(` · 规则绑定：${bindings.length} 条`),
   );
-  renderPolicyGraph(policy);
-  renderPolicyStepSettings(policy);
+  policyGraphState.draft = structuredClone(policy);
+  renderPolicyGraph(policyGraphState.draft, { resetSelection: true });
+  renderPolicyGraphEditor();
   policyUmoList.replaceChildren();
   policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
   policyUmoList.append(policyUmoList.umoEditor);
@@ -1326,38 +1556,6 @@ function renderPolicyDetail(policy) {
   savePolicyAs.hidden = policy.builtin;
   deletePolicyButton.hidden = policy.builtin;
 }
-function collectPolicyBindings() {
-  try {
-    const bindings = [];
-    for (const editor of policyStepSettings.querySelectorAll("[data-policy-bindings-rail]")) {
-      const rail = editor.dataset.policyBindingsRail;
-      let parsed;
-      try {
-        parsed = JSON.parse(editor.value);
-      } catch (error) {
-        editor.classList.add("is-invalid");
-        throw new SyntaxError(`${rail} 的 JSON 无效：${error.message}`);
-      }
-      if (!Array.isArray(parsed)) throw new TypeError(`${rail} 的规则绑定必须是 JSON 数组`);
-      for (const binding of parsed) {
-        if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
-          throw new TypeError(`${rail} 的规则绑定必须是对象`);
-        }
-        bindings.push({ ...binding, rail });
-      }
-      editor.classList.remove("is-invalid");
-    }
-    return bindings;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const match = message.match(/^(\w+_rail) /);
-    if (match) {
-      policyStepSettings.querySelector(`[data-policy-bindings-rail="${match[1]}"]`)?.classList.add("is-invalid");
-    }
-    policyStepSettingsStatus.textContent = `规则 JSON 无效：${message}`;
-    return null;
-  }
-}
 function collectPolicyDetailDraft(policy) {
   const name = policyNameInput.value.trim();
   if (!name) {
@@ -1365,24 +1563,17 @@ function collectPolicyDetailDraft(policy) {
     policyNameInput.focus();
     return null;
   }
-  const bindings = collectPolicyBindings();
-  if (bindings === null) return null;
+  const draft = getPolicyGraphDraft(policy);
+  if (!draft) return null;
   const umoEditor = policyUmoList.umoEditor;
   return {
     ...structuredClone(policy),
     name,
     description: policyDescriptionInput.value.trim(),
-    bindings,
-    rail_settings: collectPolicyStepSettings(policy),
+    bindings: structuredClone(draft.bindings || []),
+    rail_settings: structuredClone(draft.rail_settings || {}),
     umo_list: Array.isArray(umoEditor?.umoValues) ? [...umoEditor.umoValues] : [],
   };
-}
-function syncPolicyBindingsJson() {
-  const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
-  const bindings = policy ? collectPolicyBindings() : null;
-  if (!policy || bindings === null) return false;
-  policy.bindings = bindings;
-  return true;
 }
 function validCustomPolicyId(id) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(id) && id !== "_default";
@@ -1917,7 +2108,9 @@ async function refresh() {
 }
 policyGraphCanvas.addEventListener("click", (event) => {
   const node = policyGraphNodeAt(event.clientX, event.clientY);
+  const rail = node ? null : policyGraphRailAt(event.clientX, event.clientY);
   policyGraphState.selectedNodeId = node?.id || null;
+  policyGraphState.selectedRail = rail;
   if (node) {
     const stateLabel = {
       available: "可用",
@@ -1927,9 +2120,12 @@ policyGraphCanvas.addEventListener("click", (event) => {
     }[node.state] || node.state;
     const issueText = node.issues.length ? ` · ${node.issues[0].message}` : "";
     policyGraphStatus.textContent = `已选中 ${node.id} · ${templateDescriptions[node.rule?.template_key] || node.rule?.template_key || "未知规则"} · ${stateLabel}${issueText}`;
+  } else if (rail) {
+    policyGraphStatus.textContent = `已选中 ${policyGraphStepByRail.get(rail)?.label || rail}；可在下方编辑 Step 设置。`;
   } else if (policyGraphState.model) {
     policyGraphStatus.textContent = `共 ${policyGraphState.model.nodes.length} 个节点、${policyGraphState.model.edges.length} 条依赖。`;
   }
+  renderPolicyGraphEditor();
   schedulePolicyGraphRender();
 });
 policyGraphCanvas.addEventListener("mousemove", (event) => {

@@ -424,12 +424,6 @@ button:disabled {
     border-top: 1px solid #e2e8f0
 }
 
-.policy-step-settings-section {
-    margin-top: 18px;
-    padding-top: 18px;
-    border-top: 1px solid #e2e8f0
-}
-
 .policy-graph-section {
     margin-top: 22px;
     padding-top: 20px;
@@ -525,21 +519,98 @@ button:disabled {
     font-size: .82rem
 }
 
-.policy-step-settings {
+.policy-graph-editor-section {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid #e2e8f0
+}
+
+.policy-graph-editor {
+    min-height: 164px;
+    padding: 16px;
+    background: linear-gradient(145deg, #fbfdff, #f4f8fe);
+    border: 1px solid #d8e3f1;
+    border-radius: 10px
+}
+
+.policy-graph-editor-card {
     display: grid;
-    gap: 12px
+    gap: 14px
 }
 
-.policy-step-card {
-    padding: 14px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px
+.policy-graph-editor-heading h4 {
+    margin: 3px 0 7px;
+    color: #26334a;
+    font-size: 1rem
 }
 
-.policy-step-card h4 {
-    margin: 0 0 12px;
-    color: #26334a
+.policy-graph-editor-heading p:not(.eyebrow) {
+    margin: 0;
+    color: #64748b;
+    line-height: 1.55
+}
+
+.policy-graph-editor-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    color: #475569;
+    font-size: .82rem
+}
+
+.policy-graph-editor-summary span {
+    padding: 4px 7px;
+    background: #edf3fb;
+    border: 1px solid #d7e3f1;
+    border-radius: 999px
+}
+
+.policy-graph-editor-note {
+    margin: 0;
+    padding: 9px 11px;
+    color: #526174;
+    background: #f1f5f9;
+    border-left: 3px solid #94a3b8;
+    border-radius: 6px;
+    font-size: .85rem;
+    line-height: 1.55
+}
+
+.policy-graph-editor-note.is-warning {
+    color: #8a5600;
+    background: #fff8e7;
+    border-left-color: #e6ac32
+}
+
+.policy-graph-editor-action {
+    justify-self: start
+}
+
+.policy-graph-editor-placeholder {
+    display: grid;
+    min-height: 130px;
+    place-items: center;
+    color: #64748b;
+    text-align: center
+}
+
+.policy-graph-editor-status {
+    min-height: 20px;
+    margin: 9px 0 0;
+    color: #64748b;
+    font-size: .84rem
+}
+
+.policy-graph-editor-status:empty {
+    display: none
+}
+
+.policy-graph-editor-status.is-error {
+    padding: 8px 10px;
+    color: #b42318;
+    background: #fef3f2;
+    border: 1px solid #fecdca;
+    border-radius: 6px
 }
 
 .policy-session-assignment h3 {
@@ -551,41 +622,6 @@ button:disabled {
 .policy-session-actions {
     margin-top: 12px
 }
-
-.json-editor {
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 260px;
-    padding: 12px;
-    color: #1e293b;
-    background: #f8fafc;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    resize: vertical;
-    font: .84rem/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace
-}
-
-.policy-step-bindings-json {
-    min-height: 150px;
-    margin-top: 4px
-}
-
-.json-editor:focus {
-    outline: 2px solid #93c5fd;
-    outline-offset: 1px;
-    border-color: #3b82f6
-}
-
-.json-editor.is-dirty {
-    border-color: #d97706
-}
-
-.json-editor.is-invalid {
-    color: #991b1b;
-    background: #fff1f2;
-    border-color: #dc2626
-}
-
 
 .count-badge {
     min-width: 22px;

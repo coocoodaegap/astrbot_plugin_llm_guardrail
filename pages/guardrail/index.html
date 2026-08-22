@@ -150,7 +150,7 @@
             <div>
               <p class="eyebrow">POLICY GRAPH</p>
               <h3 id="policy-graph-heading">策略依赖图</h3>
-              <p>按执行 Step 查看规则绑定、优先级与依赖关系。当前为只读图，后续将在此直接编排节点和连接。</p>
+                <p>按执行 Step 查看规则绑定、优先级与依赖关系；点击节点或泳道空白处即可在下方编辑。</p>
             </div>
           </div>
           <div id="policy-graph-step-toggles" class="policy-graph-step-toggles" aria-label="Step 显示控制"></div>
@@ -159,15 +159,16 @@
           </div>
           <p id="policy-graph-status" class="muted" aria-live="polite"></p>
         </section>
-        <section class="policy-step-settings-section">
+        <section class="policy-graph-editor-section" aria-labelledby="policy-graph-editor-heading">
           <div class="form-heading">
             <div>
-              <h3>Step 开关与设置</h3>
-              <p>这些值只作用于当前策略，未填写的项沿用系统默认设置。</p>
+                <p class="eyebrow">CONTEXT EDITOR</p>
+                <h3 id="policy-graph-editor-heading">策略图编辑区</h3>
+                <p>选择节点可编辑当前绑定；选择泳道空白处可编辑该 Step 设置。修改会随“保存策略”一次写入快照。</p>
             </div>
           </div>
-          <div id="policy-step-settings" class="policy-step-settings"></div>
-          <p id="policy-step-settings-status" class="form-status" aria-live="polite"></p>
+          <div id="policy-graph-editor" class="policy-graph-editor"></div>
+          <p id="policy-graph-editor-status" class="policy-graph-editor-status" aria-live="polite"></p>
         </section>
         <section class="policy-session-assignment">
           <div class="form-heading">
@@ -189,7 +190,7 @@
       </section>
       <dialog id="create-policy-dialog" class="save-rule-as-dialog">
         <form method="dialog">
-          <div class="form-heading"><div><p class="eyebrow">CREATE POLICY</p><h3>新建策略</h3><p>新策略创建后可在详情页编辑规则绑定 JSON。</p></div></div>
+            <div class="form-heading"><div><p class="eyebrow">CREATE POLICY</p><h3>新建策略</h3><p>新策略创建后可在详情页的策略图中编辑 Step 与规则绑定。</p></div></div>
           <label>策略 ID<input id="new-policy-id" autocomplete="off" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
           <label>策略名称<input id="new-policy-name" autocomplete="off" required /></label>
           <label class="full-width">策略描述<input id="new-policy-description" autocomplete="off" /></label>
