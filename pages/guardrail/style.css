@@ -813,6 +813,65 @@ button:disabled {
     background: rgb(15 23 42 / 38%)
 }
 
+.policy-rule-picker-dialog {
+    width: min(620px, calc(100vw - 32px));
+    max-height: min(680px, calc(100vh - 32px));
+    overflow: auto;
+    padding: 20px;
+    color: #172033;
+    background: #fff;
+    border: 1px solid #dfe6f0;
+    border-radius: 12px;
+    box-shadow: 0 20px 45px rgb(15 23 42 / 20%)
+}
+
+.policy-rule-picker-dialog::backdrop {
+    background: rgb(15 23 42 / 38%)
+}
+
+.policy-rule-picker-list {
+    display: grid;
+    gap: 9px;
+    margin-top: 12px
+}
+
+.policy-rule-picker-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 12px;
+    border: 1px solid #dfe6f0;
+    border-radius: 10px;
+    cursor: pointer;
+    background: #fbfdff
+}
+
+.policy-rule-picker-item:hover {
+    border-color: #8ab1fb;
+    background: #f4f8ff
+}
+
+.policy-rule-picker-item input {
+    margin-top: 3px
+}
+
+.policy-rule-picker-item > span {
+    display: grid;
+    gap: 3px
+}
+
+.policy-rule-picker-template {
+    color: #285aa9;
+    font-size: .82rem
+}
+
+.policy-rule-picker-description {
+    color: #64748b;
+    font-size: .86rem;
+    line-height: 1.4
+}
+
 .policy-save-issues-dialog {
     width: min(620px, calc(100vw - 32px));
     max-height: min(680px, calc(100vh - 32px));

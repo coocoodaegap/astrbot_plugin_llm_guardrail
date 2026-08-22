@@ -230,6 +230,14 @@
         <div><p class="eyebrow">REMOVE POLICY BINDING</p><h3>从当前策略移除此节点？</h3><p id="confirm-policy-binding-remove-message" class="danger-notice"></p></div>
         <div class="dialog-actions"><button id="cancel-policy-binding-remove" type="button" class="button-secondary">取消</button><button id="confirm-policy-binding-remove" type="button" class="danger-button">移除节点</button></div>
       </dialog>
+      <dialog id="policy-rule-picker-dialog" class="policy-rule-picker-dialog" aria-labelledby="policy-rule-picker-title">
+        <form method="dialog">
+          <div class="form-heading"><div><p class="eyebrow">ADD EXISTING RULES</p><h3 id="policy-rule-picker-title">添加已有规则</h3><p id="policy-rule-picker-description">仅显示与当前 Step 兼容、且尚未加入此策略的规则。</p></div></div>
+          <p id="policy-rule-picker-status" class="form-status" aria-live="polite"></p>
+          <div id="policy-rule-picker-list" class="policy-rule-picker-list" aria-label="可添加规则"></div>
+          <div class="dialog-actions"><button id="cancel-policy-rule-picker" type="button" class="button-secondary">取消</button><button id="confirm-policy-rule-picker" type="button">添加所选规则</button></div>
+        </form>
+      </dialog>
       <dialog id="policy-save-issues-dialog" class="policy-save-issues-dialog" aria-labelledby="policy-save-issues-title">
         <div><p class="eyebrow">POLICY VALIDATION</p><h3 id="policy-save-issues-title">策略暂不能保存</h3><p id="policy-save-issues-intro">请修复以下问题后再试。</p><ul id="policy-save-issues-list" class="policy-save-issues-list"></ul></div>
         <div class="dialog-actions"><button id="close-policy-save-issues" type="button">我知道了</button></div>

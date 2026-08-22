@@ -61,6 +61,13 @@ const status = $("status"),
   confirmPolicyBindingRemoveMessage = $("confirm-policy-binding-remove-message"),
   cancelPolicyBindingRemove = $("cancel-policy-binding-remove"),
   confirmPolicyBindingRemove = $("confirm-policy-binding-remove"),
+  policyRulePickerDialog = $("policy-rule-picker-dialog"),
+  policyRulePickerTitle = $("policy-rule-picker-title"),
+  policyRulePickerDescription = $("policy-rule-picker-description"),
+  policyRulePickerStatus = $("policy-rule-picker-status"),
+  policyRulePickerList = $("policy-rule-picker-list"),
+  cancelPolicyRulePicker = $("cancel-policy-rule-picker"),
+  confirmPolicyRulePicker = $("confirm-policy-rule-picker"),
   policySaveIssuesDialog = $("policy-save-issues-dialog"),
   policySaveIssuesTitle = $("policy-save-issues-title"),
   policySaveIssuesIntro = $("policy-save-issues-intro"),
@@ -212,6 +219,7 @@ let currentRevision = null,
   selectedPolicyId = null,
   pendingPolicyDeletionId = null,
   pendingPolicyBindingRemovalId = null,
+  pendingPolicyBindingRail = null,
   saveAsSourceRuleId = null,
   pendingRuleDeletionId = null,
   selectedNewTemplate = null,
@@ -641,6 +649,13 @@ const policyGraphSteps = [
   { rail: "prompt_rail", step: 4, label: "Step 4 · 提示词增强", color: "#4ee19a", fill: "#17372b" },
   { rail: "output_rail", step: 5, label: "Step 5 · 输出检查", color: "#56b9ff", fill: "#17334a" },
 ];
+const supportedTemplatesByRail = {
+  input_rail: new Set(["plain_keywords", "regex_pattern", "logic_gate", "rag_judge", "llm_review"]),
+  request_rail: new Set(["plain_keywords", "regex_pattern", "logic_gate", "rag_judge", "llm_review"]),
+  prompt_rail: new Set(["replace_input", "strengthen_prompt", "logic_gate"]),
+  routing_rail: new Set(["route_policy", "logic_gate"]),
+  output_rail: new Set(["plain_keywords", "regex_pattern", "logic_gate", "rag_judge", "llm_review"]),
+};
 const policyGraphStepByRail = new Map(
   policyGraphSteps.map((item) => [item.rail, item]),
 );
@@ -1752,6 +1767,75 @@ function renderPolicyGraphNodeEditor(node) {
   }
   return editor;
 }
+function availableRulesForPolicyRail(rail) {
+  const draft = getPolicyGraphDraft();
+  const supportedTemplates = supportedTemplatesByRail[rail] || new Set();
+  const boundRuleIds = new Set((draft?.bindings || []).map((binding) => binding.rule_id));
+  return ruleLibrary.rules.filter((rule) => (
+    supportedTemplates.has(rule.template_key) && !boundRuleIds.has(rule.rule_id)
+  ));
+}
+function renderPolicyRulePicker(rail) {
+  const definition = policyStepDefinition(rail);
+  const rules = availableRulesForPolicyRail(rail);
+  policyRulePickerTitle.textContent = `添加已有规则 · ${definition?.title || rail}`;
+  policyRulePickerDescription.textContent = "仅显示与当前 Step 兼容、且尚未加入此策略的规则。可一次添加多条；新节点会先留在策略草稿中。";
+  policyRulePickerStatus.textContent = rules.length ? "" : "没有可添加的规则。可先到规则库创建兼容的规则。";
+  policyRulePickerList.replaceChildren();
+  for (const rule of rules) {
+    const item = document.createElement("label");
+    item.className = "policy-rule-picker-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = rule.rule_id;
+    const body = document.createElement("span");
+    const heading = document.createElement("strong");
+    heading.textContent = rule.rule_id;
+    const template = document.createElement("span");
+    template.className = "policy-rule-picker-template";
+    template.textContent = templateDescriptions[rule.template_key] || rule.template_key;
+    const description = document.createElement("span");
+    description.className = "policy-rule-picker-description";
+    description.textContent = String(rule.description || "").trim() || "未说明";
+    body.append(heading, template, description);
+    item.append(checkbox, body);
+    policyRulePickerList.append(item);
+  }
+  confirmPolicyRulePicker.disabled = !rules.length;
+}
+function openPolicyRulePicker(rail) {
+  if (!getPolicyGraphDraft() || !supportedTemplatesByRail[rail]) return;
+  pendingPolicyBindingRail = rail;
+  renderPolicyRulePicker(rail);
+  policyRulePickerDialog.showModal();
+}
+function addSelectedPolicyRules() {
+  const rail = pendingPolicyBindingRail;
+  const draft = getPolicyGraphDraft();
+  if (!rail || !draft) return;
+  const selectedRuleIds = [...policyRulePickerList.querySelectorAll("input:checked")]
+    .map((input) => input.value);
+  if (!selectedRuleIds.length) {
+    policyRulePickerStatus.textContent = "请至少选择一条规则。";
+    return;
+  }
+  const availableRuleIds = new Set(availableRulesForPolicyRail(rail).map((rule) => rule.rule_id));
+  const validRuleIds = selectedRuleIds.filter((ruleId) => availableRuleIds.has(ruleId));
+  if (!validRuleIds.length) {
+    policyRulePickerStatus.textContent = "可添加规则已变化，请重新选择。";
+    renderPolicyRulePicker(rail);
+    return;
+  }
+  for (const ruleId of validRuleIds) {
+    draft.bindings.push({ rule_id: ruleId, rail, enabled: true });
+    markPolicyGraphNodeDirty(ruleId);
+  }
+  policyRulePickerDialog.close();
+  pendingPolicyBindingRail = null;
+  renderPolicyGraph(draft);
+  renderPolicyGraphEditor();
+  setPolicyGraphEditorStatus(`已暂存添加 ${validRuleIds.length} 条规则；点击“保存策略”后写入快照。`);
+}
 function renderPolicyGraphStepEditor(rail) {
   const definition = policyStepDefinition(rail);
   const editor = document.createElement("section");
@@ -1779,6 +1863,12 @@ function renderPolicyGraphStepEditor(rail) {
     grid.append(createPolicyGraphEditorField(labelText, policyStepSettingHints[key], control));
   }
   editor.append(grid);
+  const addRulesButton = document.createElement("button");
+  addRulesButton.type = "button";
+  addRulesButton.className = "button-secondary policy-graph-editor-action";
+  addRulesButton.textContent = "添加已有规则";
+  addRulesButton.addEventListener("click", () => openPolicyRulePicker(rail));
+  editor.append(addRulesButton);
   return editor;
 }
 function renderPolicyGraphEditor() {
@@ -2498,6 +2588,14 @@ cancelPolicyBindingRemove.addEventListener("click", () => {
   confirmPolicyBindingRemoveDialog.close();
 });
 confirmPolicyBindingRemove.addEventListener("click", removePolicyBinding);
+cancelPolicyRulePicker.addEventListener("click", () => {
+  pendingPolicyBindingRail = null;
+  policyRulePickerDialog.close();
+});
+confirmPolicyRulePicker.addEventListener("click", addSelectedPolicyRules);
+policyRulePickerDialog.addEventListener("cancel", () => {
+  pendingPolicyBindingRail = null;
+});
 closePolicySaveIssues.addEventListener("click", () => policySaveIssuesDialog.close());
 if (window.ResizeObserver) {
   new window.ResizeObserver(() => {
