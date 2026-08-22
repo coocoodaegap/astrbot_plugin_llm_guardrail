@@ -1415,6 +1415,59 @@ function createPolicyGraphEditorField(labelText, hintText, control, fullWidth = 
   label.append(control);
   return label;
 }
+function policyRuleBusinessValue(field, value) {
+  if (field.type === "boolean") return value ? "已启用" : "未启用";
+  if (field.type === "select") {
+    const option = (field.options || []).find(([optionValue]) => optionValue === value);
+    return option ? option[1] : String(value ?? "未设置");
+  }
+  if (field.type === "list") {
+    const values = Array.isArray(value) ? value.filter((item) => String(item).trim()) : [];
+    return values.length ? values.join("\n") : "未设置";
+  }
+  const text = String(value ?? "").trim();
+  return text || "未设置";
+}
+function renderPolicyRuleBusinessSummary(rule) {
+  const section = document.createElement("section");
+  section.className = "policy-rule-business-summary";
+  const title = document.createElement("h5");
+  title.textContent = "规则业务参数";
+  const note = document.createElement("p");
+  note.textContent = "规则本体参数仅供核对；如需修改，可直接进入规则库编辑。";
+  const grid = document.createElement("div");
+  grid.className = "policy-rule-business-grid";
+  const config = rule?.template_config || {};
+  const fields = templateParameterFields[rule?.template_key] || [];
+  for (const field of fields) {
+    const item = document.createElement("div");
+    item.className = "policy-rule-business-field";
+    if (field.fullWidth || field.type === "list" || field.type === "text") item.classList.add("full-width");
+    const label = document.createElement("strong");
+    label.textContent = field.label;
+    const value = document.createElement("pre");
+    value.textContent = policyRuleBusinessValue(field, templateConfigValue(config, field));
+    item.append(label, value);
+    grid.append(item);
+  }
+  if (!fields.length) {
+    const empty = document.createElement("p");
+    empty.className = "policy-graph-editor-note";
+    empty.textContent = "该模板暂未定义可展示的业务参数。";
+    section.append(title, note, empty);
+  } else section.append(title, note, grid);
+  const openRuleButton = document.createElement("button");
+  openRuleButton.type = "button";
+  openRuleButton.className = "button-secondary policy-graph-editor-action policy-rule-business-action";
+  openRuleButton.textContent = "打开规则本体";
+  openRuleButton.addEventListener("click", () => {
+    switchTab("rules");
+    openRule(rule.rule_id);
+    renderRuleList();
+  });
+  section.append(openRuleButton);
+  return section;
+}
 function policyStepControlValue(type, control) {
   if (type === "boolean") return control.checked;
   if (type === "provider") return control.providerValue();
@@ -1511,6 +1564,7 @@ function renderPolicyGraphNodeEditor(node) {
     summary.append(item);
   }
   editor.append(summary);
+  if (rule) editor.append(renderPolicyRuleBusinessSummary(rule));
   const grid = document.createElement("div");
   grid.className = "form-grid";
   const enabled = document.createElement("input");
@@ -1593,18 +1647,6 @@ function renderPolicyGraphNodeEditor(node) {
     logicNote.className = "policy-graph-editor-note is-warning";
     logicNote.textContent = `逻辑门输入：${inputs.length ? inputs.join("、") : "未设置"}。逻辑门输入属于规则本体，修改会影响引用该规则的所有策略。`;
     editor.append(logicNote);
-  }
-  if (rule) {
-    const openRuleButton = document.createElement("button");
-    openRuleButton.type = "button";
-    openRuleButton.className = "button-secondary policy-graph-editor-action";
-    openRuleButton.textContent = "打开规则本体";
-    openRuleButton.addEventListener("click", () => {
-      switchTab("rules");
-      openRule(rule.rule_id);
-      renderRuleList();
-    });
-    editor.append(openRuleButton);
   }
   if (node.issues.length) {
     const issue = document.createElement("p");

@@ -121,6 +121,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function renderPolicyGraphEditor", javascript)
         self.assertIn("function renderPolicyGraphNodeEditor", javascript)
         self.assertIn("function renderPolicyGraphStepEditor", javascript)
+        self.assertIn("function renderPolicyRuleBusinessSummary", javascript)
         self.assertIn("function policyGraphRailAt", javascript)
         self.assertIn("function beginPolicyDependencySelection", javascript)
         self.assertIn("function policyGraphDependencyCandidates", javascript)

@@ -576,6 +576,65 @@ button:disabled {
     border-radius: 999px
 }
 
+.policy-rule-business-summary {
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #dce6f2;
+    border-radius: 8px
+}
+
+.policy-rule-business-summary h5 {
+    margin: 0 0 4px;
+    color: #334155;
+    font-size: .88rem
+}
+
+.policy-rule-business-summary > p {
+    margin: 0 0 10px;
+    color: #718096;
+    font-size: .8rem;
+    line-height: 1.5
+}
+
+.policy-rule-business-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px
+}
+
+.policy-rule-business-field {
+    min-width: 0;
+    padding: 8px 9px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px
+}
+
+.policy-rule-business-field.full-width {
+    grid-column: 1 / -1
+}
+
+.policy-rule-business-field strong {
+    display: block;
+    margin-bottom: 4px;
+    color: #526174;
+    font-size: .78rem
+}
+
+.policy-rule-business-field pre {
+    max-height: 132px;
+    margin: 0;
+    overflow: auto;
+    color: #1e293b;
+    font: .81rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere
+}
+
+.policy-rule-business-action {
+    margin-top: 10px
+}
+
 .policy-graph-editor-note {
     margin: 0;
     padding: 9px 11px;
@@ -1183,6 +1242,14 @@ textarea {
 
     .form-grid {
         grid-template-columns: 1fr
+    }
+
+    .policy-rule-business-grid {
+        grid-template-columns: 1fr
+    }
+
+    .policy-rule-business-field.full-width {
+        grid-column: auto
     }
 
     .form-grid label:first-child {
