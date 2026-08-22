@@ -31,7 +31,8 @@ const status = $("status"),
   cancelRuleCreation = $("cancel-rule-creation"),
   confirmRuleCreation = $("confirm-rule-creation"),
   newRuleId = $("new-rule-id"),
-  newRuleDescription = $("new-rule-description");
+  newRuleDescription = $("new-rule-description"),
+  ruleCreationStatus = $("rule-creation-status");
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
@@ -664,6 +665,7 @@ function startRuleCreation() {
   selectedNewTemplate = null;
   newRuleId.value = "";
   newRuleDescription.value = "";
+  ruleCreationStatus.textContent = "";
   ruleLibraryPanel.hidden = true;
   ruleCreationPanel.hidden = false;
   newRule.disabled = true;
@@ -677,19 +679,22 @@ function cancelNewRuleCreation() {
   newRule.disabled = false;
   saveRuleLibrary.disabled = false;
   selectedNewTemplate = null;
+  ruleCreationStatus.textContent = "";
 }
 function createRule() {
   const id = newRuleId.value.trim();
   if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) {
-    ruleStatus.textContent = "规则 ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
+    ruleCreationStatus.textContent = "规则 ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
+    newRuleId.focus();
     return;
   }
   if (ruleLibrary.rules.some((rule) => rule.rule_id === id)) {
-    ruleStatus.textContent = "规则 ID 已存在。";
+    ruleCreationStatus.textContent = "规则 ID 已存在。";
+    newRuleId.focus();
     return;
   }
   if (!selectedNewTemplate) {
-    ruleStatus.textContent = "请先选择规则类型。";
+    ruleCreationStatus.textContent = "请先选择规则类型。";
     return;
   }
   ruleLibrary.rules.push({

@@ -359,6 +359,27 @@ button:disabled {
     margin-bottom: 18px
 }
 
+.form-status,
+.danger-notice {
+    min-height: 20px;
+    margin: -6px 0 14px;
+    padding: 8px 10px;
+    color: #b42318;
+    background: #fef3f2;
+    border: 1px solid #fecdca;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.45
+}
+
+.form-status:empty {
+    display: none
+}
+
+.danger-notice {
+    margin-top: 12px
+}
+
 .creation-fields label:first-child {
     grid-column: auto
 }

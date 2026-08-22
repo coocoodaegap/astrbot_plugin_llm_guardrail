@@ -79,6 +79,7 @@
           <label>规则 ID<input id="new-rule-id" autocomplete="off" placeholder="例如 input_keywords" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
           <label>规则描述<input id="new-rule-description" autocomplete="off" placeholder="简述这条规则的用途" /></label>
         </div>
+        <p id="rule-creation-status" class="form-status" aria-live="polite"></p>
         <div id="template-options" class="template-options" role="listbox" aria-label="规则类型"></div>
         <div class="creation-actions"><button id="confirm-rule-creation" type="button">创建规则</button></div>
       </section>
@@ -87,12 +88,12 @@
           <div class="form-heading"><div><p class="eyebrow">SAVE AS</p><h3>另存为新规则</h3><p>新规则会继承当前模板类型和业务参数。</p></div></div>
           <label>新规则 ID<input id="save-as-rule-id" autocomplete="off" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
           <label class="full-width">规则描述<input id="save-as-rule-description" autocomplete="off" /></label>
-          <p id="save-as-rule-status" class="muted" aria-live="polite"></p>
+          <p id="save-as-rule-status" class="form-status" aria-live="polite"></p>
           <div class="dialog-actions"><button id="cancel-save-rule-as" type="button" class="button-secondary">取消</button><button id="confirm-save-rule-as" type="button">另存为</button></div>
         </form>
       </dialog>
       <dialog id="confirm-rule-delete-dialog" class="confirm-rule-delete-dialog">
-        <div><p class="eyebrow">DELETE RULE</p><h3>确认删除规则？</h3><p id="confirm-rule-delete-message" class="muted"></p></div>
+        <div><p class="eyebrow">DELETE RULE</p><h3>确认删除规则？</h3><p id="confirm-rule-delete-message" class="danger-notice"></p></div>
         <div class="dialog-actions"><button id="cancel-rule-delete" type="button" class="button-secondary">取消</button><button id="confirm-rule-delete" type="button" class="danger-button">删除规则</button></div>
       </dialog>
     </section>
