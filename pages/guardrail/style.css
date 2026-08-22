@@ -288,6 +288,65 @@ button:disabled {
     text-align: center;
 }
 
+.open-rule-editors {
+    display: grid;
+    gap: 16px
+}
+
+.open-rule-editor {
+    padding: 16px;
+    border: 1px solid #dfe6f0;
+    border-radius: 10px;
+    background: #fbfdff
+}
+
+.open-rule-editor.is-dirty {
+    border-color: #8ab1fb
+}
+
+.open-rule-editor .form-heading p {
+    margin-bottom: 0
+}
+
+.save-rule-as-dialog {
+    width: min(440px, calc(100vw - 32px));
+    border: 1px solid #dfe6f0;
+    border-radius: 12px;
+    padding: 20px;
+    color: #172033;
+    background: #fff;
+    box-shadow: 0 20px 45px rgb(15 23 42 / 20%)
+}
+
+.confirm-rule-delete-dialog {
+    width: min(400px, calc(100vw - 32px));
+    border: 1px solid #dfe6f0;
+    border-radius: 12px;
+    padding: 20px;
+    color: #172033;
+    background: #fff;
+    box-shadow: 0 20px 45px rgb(15 23 42 / 20%)
+}
+
+.confirm-rule-delete-dialog::backdrop {
+    background: rgb(15 23 42 / 38%)
+}
+
+.save-rule-as-dialog::backdrop {
+    background: rgb(15 23 42 / 38%)
+}
+
+.save-rule-as-dialog .full-width {
+    display: grid
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px
+}
+
 .rule-creation-panel {
     padding: 20px;
     background: #fff;

@@ -56,7 +56,7 @@
           <p>规则本体可复用于多个策略；Rail、依赖与命中动作在“策略编排”中配置。</p>
         </div>
         <div class="button-group"><button id="new-rule" type="button" class="button-secondary">新建规则</button><button
-            id="save-rule-library" type="button">保存规则库</button></div>
+            id="save-rule-library" type="button">保存所有打开规则</button></div>
       </div>
       <p id="rule-library-status" class="muted" aria-live="polite"></p>
       <div id="rule-workspace" class="rule-workspace">
@@ -66,18 +66,7 @@
         </aside>
         <section class="rule-editor-panel" aria-label="规则编辑器">
           <div id="rule-empty-state" class="empty-state">选择左侧规则，或新建一条规则。</div>
-          <form id="rule-editor" hidden>
-            <div class="form-heading">
-              <div>
-                <h3 id="rule-editor-title">编辑规则</h3>
-                <p>保存时将先校验整套规则库。</p>
-              </div><button id="delete-rule" type="button" class="danger-button">删除</button>
-            </div>
-            <div class="form-grid"><label>规则描述<input id="rule-description" autocomplete="off" placeholder="简述这条规则的用途" /></label><label>默认优先级<input id="rule-priority" type="number"
-                  value="100" /></label><label>默认命中动作<select id="rule-action-hit"></select></label><label>默认错误动作<select
-                  id="rule-action-error"></select></label></div><label class="full-width">模板参数（JSON）<textarea
-                id="rule-template-config" spellcheck="false" aria-label="模板参数 JSON"></textarea></label>
-          </form>
+          <div id="open-rule-editors" class="open-rule-editors"></div>
         </section>
       </div>
       </div>
@@ -93,6 +82,19 @@
         <div id="template-options" class="template-options" role="listbox" aria-label="规则类型"></div>
         <div class="creation-actions"><button id="confirm-rule-creation" type="button">创建规则</button></div>
       </section>
+      <dialog id="save-rule-as-dialog" class="save-rule-as-dialog">
+        <form method="dialog">
+          <div class="form-heading"><div><p class="eyebrow">SAVE AS</p><h3>另存为新规则</h3><p>新规则会继承当前模板类型和业务参数。</p></div></div>
+          <label>新规则 ID<input id="save-as-rule-id" autocomplete="off" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
+          <label class="full-width">规则描述<input id="save-as-rule-description" autocomplete="off" /></label>
+          <p id="save-as-rule-status" class="muted" aria-live="polite"></p>
+          <div class="dialog-actions"><button id="cancel-save-rule-as" type="button" class="button-secondary">取消</button><button id="confirm-save-rule-as" type="button">另存为</button></div>
+        </form>
+      </dialog>
+      <dialog id="confirm-rule-delete-dialog" class="confirm-rule-delete-dialog">
+        <div><p class="eyebrow">DELETE RULE</p><h3>确认删除规则？</h3><p id="confirm-rule-delete-message" class="muted"></p></div>
+        <div class="dialog-actions"><button id="cancel-rule-delete" type="button" class="button-secondary">取消</button><button id="confirm-rule-delete" type="button" class="danger-button">删除规则</button></div>
+      </dialog>
     </section>
     <section class="tab-panel" id="panel-policies" role="tabpanel" aria-labelledby="tab-policies" data-panel="policies"
       hidden>

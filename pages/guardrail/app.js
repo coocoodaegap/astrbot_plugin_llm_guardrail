@@ -14,20 +14,24 @@ const status = $("status"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationPanel = $("rule-creation-panel"),
   templateOptions = $("template-options"),
-  ruleEditor = $("rule-editor"),
   ruleEmptyState = $("rule-empty-state"),
+  openRuleEditors = $("open-rule-editors"),
+  saveRuleAsDialog = $("save-rule-as-dialog"),
+  saveAsRuleId = $("save-as-rule-id"),
+  saveAsRuleDescription = $("save-as-rule-description"),
+  saveAsRuleStatus = $("save-as-rule-status"),
+  cancelSaveRuleAs = $("cancel-save-rule-as"),
+  confirmSaveRuleAs = $("confirm-save-rule-as"),
+  confirmRuleDeleteDialog = $("confirm-rule-delete-dialog"),
+  confirmRuleDeleteMessage = $("confirm-rule-delete-message"),
+  cancelRuleDelete = $("cancel-rule-delete"),
+  confirmRuleDelete = $("confirm-rule-delete"),
   saveRuleLibrary = $("save-rule-library"),
   newRule = $("new-rule"),
   cancelRuleCreation = $("cancel-rule-creation"),
   confirmRuleCreation = $("confirm-rule-creation"),
   newRuleId = $("new-rule-id"),
-  newRuleDescription = $("new-rule-description"),
-  deleteRule = $("delete-rule"),
-  ruleDescription = $("rule-description"),
-  rulePriority = $("rule-priority"),
-  ruleActionHit = $("rule-action-hit"),
-  ruleActionError = $("rule-action-error"),
-  ruleTemplateConfig = $("rule-template-config");
+  newRuleDescription = $("new-rule-description");
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
@@ -116,7 +120,9 @@ const systemOptionDescriptions = {
 };
 let currentRevision = null,
   ruleLibrary = { rules: [] },
-  selectedRuleId = null,
+  openRuleIds = [],
+  saveAsSourceRuleId = null,
+  pendingRuleDeletionId = null,
   selectedNewTemplate = null,
   systemSettingsSchema = {},
   registeredProviders = [];
@@ -139,8 +145,6 @@ function ensureOption(select, value) {
     select.append(option);
   }
 }
-populateRuleActionOptions(ruleActionHit, hitActions);
-populateRuleActionOptions(ruleActionError, errorActions);
 function switchTab(name) {
   document.querySelectorAll("[data-tab]").forEach((tab) => {
     const active = tab.dataset.tab === name;
@@ -438,32 +442,6 @@ function collectSystemSettings() {
 function ruleSummary(rule) {
   return String(rule.description || "").trim() || "未说明";
 }
-function selectedRule() {
-  return (
-    ruleLibrary.rules.find((rule) => rule.rule_id === selectedRuleId) || null
-  );
-}
-function renderRuleEditor() {
-  const rule = selectedRule(),
-    hasRule = Boolean(rule);
-  ruleEditor.hidden = !hasRule;
-  ruleEmptyState.hidden = hasRule;
-  if (!rule) return;
-  $("rule-editor-title").textContent = `编辑：${rule.rule_id}`;
-  ruleDescription.value = rule.description || "";
-  ensureOption(ruleActionHit, rule.default_action_on_hit);
-  ensureOption(ruleActionError, rule.default_action_on_error);
-  rulePriority.value = String(
-    Number.isInteger(rule.default_priority) ? rule.default_priority : 100,
-  );
-  ruleActionHit.value = rule.default_action_on_hit || "default";
-  ruleActionError.value = rule.default_action_on_error || "default";
-  ruleTemplateConfig.value = JSON.stringify(
-    rule.template_config || {},
-    null,
-    2,
-  );
-}
 function renderRuleList() {
   ruleList.replaceChildren();
   ruleCount.textContent = String(ruleLibrary.rules.length);
@@ -474,7 +452,7 @@ function renderRuleList() {
       chip = document.createElement("span");
     item.type = "button";
     item.className = "rule-card";
-    item.classList.toggle("is-selected", rule.rule_id === selectedRuleId);
+    item.classList.toggle("is-selected", openRuleIds.includes(rule.rule_id));
     title.textContent = rule.rule_id || "未命名规则";
     summaryText.textContent = ruleSummary(rule);
     chip.className = "template-chip";
@@ -482,20 +460,25 @@ function renderRuleList() {
       templateDescriptions[rule.template_key] || rule.template_key || "未选择模板";
     item.append(title, summaryText, chip);
     item.addEventListener("click", () => {
-      selectedRuleId = rule.rule_id;
+      openRule(rule.rule_id);
       renderRuleList();
-      renderRuleEditor();
     });
     ruleList.append(item);
   }
-  renderRuleEditor();
 }
-function syncSelectedRule() {
-  const rule = selectedRule();
+function createActionSelect(values, value) {
+  const select = document.createElement("select");
+  populateRuleActionOptions(select, values);
+  ensureOption(select, value);
+  select.value = value || "default";
+  return select;
+}
+function syncRuleEditor(editor) {
+  const rule = ruleLibrary.rules.find((item) => item.rule_id === editor.dataset.ruleId);
   if (!rule) return true;
   let templateConfig;
   try {
-    templateConfig = JSON.parse(ruleTemplateConfig.value);
+    templateConfig = JSON.parse(editor.querySelector("textarea").value);
   } catch (error) {
     ruleStatus.textContent = `模板参数 JSON 格式错误：${error instanceof Error ? error.message : String(error)}`;
     return false;
@@ -508,13 +491,153 @@ function syncSelectedRule() {
     ruleStatus.textContent = "模板参数必须是 JSON 对象。";
     return false;
   }
-  const priority = Number.parseInt(rulePriority.value, 10);
-  rule.description = ruleDescription.value.trim();
+  const priority = Number.parseInt(editor.querySelector("input").value, 10);
+  const selects = editor.querySelectorAll("select");
+  rule.description = editor.querySelector(".rule-description").value.trim();
   rule.default_priority = Number.isNaN(priority) ? 100 : priority;
-  rule.default_action_on_hit = ruleActionHit.value;
-  rule.default_action_on_error = ruleActionError.value;
+  rule.default_action_on_hit = selects[0].value;
+  rule.default_action_on_error = selects[1].value;
   rule.template_config = templateConfig;
   return true;
+}
+function createRuleEditor(rule) {
+  const editor = document.createElement("article");
+  editor.className = "open-rule-editor";
+  editor.dataset.ruleId = rule.rule_id;
+  const heading = document.createElement("div");
+  heading.className = "form-heading";
+  const headingText = document.createElement("div");
+  const title = document.createElement("h3");
+  const template = document.createElement("p");
+  title.textContent = rule.rule_id;
+  template.textContent = templateDescriptions[rule.template_key] || rule.template_key;
+  headingText.append(title, template);
+  const actions = document.createElement("div");
+  actions.className = "button-group";
+  const save = document.createElement("button");
+  save.type = "button"; save.className = "rule-card-save"; save.textContent = "保存";
+  save.addEventListener("click", () => saveRuleEditor(rule.rule_id));
+  const saveAs = document.createElement("button");
+  saveAs.type = "button"; saveAs.className = "button-secondary"; saveAs.textContent = "另存为";
+  saveAs.addEventListener("click", () => openSaveAsDialog(rule.rule_id));
+  const remove = document.createElement("button");
+  remove.type = "button"; remove.className = "danger-button"; remove.textContent = "删除";
+  remove.addEventListener("click", () => requestRuleDeletion(rule.rule_id));
+  const close = document.createElement("button");
+  close.type = "button"; close.className = "button-secondary"; close.textContent = "关闭";
+  close.addEventListener("click", () => closeRuleEditor(rule.rule_id));
+  actions.append(save, saveAs, close, remove); heading.append(headingText, actions);
+  const grid = document.createElement("div"); grid.className = "form-grid";
+  const descriptionLabel = document.createElement("label"); descriptionLabel.textContent = "规则描述";
+  const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(description);
+  const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
+  const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(priority);
+  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createActionSelect(hitActions, rule.default_action_on_hit));
+  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createActionSelect(errorActions, rule.default_action_on_error));
+  grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
+  const configLabel = document.createElement("label"); configLabel.className = "full-width"; configLabel.textContent = "模板参数（JSON）";
+  const config = document.createElement("textarea"); config.spellcheck = false; config.value = JSON.stringify(rule.template_config || {}, null, 2); configLabel.append(config);
+  editor.append(heading, grid, configLabel);
+  editor.addEventListener("input", () => editor.classList.add("is-dirty"));
+  editor.addEventListener("change", () => editor.classList.add("is-dirty"));
+  return editor;
+}
+function openRule(ruleId, afterRuleId = null) {
+  if (openRuleIds.includes(ruleId)) {
+    openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`)?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  const rule = ruleLibrary.rules.find((item) => item.rule_id === ruleId);
+  if (!rule) return;
+  const editor = createRuleEditor(rule);
+  const sourceEditor = afterRuleId && openRuleEditors.querySelector(`[data-rule-id="${afterRuleId}"]`);
+  if (sourceEditor) sourceEditor.after(editor); else openRuleEditors.append(editor);
+  const index = afterRuleId ? openRuleIds.indexOf(afterRuleId) + 1 : openRuleIds.length;
+  openRuleIds.splice(index, 0, ruleId);
+  ruleEmptyState.hidden = true;
+}
+function closeRuleEditor(ruleId) {
+  const editor = openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`);
+  if (!editor) return;
+  openRuleIds = openRuleIds.filter((id) => id !== ruleId);
+  editor.remove();
+  ruleEmptyState.hidden = openRuleIds.length > 0;
+  renderRuleList();
+}
+async function persistRuleLibrary(successMessage) {
+  if (!Number.isInteger(currentRevision)) return false;
+  try {
+    const result = await bridge.apiPost("save_rule_library", {
+      expected_revision: currentRevision,
+      rule_library: ruleLibrary,
+    });
+    if (!result.success) {
+      ruleStatus.textContent = result.detail || result.error || "保存失败。";
+      return false;
+    }
+    currentRevision = result.revision;
+    ruleStatus.textContent = successMessage(result.revision);
+    return true;
+  } catch (error) {
+    ruleStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+    return false;
+  }
+}
+async function saveRuleEditor(ruleId) {
+  const editor = openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`);
+  if (!editor || !syncRuleEditor(editor)) return;
+  const button = editor.querySelector(".rule-card-save");
+  button.disabled = true;
+  const saved = await persistRuleLibrary((revision) => `规则“${ruleId}”已保存为 revision ${revision}。`);
+  button.disabled = false;
+  if (!saved) return;
+  editor.classList.remove("is-dirty");
+  renderRuleList();
+}
+function requestRuleDeletion(ruleId) {
+  pendingRuleDeletionId = ruleId;
+  confirmRuleDeleteMessage.textContent = `规则“${ruleId}”会从待保存规则库中移除；若策略仍绑定它，保存会被拒绝。`;
+  confirmRuleDeleteDialog.showModal();
+}
+function deleteRule(ruleId) {
+  ruleLibrary.rules = ruleLibrary.rules.filter((rule) => rule.rule_id !== ruleId);
+  openRuleIds = openRuleIds.filter((id) => id !== ruleId);
+  openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`)?.remove();
+  ruleEmptyState.hidden = openRuleIds.length > 0;
+  ruleStatus.textContent = "已从待保存的规则库移除规则。若策略仍绑定此规则，后端会拒绝保存。";
+  renderRuleList();
+}
+function openSaveAsDialog(ruleId) {
+  const editor = openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`);
+  if (!editor || !syncRuleEditor(editor)) return;
+  const source = ruleLibrary.rules.find((rule) => rule.rule_id === ruleId);
+  if (!source) return;
+  saveAsSourceRuleId = ruleId;
+  saveAsRuleId.value = "";
+  saveAsRuleDescription.value = source.description || "";
+  saveAsRuleStatus.textContent = "";
+  saveRuleAsDialog.showModal();
+  saveAsRuleId.focus();
+}
+async function saveRuleAs() {
+  const id = saveAsRuleId.value.trim();
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) { saveAsRuleStatus.textContent = "规则 ID 格式无效。"; return; }
+  if (ruleLibrary.rules.some((rule) => rule.rule_id === id)) { saveAsRuleStatus.textContent = "规则 ID 已存在。"; return; }
+  const source = ruleLibrary.rules.find((rule) => rule.rule_id === saveAsSourceRuleId);
+  if (!source) { saveAsRuleStatus.textContent = "原规则已不存在。"; return; }
+  const copy = { ...source, rule_id: id, description: saveAsRuleDescription.value.trim(), template_config: structuredClone(source.template_config || {}) };
+  ruleLibrary.rules.push(copy);
+  confirmSaveRuleAs.disabled = true;
+  const saved = await persistRuleLibrary((revision) => `新规则“${id}”已保存为 revision ${revision}。`);
+  confirmSaveRuleAs.disabled = false;
+  if (!saved) {
+    ruleLibrary.rules = ruleLibrary.rules.filter((rule) => rule !== copy);
+    return;
+  }
+  openRuleEditors.querySelector(`[data-rule-id="${source.rule_id}"]`)?.classList.remove("is-dirty");
+  saveRuleAsDialog.close();
+  openRule(id, source.rule_id);
+  renderRuleList();
 }
 function renderTemplateOptions() {
   templateOptions.replaceChildren();
@@ -538,7 +661,6 @@ function renderTemplateOptions() {
   }
 }
 function startRuleCreation() {
-  if (!syncSelectedRule()) return;
   selectedNewTemplate = null;
   newRuleId.value = "";
   newRuleDescription.value = "";
@@ -579,18 +701,9 @@ function createRule() {
     default_action_on_hit: "default",
     default_action_on_error: "default",
   });
-  selectedRuleId = id;
   ruleStatus.textContent = "已新建规则，保存后才会发布。";
   cancelNewRuleCreation();
-  renderRuleList();
-}
-function deleteSelectedRule() {
-  const rule = selectedRule();
-  if (!rule) return;
-  ruleLibrary.rules = ruleLibrary.rules.filter((item) => item !== rule);
-  selectedRuleId = ruleLibrary.rules[0]?.rule_id || null;
-  ruleStatus.textContent =
-    "已从待保存的规则库移除规则。若策略仍绑定此规则，后端会拒绝保存。";
+  openRule(id);
   renderRuleList();
 }
 async function refresh() {
@@ -606,13 +719,16 @@ async function refresh() {
   renderDiagnostics(diagnosticsResult.diagnostics || []);
   renderSystemSettings(systemSettingsResult);
   systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
+  const previousOpenRuleIds = [...openRuleIds];
   ruleLibrary = {
     rules: Array.isArray(ruleResult.rule_library?.rules)
       ? ruleResult.rule_library.rules
       : [],
   };
-  if (!ruleLibrary.rules.some((rule) => rule.rule_id === selectedRuleId))
-    selectedRuleId = ruleLibrary.rules[0]?.rule_id || null;
+  openRuleEditors.replaceChildren();
+  openRuleIds = [];
+  for (const ruleId of previousOpenRuleIds) openRule(ruleId);
+  ruleEmptyState.hidden = openRuleIds.length > 0;
   renderRuleList();
   const validation = ruleResult.validation || {
       warnings: [],
@@ -630,26 +746,22 @@ async function refresh() {
 newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
-deleteRule.addEventListener("click", deleteSelectedRule);
+cancelSaveRuleAs.addEventListener("click", () => saveRuleAsDialog.close());
+confirmSaveRuleAs.addEventListener("click", saveRuleAs);
+cancelRuleDelete.addEventListener("click", () => confirmRuleDeleteDialog.close());
+confirmRuleDelete.addEventListener("click", () => {
+  if (pendingRuleDeletionId) deleteRule(pendingRuleDeletionId);
+  pendingRuleDeletionId = null;
+  confirmRuleDeleteDialog.close();
+});
 saveRuleLibrary.addEventListener("click", async () => {
-  if (!Number.isInteger(currentRevision) || !syncSelectedRule()) return;
+  if (!Number.isInteger(currentRevision) || ![...openRuleEditors.children].every(syncRuleEditor)) return;
   saveRuleLibrary.disabled = true;
-  try {
-    const result = await bridge.apiPost("save_rule_library", {
-      expected_revision: currentRevision,
-      rule_library: ruleLibrary,
-    });
-    if (!result.success) {
-      ruleStatus.textContent = result.detail || result.error || "保存失败。";
-      return;
-    }
-    ruleStatus.textContent = `规则库已发布为 revision ${result.revision}。`;
-    await refresh();
-  } catch (error) {
-    ruleStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
-  } finally {
-    saveRuleLibrary.disabled = false;
-  }
+  const saved = await persistRuleLibrary((revision) => `已保存当前所有打开规则为 revision ${revision}。`);
+  saveRuleLibrary.disabled = false;
+  if (!saved) return;
+  [...openRuleEditors.children].forEach((editor) => editor.classList.remove("is-dirty"));
+  renderRuleList();
 });
 saveSystemSettings.addEventListener("click", async () => {
   if (!Number.isInteger(currentRevision)) {
