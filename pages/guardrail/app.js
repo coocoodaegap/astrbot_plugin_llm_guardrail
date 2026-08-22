@@ -52,6 +52,11 @@ const status = $("status"),
   confirmPolicyDeleteMessage = $("confirm-policy-delete-message"),
   cancelPolicyDelete = $("cancel-policy-delete"),
   confirmPolicyDelete = $("confirm-policy-delete"),
+  policyDependencyModeDialog = $("policy-dependency-mode-dialog"),
+  policyDependencyModeDescription = $("policy-dependency-mode-description"),
+  policyDependencyMode = $("policy-dependency-mode"),
+  cancelPolicyDependencyMode = $("cancel-policy-dependency-mode"),
+  confirmPolicyDependencyMode = $("confirm-policy-dependency-mode"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationDialog = $("rule-creation-dialog"),
@@ -209,6 +214,8 @@ let currentRevision = null,
     hiddenNodeStates: new Set(),
     selectedNodeId: null,
     selectedRail: null,
+    dependencySelection: null,
+    pendingDependencySourceId: null,
     draft: null,
     renderFrame: 0,
     animationFrame: 0,
@@ -1131,6 +1138,88 @@ function graphGlowForNode(node) {
   if (node.state === "warning") return "#ffbe4d";
   return "#ffffff";
 }
+function policyGraphDependencyCandidates(dependentId) {
+  const model = policyGraphState.model;
+  const dependent = model?.nodeById.get(dependentId);
+  if (!model || !dependent) return new Set();
+  const outgoing = new Map(model.nodes.map((node) => [node.id, []]));
+  for (const edge of model.edges) {
+    // Replacing the current ordinary dependency must not disqualify its own target.
+    if (edge.kind === "depend_on" && edge.targetId === dependentId) continue;
+    if (edge.source && edge.target) outgoing.get(edge.source.id)?.push(edge.target.id);
+  }
+  const wouldCreateCycle = (sourceId) => {
+    const pending = [dependentId];
+    const visited = new Set();
+    while (pending.length) {
+      const current = pending.pop();
+      if (current === sourceId) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(outgoing.get(current) || []));
+    }
+    return false;
+  };
+  return new Set(model.nodes.filter((node) => (
+    node.id !== dependentId
+      && node.enabled
+      && node.step <= dependent.step
+      && !wouldCreateCycle(node.id)
+  )).map((node) => node.id));
+}
+function cancelPolicyDependencySelection(message = "", isError = false) {
+  policyGraphState.dependencySelection = null;
+  policyGraphState.pendingDependencySourceId = null;
+  policyGraphCanvas.classList.remove("is-dependency-selecting");
+  renderPolicyGraphEditor();
+  if (message) setPolicyGraphEditorStatus(message, isError);
+  schedulePolicyGraphRender();
+}
+function beginPolicyDependencySelection(dependentId) {
+  const candidates = policyGraphDependencyCandidates(dependentId);
+  if (!candidates.size) {
+    setPolicyGraphEditorStatus("没有可用的依赖项：候选规则必须已启用、位于当前或更早的 Step，且不能形成循环依赖。", true);
+    return;
+  }
+  policyGraphState.dependencySelection = { dependentId };
+  policyGraphState.pendingDependencySourceId = null;
+  policyGraphCanvas.classList.add("is-dependency-selecting");
+  policyGraphState.selectedNodeId = dependentId;
+  policyGraphState.selectedRail = null;
+  renderPolicyGraphEditor();
+  setPolicyGraphEditorStatus(`正在选择依赖项：图中高亮的 ${candidates.size} 个节点可被“${dependentId}”依赖。`);
+  schedulePolicyGraphRender();
+}
+function openPolicyDependencyModeDialog(sourceId) {
+  const dependentId = policyGraphState.dependencySelection?.dependentId;
+  if (!dependentId) return;
+  policyGraphState.pendingDependencySourceId = sourceId;
+  policyDependencyMode.value = "matched";
+  policyDependencyModeDescription.textContent = `“${dependentId}” 将依赖 “${sourceId}”。请选择何时允许当前规则继续执行。`;
+  policyDependencyModeDialog.showModal();
+}
+function applyPolicyDependencySelection() {
+  const dependentId = policyGraphState.dependencySelection?.dependentId;
+  const sourceId = policyGraphState.pendingDependencySourceId;
+  const candidates = dependentId ? policyGraphDependencyCandidates(dependentId) : new Set();
+  if (!dependentId || !sourceId || !candidates.has(sourceId)) {
+    policyDependencyModeDialog.close();
+    cancelPolicyDependencySelection("依赖候选已变化，请重新选择。", true);
+    return;
+  }
+  const draft = getPolicyGraphDraft();
+  const binding = draft?.bindings.find((item) => item.rule_id === dependentId);
+  if (!binding) return;
+  const prefix = { matched: "", not_matched: "!", executed: "?" }[policyDependencyMode.value] ?? "";
+  binding.depend_on = `${prefix}${sourceId}`;
+  policyDependencyModeDialog.close();
+  policyGraphState.dependencySelection = null;
+  policyGraphState.pendingDependencySourceId = null;
+  policyGraphCanvas.classList.remove("is-dependency-selecting");
+  renderPolicyGraph(draft);
+  renderPolicyGraphEditor();
+  setPolicyGraphEditorStatus(`已暂存依赖：${dependentId} ← ${binding.depend_on}。点击“保存策略”后写入快照。`);
+}
 function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   if (!isPolicyGraphNodeVisible(node)) return;
   const color = node.state === "disabled" ? "#94a3b8" : node.theme?.color || "#e2e8f0";
@@ -1168,6 +1257,17 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
     context.lineWidth = 1.4;
     context.setLineDash([3, 3]);
     context.lineDashOffset = -phase * 12;
+    context.beginPath();
+    context.arc(node.x, node.y, 13, 0, Math.PI * 2);
+    context.stroke();
+  }
+  const dependentId = policyGraphState.dependencySelection?.dependentId;
+  if (dependentId && node.id !== dependentId && policyGraphDependencyCandidates(dependentId).has(node.id)) {
+    context.shadowBlur = 10;
+    context.shadowColor = "#63e6a0";
+    context.strokeStyle = "#8bf0b9";
+    context.lineWidth = 1.5;
+    context.setLineDash([2, 3]);
     context.beginPath();
     context.arc(node.x, node.y, 13, 0, Math.PI * 2);
     context.stroke();
@@ -1255,6 +1355,7 @@ function renderPolicyGraph(policy, { resetSelection = false } = {}) {
     ? `图中有 ${issues.length} 项需要处理的问题；保存时以后端校验为准。`
     : `共 ${policyGraphState.model.nodes.length} 个节点、${policyGraphState.model.edges.length} 条依赖。`;
   policyGraphCanvas.classList.toggle("is-interactive", policyGraphState.model.nodes.length > 0);
+  policyGraphCanvas.classList.toggle("is-dependency-selecting", Boolean(policyGraphState.dependencySelection));
   updatePolicyGraphAnimation();
 }
 function createPolicyStepControl(type, value, options) {
@@ -1454,9 +1555,38 @@ function renderPolicyGraphNodeEditor(node) {
   const dependencyHint = document.createElement("p");
   dependencyHint.className = "policy-graph-editor-note";
   dependencyHint.textContent = binding.depend_on
-    ? `当前依赖：${binding.depend_on}。依赖线的可视化选择将在下一阶段接入。`
-    : "当前未设置依赖。依赖线的可视化选择将在下一阶段接入。";
+    ? `当前依赖：${binding.depend_on}。可重新选择依赖项或移除当前依赖。`
+    : "当前未设置依赖。选择依赖项后，再在图中点击高亮的候选规则。";
   editor.append(dependencyHint);
+  const dependencyActions = document.createElement("div");
+  dependencyActions.className = "policy-graph-editor-actions";
+  const selectDependencyButton = document.createElement("button");
+  selectDependencyButton.type = "button";
+  selectDependencyButton.className = "button-secondary policy-graph-editor-action";
+  const selectingDependency = policyGraphState.dependencySelection?.dependentId === node.id;
+  selectDependencyButton.textContent = selectingDependency ? "取消选择依赖项" : "选择依赖项";
+  selectDependencyButton.addEventListener("click", () => {
+    if (selectingDependency) cancelPolicyDependencySelection("已取消依赖项选择。");
+    else beginPolicyDependencySelection(node.id);
+  });
+  dependencyActions.append(selectDependencyButton);
+  if (binding.depend_on) {
+    const clearDependencyButton = document.createElement("button");
+    clearDependencyButton.type = "button";
+    clearDependencyButton.className = "button-secondary policy-graph-editor-action";
+    clearDependencyButton.textContent = "移除依赖";
+    clearDependencyButton.addEventListener("click", () => {
+      const draft = getPolicyGraphDraft();
+      const currentBinding = draft?.bindings.find((item) => item.rule_id === node.id);
+      if (!currentBinding) return;
+      delete currentBinding.depend_on;
+      renderPolicyGraph(draft);
+      renderPolicyGraphEditor();
+      setPolicyGraphEditorStatus("已暂存移除依赖；点击“保存策略”后写入快照。");
+    });
+    dependencyActions.append(clearDependencyButton);
+  }
+  editor.append(dependencyActions);
   if (node.isLogicGate) {
     const inputs = graphRuleInputs(rule);
     const logicNote = document.createElement("p");
@@ -2112,6 +2242,18 @@ async function refresh() {
 }
 policyGraphCanvas.addEventListener("click", (event) => {
   const node = policyGraphNodeAt(event.clientX, event.clientY);
+  const dependencySelection = policyGraphState.dependencySelection;
+  if (dependencySelection) {
+    if (node && policyGraphDependencyCandidates(dependencySelection.dependentId).has(node.id)) {
+      openPolicyDependencyModeDialog(node.id);
+    } else if (node) {
+      setPolicyGraphEditorStatus("该节点不能作为依赖项：它必须已启用、位于当前或更早的 Step，且不会形成循环依赖。", true);
+    } else {
+      setPolicyGraphEditorStatus("请点击图中高亮的候选节点，或点击“取消选择依赖项”。");
+    }
+    schedulePolicyGraphRender();
+    return;
+  }
   const rail = node ? null : policyGraphRailAt(event.clientX, event.clientY);
   policyGraphState.selectedNodeId = node?.id || null;
   policyGraphState.selectedRail = rail;
@@ -2137,6 +2279,14 @@ policyGraphCanvas.addEventListener("mousemove", (event) => {
   policyGraphCanvas.title = node
     ? `${node.id} · ${templateDescriptions[node.rule?.template_key] || node.rule?.template_key || "未知规则"}`
     : "";
+});
+cancelPolicyDependencyMode.addEventListener("click", () => {
+  policyDependencyModeDialog.close();
+  cancelPolicyDependencySelection("已取消依赖项选择。");
+});
+confirmPolicyDependencyMode.addEventListener("click", applyPolicyDependencySelection);
+policyDependencyModeDialog.addEventListener("cancel", () => {
+  cancelPolicyDependencySelection("已取消依赖项选择。");
 });
 if (window.ResizeObserver) {
   new window.ResizeObserver(() => {

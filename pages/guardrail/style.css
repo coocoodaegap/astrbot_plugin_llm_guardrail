@@ -521,6 +521,10 @@ button:disabled {
     cursor: pointer
 }
 
+.policy-graph-stage canvas.is-dependency-selecting {
+    cursor: crosshair
+}
+
 .policy-graph-section > .muted {
     margin: 9px 0 0;
     font-size: .82rem
@@ -591,6 +595,12 @@ button:disabled {
 
 .policy-graph-editor-action {
     justify-self: start
+}
+
+.policy-graph-editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px
 }
 
 .policy-graph-editor-placeholder {
@@ -728,6 +738,20 @@ button:disabled {
     color: #172033;
     background: #fff;
     box-shadow: 0 20px 45px rgb(15 23 42 / 20%)
+}
+
+.policy-dependency-mode-dialog {
+    width: min(460px, calc(100vw - 32px));
+    padding: 20px;
+    color: #172033;
+    background: #fff;
+    border: 1px solid #dfe6f0;
+    border-radius: 12px;
+    box-shadow: 0 20px 45px rgb(15 23 42 / 20%)
+}
+
+.policy-dependency-mode-dialog::backdrop {
+    background: rgb(15 23 42 / 38%)
 }
 
 .confirm-rule-delete-dialog::backdrop {

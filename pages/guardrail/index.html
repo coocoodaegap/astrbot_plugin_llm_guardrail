@@ -212,6 +212,20 @@
         <div><p class="eyebrow">DELETE POLICY</p><h3>确认删除策略？</h3><p id="confirm-policy-delete-message" class="danger-notice"></p></div>
         <div class="dialog-actions"><button id="cancel-policy-delete" type="button" class="button-secondary">取消</button><button id="confirm-policy-delete" type="button" class="danger-button">删除策略</button></div>
       </dialog>
+      <dialog id="policy-dependency-mode-dialog" class="policy-dependency-mode-dialog" aria-labelledby="policy-dependency-mode-title">
+        <form method="dialog">
+          <div class="form-heading"><div><p class="eyebrow">DEPENDENCY MODE</p><h3 id="policy-dependency-mode-title">设置依赖条件</h3><p id="policy-dependency-mode-description"></p></div></div>
+          <label>依赖模式
+            <select id="policy-dependency-mode">
+              <option value="matched">满足：目标规则命中</option>
+              <option value="not_matched">不满足：目标规则未命中</option>
+              <option value="executed">无所谓结果：目标规则已执行</option>
+            </select>
+          </label>
+          <p class="policy-graph-editor-note">此修改仅进入当前策略草稿；点击“保存策略”后才会发布。</p>
+          <div class="dialog-actions"><button id="cancel-policy-dependency-mode" type="button" class="button-secondary">取消</button><button id="confirm-policy-dependency-mode" type="button">确认连接</button></div>
+        </form>
+      </dialog>
     </section>
     <section class="tab-panel" id="panel-access" role="tabpanel" aria-labelledby="tab-access" data-panel="access"
       hidden>
