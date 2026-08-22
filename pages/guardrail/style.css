@@ -91,10 +91,10 @@ h3 {
 
 .tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     margin: 28px -4px 0;
     padding: 0 4px 8px;
-    overflow-x: auto;
     border-bottom: 0
 }
 
@@ -254,7 +254,7 @@ button:disabled {
 
 .floating-action-group {
     position: fixed;
-    right: 48px;
+    right: 24px;
     bottom: 46px;
     z-index: 20;
     display: grid;
@@ -290,6 +290,12 @@ button:disabled {
 
 .floating-action-group .danger-button:hover {
     background: #ffcfc7
+}
+
+@media (min-width: 1580px) {
+    .floating-action-group {
+        right: calc((100vw - 1180px) / 2 - 172px)
+    }
 }
 
 .policy-list-panel {
@@ -390,6 +396,23 @@ button:disabled {
 
 .policy-detail-meta code {
     color: #46566f
+}
+
+.policy-metadata-section {
+    display: grid;
+    grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr);
+    gap: 32px;
+    align-items: start
+}
+
+.policy-metadata-summary > :last-child {
+    margin-bottom: 0
+}
+
+.policy-metadata-section .policy-basic-editor {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0
 }
 
 .policy-session-assignment {
@@ -984,7 +1007,8 @@ textarea {
     }
 
     .overview-grid,
-    .rule-workspace {
+    .rule-workspace,
+    .policy-metadata-section {
         grid-template-columns: 1fr
     }
 

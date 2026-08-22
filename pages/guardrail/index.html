@@ -130,20 +130,20 @@
         </div>
       </section>
       <section id="policy-detail-panel" class="policy-detail-panel" aria-label="策略详情" hidden>
-        <div class="card-heading">
-          <div>
+        <section class="policy-metadata-section">
+          <div class="policy-metadata-summary">
             <p class="eyebrow">POLICY DETAILS</p>
             <h2 id="policy-detail-name">策略详情</h2>
             <p id="policy-detail-description"></p>
             <p id="policy-detail-meta" class="policy-detail-meta"></p>
           </div>
-        </div>
-        <section class="policy-basic-editor">
-          <div class="form-grid">
-            <label>策略名称<input id="policy-name-input" autocomplete="off" required /></label>
-            <label class="full-width">策略描述<textarea id="policy-description-input" rows="3" placeholder="简述此策略的用途"></textarea></label>
-          </div>
-          <p id="policy-basic-status" class="form-status" aria-live="polite"></p>
+          <section class="policy-basic-editor">
+            <div class="form-grid">
+              <label>策略名称<input id="policy-name-input" autocomplete="off" required /></label>
+              <label class="full-width">策略描述<textarea id="policy-description-input" rows="3" placeholder="简述此策略的用途"></textarea></label>
+            </div>
+            <p id="policy-basic-status" class="form-status" aria-live="polite"></p>
+          </section>
         </section>
         <section class="policy-step-settings-section">
           <div class="form-heading">
@@ -237,10 +237,12 @@
           <h2>系统设置</h2>
           <p>保存会直接更新 AstrBot 插件配置；新请求立即使用新快照，进行中的请求保持旧快照。</p>
         </div>
-        <button id="save-system-settings" type="button">保存系统设置</button>
       </div>
       <p id="system-settings-status" class="muted" aria-live="polite"></p>
       <div id="system-settings" class="system-settings" aria-live="polite"></div>
+      <div class="floating-action-group" aria-label="系统设置操作">
+        <button id="save-system-settings" type="button">保存系统设置</button>
+      </div>
     </section>
   </main>
   <script type="module" src="./app.js"></script>
