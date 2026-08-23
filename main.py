@@ -186,9 +186,9 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             "output_rail",
         ):
             rail = cfg.rails[rail_name]
-            enabled_rules = sum(1 for rule in rail.rules if rule.enabled and rule.valid)
+            enabled_nodes = sum(1 for node in rail.nodes if node.enabled and node.valid)
             rail_lines.append(
-                f"- {rail_name}: enabled={rail.enabled}, rules={enabled_rules}/{len(rail.rules)}"
+                f"- {rail_name}: enabled={rail.enabled}, nodes={enabled_nodes}/{len(rail.nodes)}"
             )
 
         lines = [

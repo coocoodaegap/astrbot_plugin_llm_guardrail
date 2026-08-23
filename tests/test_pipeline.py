@@ -1001,6 +1001,35 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertIsNone(event.get_extra("selected_provider"))
 
+    def test_input_logic_gate_component_runs_through_pipeline_dispatch(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "source",
+                            "keywords": ["secret"],
+                            "action_on_hit": "observe",
+                        },
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "gate",
+                            "gate": "all",
+                            "inputs": ["source"],
+                        },
+                    ]
+                }
+            }
+        )
+
+        context = asyncio.run(
+            GuardrailPipeline(cfg).run_message_input(FakeEvent("secret"))
+        )
+
+        self.assertTrue(context.results["source"].matched)
+        self.assertTrue(context.results["gate"].matched)
+
     def test_message_skips_outline_only_non_text_events(self):
         cfg = normalize_config(
             {

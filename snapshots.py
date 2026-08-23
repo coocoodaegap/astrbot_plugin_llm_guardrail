@@ -288,11 +288,15 @@ class ConfigSnapshotManager:
         config = snapshot.runtime_config
         rails = {}
         for name, rail in config.rails.items():
-            enabled_rules = sum(1 for rule in rail.rules if rule.enabled and rule.valid)
+            enabled_nodes = sum(1 for node in rail.nodes if node.enabled and node.valid)
             rails[name] = {
                 "enabled": rail.enabled,
-                "enabled_rules": enabled_rules,
-                "total_rules": len(rail.rules),
+                "enabled_nodes": enabled_nodes,
+                "total_nodes": len(rail.nodes),
+                # Legacy dashboard keys; retained until the Pages API moves
+                # to the node-oriented names above.
+                "enabled_rules": enabled_nodes,
+                "total_rules": len(rail.nodes),
             }
         return {
             "revision": snapshot.revision,
@@ -472,7 +476,7 @@ def _runtime_dependency_errors(
         normalized_by_id = {
             rule.user_rule_id: rule
             for rail in config.rails.values()
-            for rule in rail.rules
+            for rule in rail.nodes
             if rule.user_rule_id
         }
         for dependent_id, raw_reference in _runtime_dependency_references(policy, rule_by_id):

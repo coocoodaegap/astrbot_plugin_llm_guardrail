@@ -9,6 +9,7 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from config import normalize_config
+from components import evaluate_logic_gate
 from core import RailContext, RuleScheduler, build_graph_index, make_result
 from rules import evaluate_text_rule
 
@@ -332,7 +333,13 @@ class SchedulerTests(unittest.TestCase):
         ctx = RailContext(None, None, None, "", "", "", "")
 
         RuleScheduler(build_graph_index(cfg)).run(
-            rail, ctx, lambda rule, context: evaluate_text_rule(rule, context, "b")
+            rail,
+            ctx,
+            lambda node, context: (
+                evaluate_logic_gate(node, context)
+                if node.template_key == "logic_gate"
+                else evaluate_text_rule(node, context, "b")
+            ),
         )
 
         self.assertTrue(ctx.results["gate"].matched)

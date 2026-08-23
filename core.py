@@ -1,4 +1,4 @@
-"""Runtime dataclasses and rule scheduling."""
+"""Runtime node dataclasses and dependency-aware scheduling."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ try:
     from .config import (
         NormalizedConfig,
         NormalizedRail,
-        NormalizedRule,
+        NormalizedNode,
         SessionScopeDecision,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import (
         NormalizedConfig,
         NormalizedRail,
-        NormalizedRule,
+        NormalizedNode,
         SessionScopeDecision,
     )
 
@@ -35,36 +35,48 @@ RAIL_STEPS = {
 
 
 @dataclass
-class RuleSignal:
+class NodeSignal:
     value: Any
     truthy: bool
     payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class RuleResult:
+class NodeResult:
     rail: str
     template_key: str
-    rule_id: str
-    user_rule_id: str
+    node_id: str
+    user_node_id: str
     anonymous: bool
     enabled: bool
     executed: bool
     matched: bool
-    signal: RuleSignal | None = None
+    signal: NodeSignal | None = None
     skipped_reason: str = ""
     action_on_hit: str = "default"
     hits: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     latency_ms: int = 0
 
+    @property
+    def rule_id(self) -> str:
+        return self.node_id
+
+    @property
+    def user_rule_id(self) -> str:
+        return self.user_node_id
+
 
 @dataclass
 class RouteDecision:
     provider_id: str
-    source_rule_id: str
+    source_node_id: str
     applied: bool
     reason: str = ""
+
+    @property
+    def source_rule_id(self) -> str:
+        return self.source_node_id
 
 
 @dataclass
@@ -76,7 +88,7 @@ class RailContext:
     original_input: str
     current_input: str
     current_output: str
-    results: dict[str, RuleResult] = field(default_factory=dict)
+    results: dict[str, NodeResult] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     input_blocked: bool = False
     output_blocked: bool = False
@@ -86,9 +98,9 @@ class RailContext:
 
 
 @dataclass(frozen=True)
-class RuleNode:
-    rule_id: str
-    user_rule_id: str
+class GraphNode:
+    node_id: str
+    user_node_id: str
     anonymous: bool
     step: int
     rail: str
@@ -96,9 +108,17 @@ class RuleNode:
     priority: int
     index: int
 
+    @property
+    def rule_id(self) -> str:
+        return self.node_id
+
+    @property
+    def user_rule_id(self) -> str:
+        return self.user_node_id
+
 
 @dataclass(frozen=True)
-class RuleEdge:
+class GraphEdge:
     source: str
     target: str
     kind: str
@@ -116,21 +136,33 @@ class GraphMetrics:
 
 @dataclass(frozen=True)
 class GraphIndex:
-    nodes: Mapping[str, RuleNode]
+    nodes: Mapping[str, GraphNode]
     by_rail: Mapping[str, tuple[str, ...]]
     by_step: Mapping[int, tuple[str, ...]]
-    incoming: Mapping[str, Mapping[str, tuple[RuleEdge, ...]]]
-    outgoing: Mapping[str, Mapping[str, tuple[RuleEdge, ...]]]
+    incoming: Mapping[str, Mapping[str, tuple[GraphEdge, ...]]]
+    outgoing: Mapping[str, Mapping[str, tuple[GraphEdge, ...]]]
     metrics: GraphMetrics
 
 
-RuleExecutor = Callable[[NormalizedRule, RailContext], RuleResult]
-AsyncRuleExecutor = Callable[[NormalizedRule, RailContext], Any]
-RuleErrorHandler = Callable[[NormalizedRule, RailContext, Exception], RuleResult | None]
+NodeExecutor = Callable[[NormalizedNode, RailContext], NodeResult]
+AsyncNodeExecutor = Callable[[NormalizedNode, RailContext], Any]
+NodeErrorHandler = Callable[[NormalizedNode, RailContext, Exception], NodeResult | None]
 StopPredicate = Callable[[RailContext], bool]
 
 
-class RuleScheduler:
+# Compatibility aliases preserve direct P0 callers while the runtime and all
+# new APIs use node terminology.
+NormalizedRule = NormalizedNode
+RuleSignal = NodeSignal
+RuleResult = NodeResult
+RuleNode = GraphNode
+RuleEdge = GraphEdge
+RuleExecutor = NodeExecutor
+AsyncRuleExecutor = AsyncNodeExecutor
+RuleErrorHandler = NodeErrorHandler
+
+
+class NodeScheduler:
     """Dependency-aware scheduler for one rail."""
 
     def __init__(
@@ -265,7 +297,7 @@ class RuleScheduler:
     ) -> None:
         pending: dict[str, NormalizedRule] = {}
         expired_sources: set[str] = set()
-        for rule in sorted(rail.rules, key=lambda item: (item.priority, item.index)):
+        for rule in sorted(rail.nodes, key=lambda item: (item.priority, item.index)):
             if not rule.enabled or not rule.valid:
                 result = skipped_result(
                     rule,
@@ -339,7 +371,7 @@ class RuleScheduler:
     ) -> None:
         pending: dict[str, NormalizedRule] = {}
         expired_sources: set[str] = set()
-        for rule in sorted(rail.rules, key=lambda item: (item.priority, item.index)):
+        for rule in sorted(rail.nodes, key=lambda item: (item.priority, item.index)):
             if not rule.enabled or not rule.valid:
                 result = skipped_result(
                     rule,
@@ -412,7 +444,7 @@ class RuleScheduler:
         self, rail: NormalizedRail, context: RailContext
     ) -> dict[str, NormalizedRule]:
         active: dict[str, NormalizedRule] = {}
-        for rule in sorted(rail.rules, key=lambda item: (item.priority, item.index)):
+        for rule in sorted(rail.nodes, key=lambda item: (item.priority, item.index)):
             if not rule.enabled or not rule.valid:
                 result = skipped_result(
                     rule,
@@ -747,50 +779,50 @@ def _depend_result_matches(mode: str, result: RuleResult) -> bool:
 
 def build_graph_index(source: NormalizedConfig | NormalizedRail) -> GraphIndex:
     rails = _iter_graph_rails(source)
-    nodes: dict[str, RuleNode] = {}
+    nodes: dict[str, GraphNode] = {}
     by_rail: dict[str, list[str]] = {}
     by_step: dict[int, list[str]] = {}
-    incoming: dict[str, dict[str, list[RuleEdge]]] = {}
-    outgoing: dict[str, dict[str, list[RuleEdge]]] = {}
+    incoming: dict[str, dict[str, list[GraphEdge]]] = {}
+    outgoing: dict[str, dict[str, list[GraphEdge]]] = {}
 
     for rail in rails:
         step = RAIL_STEPS.get(rail.rail, 0)
         by_rail.setdefault(rail.rail, [])
         by_step.setdefault(step, [])
-        for rule in rail.rules:
-            if rule.rule_id not in nodes:
-                nodes[rule.rule_id] = RuleNode(
-                    rule_id=rule.rule_id,
-                    user_rule_id=rule.user_rule_id,
-                    anonymous=rule.anonymous,
+        for node in rail.nodes:
+            if node.node_id not in nodes:
+                nodes[node.node_id] = GraphNode(
+                    node_id=node.node_id,
+                    user_node_id=node.user_node_id,
+                    anonymous=node.anonymous,
                     step=step,
-                    rail=rule.rail,
-                    template_key=rule.template_key,
-                    priority=rule.priority,
-                    index=rule.index,
+                    rail=node.rail,
+                    template_key=node.template_key,
+                    priority=node.priority,
+                    index=node.index,
                 )
-            by_rail[rail.rail].append(rule.rule_id)
-            by_step[step].append(rule.rule_id)
+            by_rail[rail.rail].append(node.node_id)
+            by_step[step].append(node.node_id)
 
-            dep = parse_depend_on(rule.depend_on)
+            dep = parse_depend_on(node.depend_on)
             if dep.target:
                 _add_edge(
                     incoming,
                     outgoing,
-                    RuleEdge(
+                    GraphEdge(
                         source=dep.target,
-                        target=rule.rule_id,
+                        target=node.node_id,
                         kind="depend_on",
                         mode=dep.mode,
                     ),
                 )
-            for spec in logic_gate_input_specs(rule):
+            for spec in logic_gate_input_specs(node):
                 _add_edge(
                     incoming,
                     outgoing,
-                    RuleEdge(
+                    GraphEdge(
                         source=spec.target,
-                        target=rule.rule_id,
+                        target=node.node_id,
                         kind="logic_input",
                         mode=spec.mode,
                     ),
@@ -911,45 +943,51 @@ def _skip_reason_is_warning(reason: str) -> bool:
     }
 
 
-def make_result(
-    rule: NormalizedRule,
+def make_node_result(
+    node: NormalizedNode,
     matched: bool,
     executed: bool = True,
     skipped_reason: str = "",
     action_on_hit: str | None = None,
     hits: list[dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
-    signal: RuleSignal | None = None,
-) -> RuleResult:
+    signal: NodeSignal | None = None,
+) -> NodeResult:
     if signal is None:
-        signal = RuleSignal(value=matched, truthy=matched, payload={})
-    return RuleResult(
-        rail=rule.rail,
-        template_key=rule.template_key,
-        rule_id=rule.rule_id,
-        user_rule_id=rule.user_rule_id,
-        anonymous=rule.anonymous,
-        enabled=rule.enabled,
+        signal = NodeSignal(value=matched, truthy=matched, payload={})
+    return NodeResult(
+        rail=node.rail,
+        template_key=node.template_key,
+        node_id=node.node_id,
+        user_node_id=node.user_node_id,
+        anonymous=node.anonymous,
+        enabled=node.enabled,
         executed=executed,
         matched=matched,
         signal=signal,
         skipped_reason=skipped_reason,
         action_on_hit=action_on_hit
         if action_on_hit is not None
-        else str(rule.config.get("action_on_hit", "default")),
+        else str(node.config.get("action_on_hit", "default")),
         hits=hits or [],
         metadata=metadata or {},
     )
 
 
-def skipped_result(
-    rule: NormalizedRule, reason: str, warnings: list[str] | None = None
-) -> RuleResult:
+def skipped_node_result(
+    node: NormalizedNode, reason: str, warnings: list[str] | None = None
+) -> NodeResult:
     metadata = {"warnings": list(warnings or [])} if warnings else {}
-    return make_result(
-        rule,
+    return make_node_result(
+        node,
         matched=False,
         executed=False,
         skipped_reason=reason,
         metadata=metadata,
     )
+
+
+# Legacy names remain available while callers migrate.
+make_result = make_node_result
+skipped_result = skipped_node_result
+RuleScheduler = NodeScheduler

@@ -21,27 +21,27 @@ try:
     from .config import (
         NormalizedConfig,
         NormalizedRail,
-        NormalizedRule,
+        NormalizedNode,
         resolve_session_scope,
     )
     from .constants import INTERNAL_MARKER
     from .core import (
         RailContext,
         RouteDecision,
-        RuleResult,
-        RuleSignal,
-        RuleScheduler,
+        NodeResult,
+        NodeSignal,
+        NodeScheduler,
         RAIL_STEPS,
         build_graph_index,
-        make_result,
-        skipped_result,
+        make_node_result,
+        skipped_node_result,
     )
+    from .components import evaluate_logic_gate
     from .rules import (
         apply_literal_replacements,
         apply_span_replacements,
         clip_text,
         evaluate_llm_review_response,
-        evaluate_logic_gate,
         evaluate_rag_judge_evidence,
         evaluate_text_rule,
     )
@@ -56,27 +56,27 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import (
         NormalizedConfig,
         NormalizedRail,
-        NormalizedRule,
+        NormalizedNode,
         resolve_session_scope,
     )
     from constants import INTERNAL_MARKER
     from core import (
         RailContext,
         RouteDecision,
-        RuleResult,
-        RuleSignal,
-        RuleScheduler,
+        NodeResult,
+        NodeSignal,
+        NodeScheduler,
         RAIL_STEPS,
         build_graph_index,
-        make_result,
-        skipped_result,
+        make_node_result,
+        skipped_node_result,
     )
+    from components import evaluate_logic_gate
     from rules import (
         apply_literal_replacements,
         apply_span_replacements,
         clip_text,
         evaluate_llm_review_response,
-        evaluate_logic_gate,
         evaluate_rag_judge_evidence,
         evaluate_text_rule,
     )
@@ -96,6 +96,15 @@ LLM_REVIEW_STRUCTURE_INSTRUCTION = (
 )
 
 
+# Local variable names remain ``rule`` while dispatching legacy raw
+# ``rule_list`` entries; their runtime types are the canonical node types.
+NormalizedRule = NormalizedNode
+RuleResult = NodeResult
+RuleSignal = NodeSignal
+make_result = make_node_result
+skipped_result = skipped_node_result
+
+
 class GuardrailPipeline:
     def __init__(
         self,
@@ -105,7 +114,7 @@ class GuardrailPipeline:
         self.config = config
         self.adapter = adapter or AstrBotAdapter()
         self.graph = build_graph_index(config)
-        self.scheduler = RuleScheduler(self.graph)
+        self.scheduler = NodeScheduler(self.graph)
 
     async def run_message(self, event: Any) -> RailContext:
         context = await self.run_message_input(event)
@@ -292,7 +301,9 @@ class GuardrailPipeline:
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
-            if rule.template_key == "llm_review":
+            if rule.template_key == "logic_gate":
+                result = evaluate_logic_gate(rule, ctx)
+            elif rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
             elif rule.template_key == "rag_judge":
                 result = await self._execute_rag_judge(rule, ctx, current_text)
@@ -324,7 +335,9 @@ class GuardrailPipeline:
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
-            if rule.template_key == "llm_review":
+            if rule.template_key == "logic_gate":
+                result = evaluate_logic_gate(rule, ctx)
+            elif rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
             elif rule.template_key == "rag_judge":
                 result = await self._execute_rag_judge(rule, ctx, current_text)
@@ -511,7 +524,7 @@ class GuardrailPipeline:
             context.warnings.extend(adapter_warnings)
         context.route_decision = RouteDecision(
             provider_id=provider_id,
-            source_rule_id=rule.rule_id,
+                source_node_id=rule.node_id,
             applied=adapter_success,
             reason="" if adapter_success else "; ".join(adapter_warnings),
         )
@@ -534,7 +547,9 @@ class GuardrailPipeline:
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
-            if rule.template_key == "llm_review":
+            if rule.template_key == "logic_gate":
+                result = evaluate_logic_gate(rule, ctx)
+            elif rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
             elif rule.template_key == "rag_judge":
                 result = await self._execute_rag_judge(rule, ctx, current_text)
@@ -791,7 +806,7 @@ class GuardrailPipeline:
 
     @staticmethod
     def _rule_by_id(rail: NormalizedRail, rule_id: str) -> NormalizedRule:
-        for rule in rail.rules:
+        for rule in rail.nodes:
             if rule.rule_id == rule_id:
                 return rule
         raise KeyError(rule_id)

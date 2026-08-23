@@ -1,4 +1,4 @@
-"""P0 rule evaluators."""
+"""Evaluators for reusable business-rule templates."""
 
 from __future__ import annotations
 
@@ -7,35 +7,29 @@ import re
 from typing import Any
 
 try:
-    from .config import NormalizedRule
+    from .config import NormalizedNode
     from .core import (
         RailContext,
-        RuleSignal,
-        logic_gate_input_specs,
-        logic_input_value,
-        make_result,
+        NodeSignal,
+        make_node_result,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from config import NormalizedRule
+    from config import NormalizedNode
     from core import (
         RailContext,
-        RuleSignal,
-        logic_gate_input_specs,
-        logic_input_value,
-        make_result,
+        NodeSignal,
+        make_node_result,
     )
 
 
 def evaluate_text_rule(
-    rule: NormalizedRule, context: RailContext, text: str
+    rule: NormalizedNode, context: RailContext, text: str
 ):
     if rule.template_key == "plain_keywords":
         return evaluate_plain_keywords(rule, text)
     if rule.template_key == "regex_pattern":
         return evaluate_regex_pattern(rule, text)
-    if rule.template_key == "logic_gate":
-        return evaluate_logic_gate(rule, context)
-    return make_result(
+    return make_node_result(
         rule,
         matched=False,
         executed=False,
@@ -43,7 +37,7 @@ def evaluate_text_rule(
     )
 
 
-def evaluate_plain_keywords(rule: NormalizedRule, text: str):
+def evaluate_plain_keywords(rule: NormalizedNode, text: str):
     source = text or ""
     folded = source.casefold()
     hits: list[dict[str, Any]] = []
@@ -89,21 +83,21 @@ def evaluate_plain_keywords(rule: NormalizedRule, text: str):
         "threshold": threshold,
         "matched_text": " ".join(hit["value"] for hit in hits[:10]),
     }
-    return make_result(
+    return make_node_result(
         rule,
         matched=matched,
         action_on_hit=str(rule.config.get("action_on_hit", "default")),
         hits=hits,
         metadata={"score": score, "threshold": threshold},
-        signal=RuleSignal(value=score, truthy=matched, payload=payload),
+        signal=NodeSignal(value=score, truthy=matched, payload=payload),
     )
 
 
-def evaluate_regex_pattern(rule: NormalizedRule, text: str):
+def evaluate_regex_pattern(rule: NormalizedNode, text: str):
     source = text or ""
     pattern = rule.config.get("_compiled_pattern")
     if pattern is None:
-        return make_result(
+        return make_node_result(
             rule,
             matched=False,
             executed=False,
@@ -126,43 +120,18 @@ def evaluate_regex_pattern(rule: NormalizedRule, text: str):
         "matched_text": " ".join(hit["value"] for hit in hits[:10]),
         "pattern": str(rule.config.get("pattern", "")),
     }
-    return make_result(
+    return make_node_result(
         rule,
         matched=matched,
         action_on_hit=str(rule.config.get("action_on_hit", "default")),
         hits=hits,
         metadata={"hit_count": len(hits)},
-        signal=RuleSignal(value=len(hits), truthy=matched, payload=payload),
-    )
-
-
-def evaluate_logic_gate(rule: NormalizedRule, context: RailContext):
-    specs = logic_gate_input_specs(rule)
-    values = [
-        logic_input_value(spec, context.results[spec.target])
-        for spec in specs
-    ]
-    gate = str(rule.config.get("gate", "all"))
-    matched = all(values) if gate == "all" else any(values)
-    if bool(rule.config.get("invert", False)):
-        matched = not matched
-    payload = {
-        "inputs": {
-            spec.raw or spec.target: value
-            for spec, value in zip(specs, values, strict=False)
-        }
-    }
-    return make_result(
-        rule,
-        matched=matched,
-        action_on_hit=str(rule.config.get("action_on_hit", "default")),
-        metadata=payload,
-        signal=RuleSignal(value=matched, truthy=matched, payload=payload),
+        signal=NodeSignal(value=len(hits), truthy=matched, payload=payload),
     )
 
 
 def evaluate_llm_review_response(
-    rule: NormalizedRule, context: RailContext, response_text: str
+    rule: NormalizedNode, context: RailContext, response_text: str
 ):
     parsed = _parse_llm_review_json(response_text)
     matched = parsed.get("matched")
@@ -180,12 +149,12 @@ def evaluate_llm_review_response(
         "payload": payload,
         "raw_response": clip_text(response_text, 2000),
     }
-    return make_result(
+    return make_node_result(
         rule,
         matched=matched,
         action_on_hit=str(rule.config.get("action_on_hit", "default")),
         metadata=metadata,
-        signal=RuleSignal(value=matched, truthy=matched, payload=payload),
+        signal=NodeSignal(value=matched, truthy=matched, payload=payload),
     )
 
 
@@ -207,7 +176,7 @@ def _parse_llm_review_json(response_text: str) -> dict[str, Any]:
 
 
 def evaluate_rag_judge_evidence(
-    rule: NormalizedRule, evidence: list[dict[str, Any]]
+    rule: NormalizedNode, evidence: list[dict[str, Any]]
 ):
     try:
         min_score = float(rule.config.get("min_score", 0.72))
@@ -249,13 +218,13 @@ def evaluate_rag_judge_evidence(
         for item in evidence_payload
     ]
     signal_value = max_score if max_score is not None else len(evidence)
-    return make_result(
+    return make_node_result(
         rule,
         matched=matched,
         action_on_hit=str(rule.config.get("action_on_hit", "default")),
         hits=hits,
         metadata=payload,
-        signal=RuleSignal(
+        signal=NodeSignal(
             value=signal_value,
             truthy=matched,
             payload=payload,

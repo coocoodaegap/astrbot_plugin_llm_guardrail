@@ -1,4 +1,4 @@
-"""Action planning for rule hits."""
+"""Action planning for runtime node hits."""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ from dataclasses import dataclass
 
 try:
     from .config import NormalizedRail
-    from .core import RuleResult
+    from .core import NodeResult
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import NormalizedRail
-    from core import RuleResult
+    from core import NodeResult
 
 
 @dataclass(frozen=True)
 class HitActionPlan:
-    rule_id: str
+    node_id: str
     rail: str
     action: str
     target: str
@@ -22,10 +22,14 @@ class HitActionPlan:
     mutate_text: bool
     block: bool
 
+    @property
+    def rule_id(self) -> str:
+        return self.node_id
+
 
 @dataclass(frozen=True)
 class ErrorActionPlan:
-    rule_id: str
+    node_id: str
     rail: str
     action: str
     target: str
@@ -33,12 +37,16 @@ class ErrorActionPlan:
     record: bool
     block: bool
 
+    @property
+    def rule_id(self) -> str:
+        return self.node_id
 
-def resolve_hit_action_plan(rail: NormalizedRail, result: RuleResult) -> HitActionPlan:
+
+def resolve_hit_action_plan(rail: NormalizedRail, result: NodeResult) -> HitActionPlan:
     action = _resolved_hit_action(rail, result)
     target = _hit_action_target(rail.rail, action)
     return HitActionPlan(
-        rule_id=result.rule_id,
+        node_id=result.node_id,
         rail=rail.rail,
         action=action,
         target=target,
@@ -48,11 +56,11 @@ def resolve_hit_action_plan(rail: NormalizedRail, result: RuleResult) -> HitActi
     )
 
 
-def resolve_error_action_plan(rail: NormalizedRail, rule_id: str, action: str) -> ErrorActionPlan:
+def resolve_error_action_plan(rail: NormalizedRail, node_id: str, action: str) -> ErrorActionPlan:
     resolved_action = _resolved_error_action(rail, action)
     target = _error_action_target(rail.rail, resolved_action)
     return ErrorActionPlan(
-        rule_id=rule_id,
+        node_id=node_id,
         rail=rail.rail,
         action=resolved_action,
         target=target,
@@ -62,7 +70,7 @@ def resolve_error_action_plan(rail: NormalizedRail, rule_id: str, action: str) -
     )
 
 
-def _resolved_hit_action(rail: NormalizedRail, result: RuleResult) -> str:
+def _resolved_hit_action(rail: NormalizedRail, result: NodeResult) -> str:
     if not result.matched:
         return "none"
     if result.action_on_hit != "default":

@@ -90,13 +90,13 @@ class SessionScopeDecision:
 
 
 @dataclass
-class NormalizedRule:
+class NormalizedNode:
     rail: str
     template_key: str
     index: int
     enabled: bool
-    rule_id: str
-    user_rule_id: str
+    node_id: str
+    user_node_id: str
     anonymous: bool
     depend_on: str
     priority: int
@@ -104,14 +104,35 @@ class NormalizedRule:
     valid: bool = True
     warnings: list[str] = field(default_factory=list)
 
+    # ``rule_id`` remains the raw compatibility field in ``rule_list``.  The
+    # runtime model is node-based, so consumers should use ``node_id``.
+    @property
+    def rule_id(self) -> str:
+        return self.node_id
+
+    @property
+    def user_rule_id(self) -> str:
+        return self.user_node_id
+
 
 @dataclass
 class NormalizedRail:
     rail: str
     enabled: bool
     settings: dict[str, Any]
-    rules: list[NormalizedRule] = field(default_factory=list)
+    nodes: list[NormalizedNode] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+
+    @property
+    def rules(self) -> list[NormalizedNode]:
+        """Compatibility view for code reading the legacy ``rule_list`` input."""
+
+        return self.nodes
+
+
+# Kept for third-party callers during the P1 compatibility window.  New code
+# must use NormalizedNode and NormalizedRail.nodes.
+NormalizedRule = NormalizedNode
 
 
 @dataclass
@@ -196,17 +217,17 @@ def _normalize_rail(
         warnings.append(f"{rail_name}.rule_list is not a list; no rules loaded")
         raw_rules = []
 
-    rules: list[NormalizedRule] = []
+    nodes: list[NormalizedNode] = []
     for index, raw_rule in enumerate(raw_rules):
-        rule = _normalize_rule(rail_name, index, raw_rule, seen_rule_ids)
-        rules.append(rule)
-        warnings.extend(rule.warnings)
+        node = _normalize_node(rail_name, index, raw_rule, seen_rule_ids)
+        nodes.append(node)
+        warnings.extend(node.warnings)
 
     return NormalizedRail(
         rail=rail_name,
         enabled=_as_bool(settings.get("enabled"), True),
         settings=settings,
-        rules=rules,
+        nodes=nodes,
         warnings=warnings,
     )
 
@@ -276,9 +297,9 @@ def resolve_session_scope(
     return SessionScopeDecision("pass", f"{chat_type}_not_enabled", chat_type, mode)
 
 
-def _normalize_rule(
+def _normalize_node(
     rail_name: str, index: int, raw_rule: Any, seen_rule_ids: set[str]
-) -> NormalizedRule:
+) -> NormalizedNode:
     warnings: list[str] = []
     rule_dict = _as_dict(raw_rule)
     if not isinstance(raw_rule, dict):
@@ -380,13 +401,13 @@ def _normalize_rule(
             action_on_error = "default"
         config["action_on_error"] = action_on_error
 
-    return NormalizedRule(
+    return NormalizedNode(
         rail=rail_name,
         template_key=template_key,
         index=index,
         enabled=enabled,
-        rule_id=rule_id,
-        user_rule_id=user_rule_id,
+        node_id=rule_id,
+        user_node_id=user_rule_id,
         anonymous=anonymous,
         depend_on=depend_on,
         priority=priority,
@@ -506,7 +527,7 @@ def _normalize_rag_judge(
 def _validate_cross_references(
     rails: dict[str, NormalizedRail], warnings: list[str]
 ) -> None:
-    rule_index: dict[str, list[NormalizedRule]] = {}
+    rule_index: dict[str, list[NormalizedNode]] = {}
     for rail in rails.values():
         for rule in rail.rules:
             if rule.user_rule_id:
@@ -558,7 +579,7 @@ def _validate_cross_references(
 
 
 def _reference_problem(
-    rule_id: str, rule_index: dict[str, list[NormalizedRule]]
+    rule_id: str, rule_index: dict[str, list[NormalizedNode]]
 ) -> str:
     if not rule_id:
         return "empty rule id"
@@ -568,7 +589,7 @@ def _reference_problem(
     return "; ".join(_rule_availability_problem(rule) for rule in candidates)
 
 
-def _rule_availability_problem(rule: NormalizedRule) -> str:
+def _rule_availability_problem(rule: NormalizedNode) -> str:
     state = []
     if not rule.enabled:
         state.append("disabled")

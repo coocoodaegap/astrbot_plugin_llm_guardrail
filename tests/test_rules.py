@@ -8,12 +8,12 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from config import normalize_config
+from components import evaluate_logic_gate
 from core import RailContext
 from rules import (
     apply_literal_replacements,
     apply_span_replacements,
     evaluate_llm_review_response,
-    evaluate_logic_gate,
     evaluate_plain_keywords,
     evaluate_rag_judge_evidence,
     evaluate_regex_pattern,
