@@ -16,8 +16,20 @@ except ImportError:  # pragma: no cover - allows isolated unit tests without Ast
         return payload
 
 try:
+    from .access_control import (
+        MANUAL_BAN_REASON_CODES,
+        MANUAL_PARDON_REASON_CODES,
+        REASON_CODE_LABELS,
+        make_principal_identity,
+    )
     from .policy_library import PolicyDefinition, RuleDefinition
 except ImportError:  # pragma: no cover - fallback for direct script loading
+    from access_control import (
+        MANUAL_BAN_REASON_CODES,
+        MANUAL_PARDON_REASON_CODES,
+        REASON_CODE_LABELS,
+        make_principal_identity,
+    )
     from policy_library import PolicyDefinition, RuleDefinition
 
 
@@ -36,6 +48,9 @@ class GuardrailPagesApiMixin:
             ("get_diagnostics", self._pages_get_diagnostics, ["GET"], "Get guardrail diagnostics"),
             ("get_system_settings", self._pages_get_system_settings, ["GET"], "Get normalized system settings"),
             ("save_system_settings", self._pages_save_system_settings, ["POST"], "Save and publish system settings"),
+            ("get_access_control_records", self._pages_get_access_control_records, ["GET"], "List active input access-control records"),
+            ("set_access_control_decision", self._pages_set_access_control_decision, ["POST"], "Create or replace an input access-control decision"),
+            ("clear_access_control_decision", self._pages_clear_access_control_decision, ["POST"], "Clear an input access-control decision"),
             ("get_rule_library", self._pages_get_rule_library, ["GET"], "Get rule library"),
             ("save_rule_library", self._pages_save_rule_library, ["POST"], "Save rule library"),
             ("get_policy_library", self._pages_get_policy_library, ["GET"], "Get policy library"),
@@ -78,6 +93,7 @@ class GuardrailPagesApiMixin:
                         key: list(value) if isinstance(value, list) else value
                         for key, value in config.session_control.items()
                     },
+                    "access_control": dict(config.access_control),
                     "debug_settings": dict(config.debug_settings),
                 },
                 "schema": _load_system_settings_schema(),
@@ -165,6 +181,7 @@ class GuardrailPagesApiMixin:
             for key in (
                 "fallback_policy_settings",
                 "session_control",
+                "access_control",
                 "debug_settings",
             )
         }
@@ -180,6 +197,114 @@ class GuardrailPagesApiMixin:
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 pass
             raise
+
+    async def _pages_get_access_control_records(self):
+        service = self._pages_access_control_service()
+        if service is None:
+            return self._pages_error("Input access-control service is unavailable", 503)
+        result = await service.list_active_records()
+        if not result.success:
+            return self._pages_error("Input access-control state is unavailable", 503)
+        return jsonify(
+            {
+                "success": True,
+                "records": list(result.records),
+                "reason_codes": {
+                    "ban": [
+                        {"code": code, "label": REASON_CODE_LABELS[code]}
+                        for code in sorted(MANUAL_BAN_REASON_CODES)
+                    ],
+                    "pardon": [
+                        {"code": code, "label": REASON_CODE_LABELS[code]}
+                        for code in sorted(MANUAL_PARDON_REASON_CODES)
+                    ],
+                },
+            }
+        )
+
+    async def _pages_set_access_control_decision(self):
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        try:
+            principal = make_principal_identity(
+                payload.get("platform_id"),
+                payload.get("sender_id"),
+            )
+        except (TypeError, ValueError) as exc:
+            return self._pages_error("platform_id and sender_id are required", 400, str(exc))
+
+        duration_minutes = payload.get("duration_minutes")
+        if isinstance(duration_minutes, bool) or not isinstance(duration_minutes, int):
+            return self._pages_error("duration_minutes must be an integer")
+        expected_revision = payload.get("expected_record_revision")
+        if expected_revision is not None and (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+        ):
+            return self._pages_error("expected_record_revision must be an integer")
+
+        service = self._pages_access_control_service()
+        if service is None:
+            return self._pages_error("Input access-control service is unavailable", 503)
+        result = await service.set_manual_decision(
+            principal,
+            str(payload.get("decision", "")),
+            duration_minutes,
+            str(payload.get("reason_code", "")),
+            expected_record_revision=expected_revision,
+        )
+        if result.conflict:
+            return jsonify(
+                {
+                    "success": False,
+                    "conflict": True,
+                    "error": result.error,
+                    "record": result.record,
+                }
+            ), 409
+        if not result.success:
+            return self._pages_error(result.error or "Access decision was not saved.")
+        return jsonify({"success": True, "record": result.record})
+
+    async def _pages_clear_access_control_decision(self):
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        try:
+            principal = make_principal_identity(
+                payload.get("platform_id"),
+                payload.get("sender_id"),
+            )
+        except (TypeError, ValueError) as exc:
+            return self._pages_error("platform_id and sender_id are required", 400, str(exc))
+        expected_revision = payload.get("expected_record_revision")
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            return self._pages_error("expected_record_revision must be an integer")
+
+        service = self._pages_access_control_service()
+        if service is None:
+            return self._pages_error("Input access-control service is unavailable", 503)
+        result = await service.clear_manual_decision(
+            principal,
+            expected_decision=str(payload.get("expected_decision", "")),
+            expected_record_revision=expected_revision,
+        )
+        if result.conflict:
+            return jsonify(
+                {
+                    "success": False,
+                    "conflict": True,
+                    "error": result.error,
+                    "record": result.record,
+                }
+            ), 409
+        if not result.success:
+            return self._pages_error(result.error or "Access decision was not cleared.")
+        return jsonify({"success": True, "record": result.record})
+
+    def _pages_access_control_service(self):
+        return getattr(self, "access_control", None)
 
     async def _pages_get_policy_library(self):
         snapshot = self.snapshot_manager.current
@@ -321,6 +446,7 @@ def _load_system_settings_schema() -> dict[str, Any]:
         for key in (
             "fallback_policy_settings",
             "session_control",
+            "access_control",
             "debug_settings",
         )
         if isinstance(raw_schema.get(key), dict)
@@ -336,6 +462,7 @@ def _validate_system_settings_payload(
     expected_groups = {
         "fallback_policy_settings",
         "session_control",
+        "access_control",
         "debug_settings",
     }
     if set(settings) != expected_groups:
@@ -364,7 +491,7 @@ def _validate_system_settings_payload(
                 not isinstance(value, int) or isinstance(value, bool)
             ):
                 diagnostics.append(f"{label} must be an integer")
-            elif field_type == "string" and not isinstance(value, str):
+            elif field_type in {"string", "text"} and not isinstance(value, str):
                 diagnostics.append(f"{label} must be a string")
             elif field_type == "list" and (
                 not isinstance(value, list) or not all(isinstance(item, str) for item in value)
@@ -373,4 +500,16 @@ def _validate_system_settings_payload(
             options = field.get("options") if isinstance(field, dict) else None
             if isinstance(options, list) and value not in options:
                 diagnostics.append(f"{label} must be one of the configured options")
+            if label == "access_control.blacklist_duration_minutes" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or (value != -1 and value <= 0)
+            ):
+                diagnostics.append(f"{label} must be -1 or a positive integer")
+            if label == "access_control.blacklist_max_violations" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 1
+            ):
+                diagnostics.append(f"{label} must be a positive integer")
     return diagnostics

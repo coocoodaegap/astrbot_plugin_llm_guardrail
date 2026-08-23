@@ -11,6 +11,45 @@ from config import normalize_config
 
 
 class ConfigNormalizerTests(unittest.TestCase):
+    def test_access_control_settings_are_normalized(self):
+        cfg = normalize_config(
+            {
+                "access_control": {
+                    "auto_blacklist_enabled": True,
+                    "blacklist_duration_minutes": -1,
+                    "blacklist_max_violations": 4,
+                    "blacklist_message": "blocked by access control",
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.access_control,
+            {
+                "auto_blacklist_enabled": True,
+                "blacklist_duration_minutes": -1,
+                "blacklist_max_violations": 4,
+                "blacklist_message": "blocked by access control",
+            },
+        )
+
+    def test_invalid_access_control_duration_and_threshold_fall_back(self):
+        cfg = normalize_config(
+            {
+                "access_control": {
+                    "blacklist_duration_minutes": 0,
+                    "blacklist_max_violations": 0,
+                }
+            }
+        )
+
+        self.assertEqual(cfg.access_control["blacklist_duration_minutes"], 60)
+        self.assertEqual(cfg.access_control["blacklist_max_violations"], 3)
+        self.assertIn(
+            "access_control.blacklist_duration_minutes must be -1 or positive",
+            " ".join(cfg.warnings),
+        )
+
     def test_template_list_rules_are_normalized(self):
         cfg = normalize_config(
             {

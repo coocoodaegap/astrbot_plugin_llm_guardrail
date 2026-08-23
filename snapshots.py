@@ -250,6 +250,7 @@ class ConfigSnapshotManager:
             for key in (
                 "fallback_policy_settings",
                 "session_control",
+                "access_control",
                 "debug_settings",
             ):
                 value = settings.get(key)
@@ -278,6 +279,9 @@ class ConfigSnapshotManager:
                         ),
                         "session_control": copy.deepcopy(
                             candidate.source_config["session_control"]
+                        ),
+                        "access_control": copy.deepcopy(
+                            candidate.source_config["access_control"]
                         ),
                         "debug_settings": copy.deepcopy(
                             candidate.source_config["debug_settings"]
@@ -342,6 +346,7 @@ class ConfigSnapshotManager:
         runtime_config = normalize_config(compiled_config)
         fallback_runtime_config = build_fallback_runtime_config(
             runtime_config.fallback_policy_settings,
+            access_control=runtime_config.access_control,
         )
         policy_runtime_configs = {
             policy.policy_id: normalize_config(

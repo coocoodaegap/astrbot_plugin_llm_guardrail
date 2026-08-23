@@ -1124,6 +1124,186 @@ textarea {
     color: #64748b
 }
 
+.access-layout {
+    display: grid;
+    gap: 16px
+}
+
+.access-decision-card,
+.access-records-card {
+    padding: 20px
+}
+
+.access-decision-card .card-heading,
+.access-records-heading {
+    align-items: flex-start
+}
+
+.access-decision-card .card-heading p:last-child,
+.access-records-heading p:last-child {
+    max-width: 700px;
+    margin-bottom: 0;
+    color: #64748b
+}
+
+.access-form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 16px
+}
+
+.access-form-grid label,
+.access-record-controls label {
+    display: grid;
+    gap: 6px;
+    color: #475569;
+    font-size: .84rem;
+    font-weight: 650
+}
+
+.access-form-grid input:disabled {
+    color: #94a3b8;
+    background: #f1f5f9;
+    border-color: #d7dee8;
+    cursor: not-allowed;
+    opacity: 1
+}
+
+.access-form-note {
+    margin: 14px 0 0;
+    color: #64748b;
+    font-size: .84rem;
+    line-height: 1.55
+}
+
+.access-form-actions {
+    margin-top: 18px
+}
+
+.access-records-heading {
+    display: flex;
+    gap: 16px;
+    justify-content: space-between
+}
+
+.access-record-controls {
+    display: flex;
+    gap: 8px;
+    align-items: end;
+    flex: 0 0 auto
+}
+
+.access-record-controls label {
+    min-width: 108px
+}
+
+.access-record-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px
+}
+
+.access-record {
+    display: grid;
+    gap: 12px;
+    padding: 15px;
+    border: 1px solid #dfe6f0;
+    border-left: 4px solid #cbd5e1;
+    border-radius: 9px;
+    background: #fff
+}
+
+.access-record.is-ban {
+    border-left-color: #d34b58
+}
+
+.access-record.is-pardon {
+    border-left-color: #23875d
+}
+
+.access-record-heading,
+.access-record-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between
+}
+
+.access-record-heading strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace
+}
+
+.access-decision-badge {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: .76rem;
+    font-weight: 700
+}
+
+.access-decision-badge.is-ban {
+    color: #9d1c2b;
+    background: #fff0f1
+}
+
+.access-decision-badge.is-pardon {
+    color: #15633f;
+    background: #eaf8f0
+}
+
+.access-record-meta {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px
+}
+
+.access-record-meta>div {
+    min-width: 0;
+    padding: 8px;
+    background: #f8fafc;
+    border-radius: 6px
+}
+
+.access-record-meta span,
+.access-record-meta strong {
+    display: block
+}
+
+.access-record-meta span {
+    margin-bottom: 3px;
+    color: #64748b;
+    font-size: .74rem
+}
+
+.access-record-meta strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #334155;
+    font-size: .82rem
+}
+
+.access-record-actions {
+    justify-content: flex-end
+}
+
+.button-danger {
+    color: #a32332;
+    background: #fff0f1;
+    border-color: #efadb5
+}
+
+.button-danger:hover {
+    color: #fff;
+    background: #c83b4a;
+    border-color: #c83b4a
+}
+
 .system-heading {
     margin-bottom: 16px
 }
@@ -1336,8 +1516,24 @@ textarea {
 
     .overview-grid,
     .rule-workspace,
-    .policy-metadata-section {
+    .policy-metadata-section,
+    .access-form-grid,
+    .access-record-meta {
         grid-template-columns: 1fr
+    }
+
+    .access-records-heading,
+    .access-record-controls {
+        align-items: flex-start;
+        flex-direction: column
+    }
+
+    .access-record-controls {
+        width: 100%
+    }
+
+    .access-record-controls label {
+        width: 100%
     }
 
     .rule-list-panel {

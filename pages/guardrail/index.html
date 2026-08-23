@@ -248,10 +248,45 @@
     </section>
     <section class="tab-panel" id="panel-access" role="tabpanel" aria-labelledby="tab-access" data-panel="access"
       hidden>
-      <div class="placeholder">
-        <p class="eyebrow">P1</p>
-        <h2>访问控制</h2>
-        <p>全局黑名单与白名单将作为输入访问控制 MVP 在此维护。</p>
+      <div class="access-layout">
+        <section class="card access-decision-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">INPUT ACCESS CONTROL</p>
+              <h2>封禁与赦免</h2>
+              <p>主体由平台适配器名与发送者 ID 组成；同一平台用户跨群聊和私聊共享访问状态。</p>
+            </div>
+          </div>
+          <p id="access-form-status" class="muted" aria-live="polite"></p>
+          <div class="access-form-grid">
+            <label>平台适配器名<input id="access-platform-id" type="text" autocomplete="off" placeholder="例如 aiocqhttp" /></label>
+            <label>发送者 ID<input id="access-sender-id" type="text" autocomplete="off" placeholder="例如 123456" /></label>
+            <label>访问决定<select id="access-decision"><option value="ban">封禁</option><option value="pardon">赦免</option></select></label>
+            <label>有效期<select id="access-duration-mode"><option value="temporary">临时</option><option value="permanent">永久</option></select></label>
+            <label id="access-duration-row">时长（分钟）<input id="access-duration-minutes" type="number" min="1" step="1" value="60" /></label>
+            <label>原因代码<select id="access-reason-code"></select></label>
+          </div>
+          <p class="access-form-note">赦免只跳过访问控制，不会跳过输入、请求或输出 Rail。原因只保存固定的脱敏代码。</p>
+          <div class="floating-action-group access-form-actions" aria-label="访问控制操作">
+            <button id="save-access-decision" type="button">保存访问决定</button>
+            <button id="reset-access-form" type="button" class="button-secondary">新建决定</button>
+          </div>
+        </section>
+        <section class="card access-records-card">
+          <div class="card-heading access-records-heading">
+            <div>
+              <p class="eyebrow">ACTIVE PRINCIPALS</p>
+              <h2>当前访问决定 <span id="access-record-count" class="count-badge">0</span></h2>
+              <p>仅显示仍有效的封禁与赦免；临时决定到期后会自动失效。</p>
+            </div>
+            <div class="access-record-controls">
+              <label>筛选<select id="access-decision-filter"><option value="all">全部</option><option value="ban">仅封禁</option><option value="pardon">仅赦免</option></select></label>
+              <button id="refresh-access-records" type="button" class="button-secondary">刷新</button>
+            </div>
+          </div>
+          <p id="access-records-status" class="muted" aria-live="polite"></p>
+          <div id="access-record-list" class="access-record-list" aria-live="polite"></div>
+        </section>
       </div>
     </section>
     <section class="tab-panel" id="panel-knowledge" role="tabpanel" aria-labelledby="tab-knowledge"

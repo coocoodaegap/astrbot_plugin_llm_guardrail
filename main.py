@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - older SDKs and isolated unit tests.
     StarTools = None
 
 try:
+    from .access_control import AccessControlService
     from .adapters import AstrBotAdapter
     from .config import resolve_session_scope
     from .constants import (
@@ -24,8 +25,9 @@ try:
     from .pages_api import GuardrailPagesApiMixin
     from .session_lock import UmoLockManager, get_global_umo_lock_manager
     from .snapshots import ConfigSnapshotManager
-    from .state import MemoryStateStore, StateStore
+    from .state import AstrBotKvStateStore, MemoryStateStore, StateStore
 except ImportError:  # pragma: no cover - fallback for direct script loading
+    from access_control import AccessControlService
     from adapters import AstrBotAdapter
     from config import resolve_session_scope
     from constants import (
@@ -37,11 +39,11 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from pages_api import GuardrailPagesApiMixin
     from session_lock import UmoLockManager, get_global_umo_lock_manager
     from snapshots import ConfigSnapshotManager
-    from state import MemoryStateStore, StateStore
+    from state import AstrBotKvStateStore, MemoryStateStore, StateStore
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.2.0"
 MESSAGE_STAGE_LOCK_EXTRA = "_llm_guardrail_message_stage_lock"
 
 
@@ -65,17 +67,26 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             persistence_path=self._snapshot_path(),
         )
         self.normalized_config = self.snapshot_manager.current.runtime_config
-        self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
         self.umo_locks: UmoLockManager = get_global_umo_lock_manager()
-        self.state_store: StateStore = MemoryStateStore()
+        self.state_store: StateStore = self._build_state_store()
+        self.access_control = AccessControlService(self.state_store)
+        self.pipeline = GuardrailPipeline(
+            self.normalized_config,
+            self.adapter,
+            access_control=self.access_control,
+        )
         self._register_pages_web_api()
 
     async def initialize(self) -> None:
         """Initialize the plugin."""
         self.normalized_config = self.snapshot_manager.current.runtime_config
-        self.pipeline = GuardrailPipeline(self.normalized_config, self.adapter)
+        self.pipeline = GuardrailPipeline(
+            self.normalized_config,
+            self.adapter,
+            access_control=self.access_control,
+        )
         logger.info(
-            "[LLMGuardrail] loaded P1 v%s | warnings=%s",
+            "[LLMGuardrail] loaded P2 v%s | warnings=%s",
             PLUGIN_VERSION,
             len(self.normalized_config.warnings),
         )
@@ -169,7 +180,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("guardrail")
     async def guardrail_status(self, event: AstrMessageEvent):
-        """Show the current LLM Guardrail P0 status."""
+        """Show the current LLM Guardrail P2 status."""
         cfg = self.snapshot_manager.current.runtime_config
         current_umo = self.adapter.get_umo(event)
         session_decision = resolve_session_scope(
@@ -192,7 +203,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             )
 
         lines = [
-            "LLM Guardrail P0",
+            "LLM Guardrail P2",
             f"- version: {PLUGIN_VERSION}",
             f"- schema: {cfg.schema_version}",
             "- session scope: "
@@ -219,7 +230,29 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         _policy_id, runtime_config = snapshot.runtime_config_for_umo(
             self.adapter.get_umo(event)
         )
-        return GuardrailPipeline(runtime_config, self.adapter)
+        return GuardrailPipeline(
+            runtime_config,
+            self.adapter,
+            access_control=self.access_control,
+        )
+
+    def _build_state_store(self) -> StateStore:
+        """Use AstrBot's plugin KV storage when the host exposes it."""
+
+        required_methods = (
+            "get_kv_data",
+            "put_kv_data",
+            "delete_kv_data",
+        )
+        if all(callable(getattr(self, method_name, None)) for method_name in required_methods):
+            return AstrBotKvStateStore(self, prefix=PLUGIN_NAME)
+        warning = getattr(logger, "warning", None)
+        if callable(warning):
+            warning(
+                "[LLMGuardrail] AstrBot KV storage is unavailable; "
+                "access-control state will not survive restart"
+            )
+        return MemoryStateStore()
 
     @staticmethod
     def _snapshot_path() -> Path | None:

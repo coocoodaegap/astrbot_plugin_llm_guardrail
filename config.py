@@ -147,6 +147,7 @@ class NormalizedConfig:
     schema_version: str
     fallback_policy_settings: dict[str, Any]
     session_control: dict[str, Any]
+    access_control: dict[str, Any]
     debug_settings: dict[str, Any]
     rails: dict[str, NormalizedRail]
     warnings: list[str] = field(default_factory=list)
@@ -166,6 +167,10 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     session_control = _normalize_session_control(
         raw_session_control,
         warnings=warnings,
+    )
+    access_control = _normalize_access_control(
+        _as_dict(_config_get(raw_config, "access_control", {})),
+        warnings,
     )
     debug_settings = _normalize_debug_settings(
         _as_dict(_config_get(raw_config, "debug_settings", {})),
@@ -191,6 +196,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
         schema_version=schema_version,
         fallback_policy_settings=fallback_policy_settings,
         session_control=session_control,
+        access_control=access_control,
         debug_settings=debug_settings,
         rails=rails,
         warnings=warnings,
@@ -276,6 +282,46 @@ def _normalize_session_mode(
         warnings.append(f"{label} is invalid; fallback to all_run")
         return "all_run"
     return mode
+
+
+def _normalize_access_control(
+    raw_settings: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Normalize P2 automatic input access-control settings.
+
+    ``-1`` is intentionally the only permanent-duration sentinel.  Keeping
+    ``0`` invalid prevents a zero-minute decision from silently becoming a
+    permanent one after configuration is saved through a different surface.
+    """
+
+    duration = _as_int(raw_settings.get("blacklist_duration_minutes"), 60)
+    if duration == 0 or duration < -1:
+        warnings.append(
+            "access_control.blacklist_duration_minutes must be -1 or positive; fallback to 60"
+        )
+        duration = 60
+
+    threshold = _as_int(raw_settings.get("blacklist_max_violations"), 3)
+    if threshold < 1:
+        warnings.append(
+            "access_control.blacklist_max_violations must be positive; fallback to 3"
+        )
+        threshold = 3
+
+    return {
+        "auto_blacklist_enabled": _as_bool(
+            raw_settings.get("auto_blacklist_enabled"), False
+        ),
+        "blacklist_duration_minutes": duration,
+        "blacklist_max_violations": threshold,
+        "blacklist_message": _as_str(
+            raw_settings.get(
+                "blacklist_message",
+                "你已因多次触发风险规则被临时限制使用，请稍后再试。",
+            )
+        ),
+    }
 
 
 def resolve_session_scope(

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 
 EMPTY_UMO_KEY = "__empty_umo__"
+EMPTY_PRINCIPAL_KEY = "__empty_principal__"
 
 
 @dataclass
@@ -85,9 +86,29 @@ class UmoLockManager:
         return value or EMPTY_UMO_KEY
 
 
+class PrincipalLockManager(UmoLockManager):
+    """Serialize access-control mutations for one platform-scoped person.
+
+    This deliberately reuses the proven lease/ref-count mechanics of the UMO
+    lock manager while keeping the two lock domains semantically separate.
+    """
+
+    @staticmethod
+    def _key(principal_id: str) -> str:
+        value = str(principal_id or "").strip()
+        return value or EMPTY_PRINCIPAL_KEY
+
+
 _GLOBAL_UMO_LOCK_MANAGER = UmoLockManager()
+_GLOBAL_PRINCIPAL_LOCK_MANAGER = PrincipalLockManager()
 
 
 def get_global_umo_lock_manager() -> UmoLockManager:
     """Return the process-wide lock manager shared by plugin instances."""
     return _GLOBAL_UMO_LOCK_MANAGER
+
+
+def get_global_principal_lock_manager() -> PrincipalLockManager:
+    """Return the process-wide access-control lock manager."""
+
+    return _GLOBAL_PRINCIPAL_LOCK_MANAGER

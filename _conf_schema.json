@@ -212,7 +212,7 @@
       "blacklist_duration_minutes": {
         "type": "int",
         "description": "封禁时长（分钟）",
-        "hint": "0 表示永久。",
+        "hint": "-1 表示永久；仅允许 -1 或正整数。",
         "default": 60
       },
       "blacklist_max_violations": {

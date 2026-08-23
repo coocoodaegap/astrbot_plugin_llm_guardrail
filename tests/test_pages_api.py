@@ -10,7 +10,10 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from pages_api import GuardrailPagesApiMixin
 from policy_library import PolicyLibrary
+from access_control import AccessControlService
+from session_lock import PrincipalLockManager
 from snapshots import ConfigSnapshotManager
+from state import MemoryStateStore
 
 
 class _Context:
@@ -46,6 +49,10 @@ class _Plugin(GuardrailPagesApiMixin):
         self.context = _Context()
         self.config = _Config({})
         self.snapshot_manager = ConfigSnapshotManager(self.config)
+        self.access_control = AccessControlService(
+            MemoryStateStore(),
+            principal_locks=PrincipalLockManager(),
+        )
 
 
 class _Request:
@@ -76,6 +83,9 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/get_diagnostics",
             "/astrbot_plugin_llm_guardrail/get_system_settings",
             "/astrbot_plugin_llm_guardrail/save_system_settings",
+            "/astrbot_plugin_llm_guardrail/get_access_control_records",
+            "/astrbot_plugin_llm_guardrail/set_access_control_decision",
+            "/astrbot_plugin_llm_guardrail/clear_access_control_decision",
             "/astrbot_plugin_llm_guardrail/get_rule_library",
             "/astrbot_plugin_llm_guardrail/save_rule_library",
             "/astrbot_plugin_llm_guardrail/get_policy_library",
@@ -129,13 +139,67 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertEqual(
             set(result["settings"]),
-            {"fallback_policy_settings", "session_control", "debug_settings"},
+            {
+                "fallback_policy_settings",
+                "session_control",
+                "access_control",
+                "debug_settings",
+            },
         )
         self.assertEqual(set(result["schema"]), set(result["settings"]))
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
+        self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
         self.assertFalse(result["settings"]["debug_settings"]["logging"])
         self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])
+
+    def test_system_settings_rejects_invalid_access_control_duration(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
+            settings["access_control"]["blacklist_duration_minutes"] = 0
+            with patch(
+                "pages_api.request",
+                _Request({"expected_revision": 0, "settings": settings}),
+            ):
+                result = asyncio.run(plugin._pages_save_system_settings())
+
+        self.assertEqual(result[1], 400)
+        self.assertIn("must be -1 or a positive integer", result[0]["detail"])
+
+    def test_access_control_pages_api_supports_ban_pardon_and_versioned_clear(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "platform_id": "qq",
+                        "sender_id": "42",
+                        "decision": "ban",
+                        "duration_minutes": -1,
+                        "reason_code": "manual_ban",
+                    }
+                ),
+            ):
+                ban = asyncio.run(plugin._pages_set_access_control_decision())
+            listed = asyncio.run(plugin._pages_get_access_control_records())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "platform_id": "qq",
+                        "sender_id": "42",
+                        "expected_decision": "ban",
+                        "expected_record_revision": ban["record"]["record_revision"],
+                    }
+                ),
+            ):
+                cleared = asyncio.run(plugin._pages_clear_access_control_decision())
+
+        self.assertTrue(ban["success"])
+        self.assertEqual(listed["records"][0]["decision"], "ban")
+        self.assertTrue(cleared["success"])
 
     def test_rule_and_policy_libraries_are_returned_without_each_other(self):
         plugin = _Plugin()

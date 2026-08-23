@@ -29,6 +29,68 @@ class AstrBotAdapter:
     def get_umo(self, event: Any) -> str:
         return str(getattr(event, "unified_msg_origin", "") or "")
 
+    def get_principal_parts(self, event: Any) -> tuple[str, str] | None:
+        """Return AstrBot's platform/user identity without deriving it from UMO.
+
+        UMO represents a conversation and would incorrectly turn an entire
+        group into one access-control subject.  Attribute fallbacks keep unit
+        tests and older adapters usable, but no fallback ever parses UMO.
+        """
+
+        platform_id = self._event_platform_name(event)
+        sender_id = self._event_identity_value(
+            event,
+            method_name="get_sender_id",
+            attribute_name="sender_id",
+        )
+        if not platform_id or not sender_id:
+            return None
+        return platform_id, sender_id
+
+    @classmethod
+    def _event_platform_name(cls, event: Any) -> str:
+        """Return the adapter type, not the individual bot/account ID.
+
+        AstrBot exposes both ``get_platform_name()`` (the adapter type such
+        as ``aiocqhttp``) and ``get_platform_id()``.  The latter may identify
+        a configured bot instance, so using it would split one platform's
+        access decisions per bot and make Pages entries unintuitive.  The
+        documented event/session metadata provides stable adapter-name
+        fallbacks without parsing UMO.
+        """
+
+        platform_name = cls._event_identity_value(
+            event,
+            method_name="get_platform_name",
+            attribute_name="platform_name",
+        )
+        if platform_name:
+            return platform_name
+        metadata = getattr(event, "platform_meta", None)
+        platform_name = str(getattr(metadata, "name", "") or "").strip()
+        if platform_name:
+            return platform_name
+        session = getattr(event, "session", None)
+        return str(getattr(session, "platform_name", "") or "").strip()
+
+    @staticmethod
+    def _event_identity_value(
+        event: Any,
+        *,
+        method_name: str,
+        attribute_name: str,
+    ) -> str:
+        getter = getattr(event, method_name, None)
+        value: Any = None
+        if callable(getter):
+            try:
+                value = getter()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                value = None
+        if value is None:
+            value = getattr(event, attribute_name, None)
+        return str(value if value is not None else "").strip()
+
     def get_event_text(self, event: Any) -> str:
         getter = getattr(event, "get_message_str", None)
         if callable(getter):
@@ -120,8 +182,7 @@ class AstrBotAdapter:
     def is_llm_candidate_event(self, event: Any) -> bool:
         if self.is_command_event(event):
             return False
-        text = self._get_event_content_text(event).strip()
-        if not text:
+        if not self.has_input_text(event):
             return False
         marker = getattr(event, "is_at_or_wake_command", None)
         if marker is not None:
@@ -133,6 +194,11 @@ class AstrBotAdapter:
             except (AttributeError, TypeError, ValueError):
                 return True
         return True
+
+    def has_input_text(self, event: Any) -> bool:
+        """Whether the event contains processable text, excluding outlines."""
+
+        return bool(self._get_event_content_text(event).strip())
 
     def _event_text_candidates(self, event: Any) -> list[str]:
         candidates: list[str] = []

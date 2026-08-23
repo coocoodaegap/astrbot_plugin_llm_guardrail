@@ -71,10 +71,17 @@ class AstrBotKvStateStore(StateStore):
 
     async def set(self, namespace: str, key: str, value: Any) -> None:
         _ensure_json_value(value)
-        await self._call(("set", "set_data", "put"), self._full_key(namespace, key), _encode_value(value))
+        await self._call(
+            ("set", "set_data", "put", "put_kv_data"),
+            self._full_key(namespace, key),
+            _encode_value(value),
+        )
 
     async def delete(self, namespace: str, key: str) -> None:
-        await self._call(("delete", "delete_data", "remove"), self._full_key(namespace, key))
+        await self._call(
+            ("delete", "delete_data", "remove", "delete_kv_data"),
+            self._full_key(namespace, key),
+        )
 
     async def list_keys(self, namespace: str, prefix: str = "") -> list[str]:
         full_prefix = self._full_key(namespace, prefix)
@@ -109,7 +116,7 @@ class AstrBotKvStateStore(StateStore):
         raise RuntimeError(f"KV backend does not support any of: {', '.join(names)}")
 
     async def _call_get(self, key: str, default: Any) -> Any:
-        for name in ("get", "get_data"):
+        for name in ("get", "get_data", "get_kv_data"):
             method = getattr(self.kv, name, None)
             if not callable(method):
                 continue

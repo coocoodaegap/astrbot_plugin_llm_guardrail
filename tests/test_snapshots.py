@@ -71,6 +71,12 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
                 {
                     "fallback_policy_settings": {"max_text_chars": 2},
                     "session_control": {},
+                    "access_control": {
+                        "auto_blacklist_enabled": True,
+                        "blacklist_duration_minutes": -1,
+                        "blacklist_max_violations": 2,
+                        "blacklist_message": "blocked",
+                    },
                     "debug_settings": {"logging": True},
                 },
                 expected_revision=0,
@@ -83,6 +89,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertTrue(saved_settings[0]["debug_settings"]["logging"])
         self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 2)
         self.assertTrue(manager.current.runtime_config.debug_settings["logging"])
+        self.assertTrue(manager.current.runtime_config.access_control["auto_blacklist_enabled"])
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
 
@@ -114,6 +121,24 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         )
         self.assertNotIn("inputs is empty", " ".join(config.warnings))
         self.assertFalse(config.rails["output_rail"].nodes)
+
+    def test_fallback_graph_keeps_access_control_system_settings(self):
+        manager = ConfigSnapshotManager(
+            {
+                "access_control": {
+                    "auto_blacklist_enabled": True,
+                    "blacklist_duration_minutes": -1,
+                    "blacklist_max_violations": 7,
+                    "blacklist_message": "access blocked",
+                }
+            }
+        )
+
+        fallback = manager.current.fallback_runtime_config
+
+        self.assertTrue(fallback.access_control["auto_blacklist_enabled"])
+        self.assertEqual(fallback.access_control["blacklist_duration_minutes"], -1)
+        self.assertEqual(fallback.access_control["blacklist_max_violations"], 7)
 
     def test_fallback_llm_review_is_controlled_by_system_settings_and_snapshot_safe(self):
         manager = ConfigSnapshotManager(

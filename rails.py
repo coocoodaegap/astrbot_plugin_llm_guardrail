@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - fallback for local tests
     logger = logging.getLogger(__name__)
 
 try:
+    from .access_control import AccessControlService, make_principal_identity
     from .actions import (
         ErrorActionPlan,
         HitActionPlan,
@@ -46,6 +47,7 @@ try:
         evaluate_text_rule,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
+    from access_control import AccessControlService, make_principal_identity
     from actions import (
         ErrorActionPlan,
         HitActionPlan,
@@ -85,6 +87,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 RESULTS_EXTRA_KEY = "_llm_guardrail_results"
 WARNINGS_EXTRA_KEY = "_llm_guardrail_warnings"
 STATE_EXTRA_KEY = "_llm_guardrail_state"
+INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
 
 DEFAULT_INPUT_BLOCK_MESSAGE = "Request blocked by LLM Guardrail."
 DEFAULT_OUTPUT_BLOCK_MESSAGE = "Response blocked by LLM Guardrail."
@@ -110,9 +113,12 @@ class GuardrailPipeline:
         self,
         config: NormalizedConfig,
         adapter: AstrBotAdapter | None = None,
+        *,
+        access_control: AccessControlService | None = None,
     ) -> None:
         self.config = config
         self.adapter = adapter or AstrBotAdapter()
+        self.access_control = access_control
         self.graph = build_graph_index(config)
         self.scheduler = NodeScheduler(self.graph)
 
@@ -124,10 +130,27 @@ class GuardrailPipeline:
 
     async def run_message_input(self, event: Any) -> RailContext:
         context = self._make_request_context(event, request=None)
-        if not self.adapter.is_llm_candidate_event(event):
+        # Preserve the pre-existing empty/non-text event ignore path.  Access
+        # control is an input gate, but an event without processable text is
+        # not an input and must not emit a blacklist response.
+        if not self.adapter.has_input_text(event):
             self._store_context(event, context)
             return context
-        if not self._admit_session(event, context):
+        # Access control is the input gate: it must run before deciding whether
+        # this event is eligible for Rail 1.  Otherwise an adapter-specific
+        # wake-up flag could accidentally create a bypass for a banned person.
+        if not await self._admit_access_control(event, context):
+            self._store_context(event, context)
+            return context
+        if not self.adapter.is_llm_candidate_event(event):
+            # A permitted non-wakeup message still has no Rail workload.
+            self._store_context(event, context)
+            return context
+        if not await self._admit_session(
+            event,
+            context,
+            check_access_control=False,
+        ):
             self._store_context(event, context)
             return context
 
@@ -143,7 +166,7 @@ class GuardrailPipeline:
         if not self.adapter.is_llm_candidate_event(event):
             self._store_context(event, context)
             return context
-        if not self._admit_session(event, context):
+        if not await self._admit_session(event, context):
             self._store_context(event, context)
             return context
         if context.input_blocked:
@@ -162,7 +185,7 @@ class GuardrailPipeline:
         if self._bypass_admin_command(event):
             self._store_context(event, context)
             return context
-        if not self._admit_session(event, context):
+        if not await self._admit_session(event, context):
             self._store_context(event, context)
             return context
 
@@ -189,7 +212,7 @@ class GuardrailPipeline:
         if self._bypass_admin_command(event):
             self._store_context(event, context)
             return context
-        if not self._admit_session(event, context):
+        if not await self._admit_session(event, context, check_access_control=False):
             self._store_context(event, context)
             return context
 
@@ -251,7 +274,15 @@ class GuardrailPipeline:
         )
         return context
 
-    def _admit_session(self, event: Any, context: RailContext) -> bool:
+    async def _admit_session(
+        self,
+        event: Any,
+        context: RailContext,
+        *,
+        check_access_control: bool = True,
+    ) -> bool:
+        if check_access_control and not await self._admit_access_control(event, context):
+            return False
         decision = resolve_session_scope(
             self.config.session_control,
             context.umo,
@@ -262,6 +293,32 @@ class GuardrailPipeline:
             return True
         if decision.action == "block":
             self._apply_session_control_block(context)
+        return False
+
+    async def _admit_access_control(self, event: Any, context: RailContext) -> bool:
+        """Apply the principal-scoped gate before session policy or Rails."""
+
+        if self.access_control is None or self._bypass_admin_command(event):
+            return True
+        parts = self.adapter.get_principal_parts(event)
+        if parts is None:
+            context.warnings.append(
+                "access control identity is unavailable; fail open"
+            )
+            return True
+        try:
+            principal = make_principal_identity(*parts)
+        except (TypeError, ValueError) as exc:
+            context.warnings.append(
+                f"access control identity is invalid; fail open ({type(exc).__name__})"
+            )
+            return True
+        admission = await self.access_control.admit(principal)
+        if admission.warning:
+            context.warnings.append(admission.warning)
+        if admission.allowed:
+            return True
+        self._apply_access_control_block(context)
         return False
 
     def _bypass_admin_command(self, event: Any) -> bool:
@@ -280,6 +337,20 @@ class GuardrailPipeline:
             adapter_result = self.adapter.set_block_result(context.event, message)
         else:
             adapter_result = self.adapter.stop_event(context.event)
+        context.warnings.extend(adapter_result.warnings)
+
+    def _apply_access_control_block(self, context: RailContext) -> None:
+        """Block a banned principal using only the configured AC message."""
+
+        context.input_blocked = True
+        message = str(self.config.access_control.get("blacklist_message", "")).strip()
+        if not message:
+            adapter_result = self.adapter.stop_event(context.event)
+        elif context.response is not None:
+            context.output_blocked = True
+            adapter_result = self.adapter.set_response_text(context.response, message)
+        else:
+            adapter_result = self.adapter.set_block_result(context.event, message)
         context.warnings.extend(adapter_result.warnings)
 
     def _store_context(self, event: Any, context: RailContext) -> None:
@@ -316,7 +387,7 @@ class GuardrailPipeline:
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
-            self._apply_input_action(rail, ctx, result, current_text, hit_plan)
+            await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
             if hit_plan.mutate_text:
                 current_text = ctx.current_input
             return result
@@ -350,7 +421,7 @@ class GuardrailPipeline:
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
-            self._apply_input_action(rail, ctx, result, current_text, hit_plan)
+            await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
             if hit_plan.mutate_text:
                 current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
@@ -365,7 +436,7 @@ class GuardrailPipeline:
             ),
         )
 
-    def _apply_input_action(
+    async def _apply_input_action(
         self,
         rail: NormalizedRail,
         context: RailContext,
@@ -405,6 +476,12 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
+            if (
+                adapter_result.success
+                and rail.rail == "input_rail"
+                and context.request is None
+            ):
+                await self._record_terminal_input_block(context)
 
     async def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
@@ -530,7 +607,7 @@ class GuardrailPipeline:
             context.warnings.extend(adapter_warnings)
         context.route_decision = RouteDecision(
             provider_id=provider_id,
-                source_node_id=rule.node_id,
+            source_node_id=rule.node_id,
             applied=adapter_success,
             reason="" if adapter_success else "; ".join(adapter_warnings),
         )
@@ -607,6 +684,44 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
+
+    async def _record_terminal_input_block(self, context: RailContext) -> None:
+        """Count a committed Step 1 block once, never for later rail stages."""
+
+        if self.access_control is None:
+            return
+        if self.adapter.get_event_extra(
+            context.event,
+            INPUT_ACCESS_VIOLATION_COUNTED_EXTRA,
+            False,
+        ):
+            return
+        marker = self.adapter.set_event_extra(
+            context.event,
+            INPUT_ACCESS_VIOLATION_COUNTED_EXTRA,
+            True,
+        )
+        context.warnings.extend(marker.warnings)
+        parts = self.adapter.get_principal_parts(context.event)
+        if parts is None:
+            context.warnings.append(
+                "access control identity is unavailable; terminal block was not counted"
+            )
+            return
+        try:
+            principal = make_principal_identity(*parts)
+        except (TypeError, ValueError) as exc:
+            context.warnings.append(
+                "access control identity is invalid; terminal block was not counted "
+                f"({type(exc).__name__})"
+            )
+            return
+        result = await self.access_control.record_terminal_input_block(
+            principal,
+            self.config.access_control,
+        )
+        if result.warning:
+            context.warnings.append(result.warning)
 
     async def _execute_llm_review(
         self,

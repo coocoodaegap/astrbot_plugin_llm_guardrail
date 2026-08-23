@@ -11,10 +11,20 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from config import normalize_config
+from access_control import (
+    DECISION_BAN,
+    DECISION_PARDON,
+    REASON_MANUAL_BAN,
+    REASON_MANUAL_PARDON,
+    AccessControlService,
+    make_principal_identity,
+)
 from constants import INTERNAL_MARKER
 from adapters import AstrBotAdapter
 from rails import GuardrailPipeline
 from fallback_graph import build_fallback_runtime_config
+from session_lock import PrincipalLockManager
+from state import MemoryStateStore
 from policy_library import (
     PolicyComponent,
     PolicyDefinition,
@@ -36,11 +46,21 @@ sys.modules["astrbot.core.provider.entities"] = fake_entities
 
 
 class FakeEvent:
-    def __init__(self, text="hello", umo="platform:message:session"):
+    def __init__(
+        self,
+        text="hello",
+        umo="platform:message:session",
+        platform_id="platform",
+        sender_id="sender",
+        platform_name=None,
+    ):
         self.message_str = text
         self.message_outline = ""
         self.command_name = ""
         self.unified_msg_origin = umo
+        self.platform_id = platform_id
+        self.platform_name = platform_id if platform_name is None else platform_name
+        self.sender_id = sender_id
         self.extras = {}
         self.result = None
         self.stopped = False
@@ -54,6 +74,15 @@ class FakeEvent:
 
     def get_message_outline(self):
         return self.message_outline
+
+    def get_platform_id(self):
+        return self.platform_id
+
+    def get_platform_name(self):
+        return self.platform_name
+
+    def get_sender_id(self):
+        return self.sender_id
 
     def is_private_chat(self):
         return self.private
@@ -154,6 +183,147 @@ class FakeContext:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_access_control_counts_once_then_blocks_same_person_across_umos(self):
+        cfg = normalize_config(
+            {
+                "access_control": {
+                    "auto_blacklist_enabled": True,
+                    "blacklist_duration_minutes": -1,
+                    "blacklist_max_violations": 2,
+                    "blacklist_message": "access blocked",
+                },
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["risk"],
+                            "action_on_hit": "block",
+                        }
+                    ]
+                },
+            }
+        )
+        service = AccessControlService(
+            MemoryStateStore(),
+            principal_locks=PrincipalLockManager(),
+        )
+        pipeline = GuardrailPipeline(cfg, access_control=service)
+        first = FakeEvent("risk", "qq:group:A", "qq", "same-user")
+        second = FakeEvent("risk", "qq:group:B", "qq", "same-user")
+        third = FakeEvent("safe", "qq:private:same-user", "qq", "same-user")
+
+        asyncio.run(pipeline.run_message_input(first))
+        # Replaying the same message hook must not count a second time.
+        asyncio.run(pipeline.run_message_input(first))
+        asyncio.run(pipeline.run_message_input(second))
+        third_context = asyncio.run(pipeline.run_message_input(third))
+        record = asyncio.run(
+            service.get_active_record(make_principal_identity("qq", "same-user"))
+        )
+
+        self.assertEqual(record["decision"], DECISION_BAN)
+        self.assertEqual(record["violation_count"], 2)
+        self.assertTrue(third_context.input_blocked)
+        self.assertTrue(third.stopped)
+        self.assertEqual(third.result, {"plain": "access blocked"})
+
+    def test_manual_ban_runs_before_candidate_and_input_rail_checks(self):
+        async def run_case():
+            config = normalize_config(
+                {
+                    "access_control": {"blacklist_message": "access blocked"},
+                    "input_rail": {
+                        "rule_list": [
+                            {
+                                "__template_key": "plain_keywords",
+                                "rule_id": "must_not_run",
+                                "keywords": ["ordinary"],
+                                "action_on_hit": "block",
+                            }
+                        ]
+                    },
+                }
+            )
+            service = AccessControlService(
+                MemoryStateStore(),
+                principal_locks=PrincipalLockManager(),
+            )
+            principal = make_principal_identity("aiocqhttp", "10001")
+            saved = await service.set_manual_decision(
+                principal,
+                DECISION_BAN,
+                -1,
+                REASON_MANUAL_BAN,
+            )
+            event = FakeEvent(
+                "ordinary text",
+                "aiocqhttp:group:20001",
+                "bot-instance-30001",
+                "10001",
+                "aiocqhttp",
+            )
+            event.is_at_or_wake_command = False
+            context = await GuardrailPipeline(
+                config,
+                access_control=service,
+            ).run_message_input(event)
+            return saved, context, event
+
+        saved, context, event = asyncio.run(run_case())
+
+        self.assertTrue(saved.success)
+        self.assertTrue(context.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(event.result, {"plain": "access blocked"})
+        self.assertNotIn("must_not_run", context.results)
+
+    def test_pardon_allows_input_rails_but_prevents_automatic_counting(self):
+        cfg = normalize_config(
+            {
+                "access_control": {
+                    "auto_blacklist_enabled": True,
+                    "blacklist_duration_minutes": -1,
+                    "blacklist_max_violations": 1,
+                    "blacklist_message": "access blocked",
+                },
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["risk"],
+                            "action_on_hit": "block",
+                        }
+                    ]
+                },
+            }
+        )
+        service = AccessControlService(
+            MemoryStateStore(),
+            principal_locks=PrincipalLockManager(),
+        )
+        principal = make_principal_identity("qq", "trusted-user")
+        pardon = asyncio.run(
+            service.set_manual_decision(
+                principal,
+                DECISION_PARDON,
+                -1,
+                REASON_MANUAL_PARDON,
+            )
+        )
+        event = FakeEvent("risk", "qq:group:A", "qq", "trusted-user")
+        context = asyncio.run(
+            GuardrailPipeline(cfg, access_control=service).run_message_input(event)
+        )
+        record = asyncio.run(service.get_active_record(principal))
+
+        self.assertTrue(pardon.success)
+        self.assertTrue(context.results["risk"].matched)
+        self.assertTrue(context.input_blocked)
+        self.assertEqual(record["decision"], DECISION_PARDON)
+        self.assertEqual(record["violation_count"], 0)
+
     def test_fallback_instruction_override_keeps_configuration_text_and_blocks_explicit_override(self):
         cfg = build_fallback_runtime_config(
             {
@@ -1114,13 +1284,31 @@ class PipelineTests(unittest.TestCase):
                 "routing_rail": {"enabled": False},
             }
         )
-        event = FakeEvent("")
-        event.message_outline = "[ComponentType.Poke]"
+        async def run_case():
+            service = AccessControlService(
+                MemoryStateStore(),
+                principal_locks=PrincipalLockManager(),
+            )
+            principal = make_principal_identity("platform", "sender")
+            await service.set_manual_decision(
+                principal,
+                DECISION_BAN,
+                -1,
+                REASON_MANUAL_BAN,
+            )
+            event = FakeEvent("")
+            event.message_outline = "[ComponentType.Poke]"
+            context = await GuardrailPipeline(
+                cfg,
+                access_control=service,
+            ).run_message_input(event)
+            return context, event
 
-        ctx = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+        ctx, event = asyncio.run(run_case())
 
         self.assertFalse(ctx.input_blocked)
         self.assertFalse(ctx.results)
+        self.assertFalse(event.stopped)
 
     def test_message_skips_mentioned_slash_commands(self):
         cfg = normalize_config(

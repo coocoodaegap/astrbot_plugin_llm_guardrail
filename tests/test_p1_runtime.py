@@ -1,7 +1,12 @@
 import asyncio
 import unittest
 
-from session_lock import UmoLockManager, get_global_umo_lock_manager
+from session_lock import (
+    PrincipalLockManager,
+    UmoLockManager,
+    get_global_principal_lock_manager,
+    get_global_umo_lock_manager,
+)
 from state import AstrBotKvStateStore, MemoryStateStore
 
 
@@ -33,6 +38,35 @@ class UmoLockManagerTests(unittest.TestCase):
         self.assertTrue(acquired)
         self.assertEqual(keys, [])
 
+
+class PrincipalLockManagerTests(unittest.TestCase):
+    def test_global_principal_lock_manager_is_shared(self):
+        self.assertIs(
+            get_global_principal_lock_manager(),
+            get_global_principal_lock_manager(),
+        )
+
+    def test_same_principal_runs_serially(self):
+        async def run_case():
+            manager = PrincipalLockManager()
+            order = []
+
+            async def worker(name, delay):
+                async with manager.hold('["qq","same-user"]'):
+                    order.append(f"{name}:start")
+                    await asyncio.sleep(delay)
+                    order.append(f"{name}:end")
+
+            await asyncio.gather(worker("a", 0.01), worker("b", 0.0))
+            return order, manager.active_keys()
+
+        order, keys = asyncio.run(run_case())
+
+        self.assertEqual(order, ["a:start", "a:end", "b:start", "b:end"])
+        self.assertEqual(keys, [])
+
+
+class UmoLockManagerAdditionalTests(unittest.TestCase):
     def test_same_umo_runs_serially(self):
         async def run_case():
             manager = UmoLockManager()
@@ -128,6 +162,20 @@ class _FakeKv:
         return [key for key in self.data if key.startswith(prefix)]
 
 
+class _FakeStarKv:
+    def __init__(self):
+        self.data = {}
+
+    async def get_kv_data(self, key, default=None):
+        return self.data.get(key, default)
+
+    async def put_kv_data(self, key, value):
+        self.data[key] = value
+
+    async def delete_kv_data(self, key):
+        self.data.pop(key, None)
+
+
 class AstrBotKvStateStoreTests(unittest.TestCase):
     def test_wraps_astrbot_like_kv(self):
         async def run_case():
@@ -144,6 +192,21 @@ class AstrBotKvStateStoreTests(unittest.TestCase):
 
         self.assertEqual(value, {"blocked": True})
         self.assertEqual(keys, ["user:1"])
+        self.assertEqual(missing, {})
+
+    def test_wraps_real_astrbot_star_kv_method_names(self):
+        async def run_case():
+            kv = _FakeStarKv()
+            store = AstrBotKvStateStore(kv, prefix="guardrail")
+            await store.set("access_control", "principal_records", {"version": 1})
+            value = await store.get("access_control", "principal_records")
+            await store.delete("access_control", "principal_records")
+            missing = await store.get("access_control", "principal_records", {})
+            return value, missing
+
+        value, missing = asyncio.run(run_case())
+
+        self.assertEqual(value, {"version": 1})
         self.assertEqual(missing, {})
 
 

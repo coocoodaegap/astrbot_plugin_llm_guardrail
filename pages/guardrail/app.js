@@ -103,12 +103,30 @@ const status = $("status"),
   confirmRuleCreation = $("confirm-rule-creation"),
   newRuleId = $("new-rule-id"),
   newRuleDescription = $("new-rule-description"),
-  ruleCreationStatus = $("rule-creation-status");
+  ruleCreationStatus = $("rule-creation-status"),
+  accessPlatformId = $("access-platform-id"),
+  accessSenderId = $("access-sender-id"),
+  accessDecision = $("access-decision"),
+  accessDurationMode = $("access-duration-mode"),
+  accessDurationRow = $("access-duration-row"),
+  accessDurationMinutes = $("access-duration-minutes"),
+  accessReasonCode = $("access-reason-code"),
+  accessFormStatus = $("access-form-status"),
+  saveAccessDecision = $("save-access-decision"),
+  resetAccessForm = $("reset-access-form"),
+  accessRecordCount = $("access-record-count"),
+  accessDecisionFilter = $("access-decision-filter"),
+  refreshAccessRecords = $("refresh-access-records"),
+  accessRecordsStatus = $("access-records-status"),
+  accessRecordList = $("access-record-list");
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
   group_chat_mode: "决定哪些群聊会进入 Guardrail 流程。",
   private_chat_mode: "决定哪些私聊会进入 Guardrail 流程。",
+  blacklist_duration_minutes: "-1 表示永久；这里选择“永久”时会保存为 -1。正整数表示封禁分钟数。",
+  blacklist_max_violations: "只有成功提交的 Step 1 终止性拦截才会计入此阈值。",
+  blacklist_message: "留空时静默拦截已封禁主体。",
 };
 const templates = [
     "plain_keywords",
@@ -245,6 +263,11 @@ let currentRevision = null,
     renderFrame: 0,
     animationFrame: 0,
   };
+let accessRecords = [],
+  accessReasonCodes = { ban: [], pardon: [] },
+  accessFormExpectedRecordRevision = null,
+  accessRefreshEpoch = 0,
+  accessMutationInFlight = false;
 function populateRuleActionOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -2776,6 +2799,239 @@ function createRule() {
   openRule(id);
   renderRuleList();
 }
+function accessReasonOptions(decision) {
+  const options = Array.isArray(accessReasonCodes?.[decision])
+    ? accessReasonCodes[decision]
+    : [];
+  if (options.length) return options;
+  return decision === "ban"
+    ? [{ code: "manual_ban", label: "手动封禁" }]
+    : [{ code: "manual_pardon", label: "手动赦免" }];
+}
+function renderAccessReasonCodeOptions(selectedCode = "") {
+  const currentDecision = accessDecision.value === "pardon" ? "pardon" : "ban";
+  const options = accessReasonOptions(currentDecision);
+  accessReasonCode.replaceChildren();
+  for (const item of options) {
+    const option = document.createElement("option");
+    option.value = item.code;
+    option.textContent = `${item.label}（${item.code}）`;
+    accessReasonCode.append(option);
+  }
+  const known = options.some((item) => item.code === selectedCode);
+  accessReasonCode.value = known ? selectedCode : options[0]?.code || "";
+}
+function syncAccessDurationControl() {
+  const permanent = accessDurationMode.value === "permanent";
+  accessDurationRow.hidden = permanent;
+  accessDurationMinutes.disabled = permanent;
+}
+function resetAccessFormState() {
+  accessPlatformId.value = "";
+  accessSenderId.value = "";
+  accessPlatformId.disabled = false;
+  accessSenderId.disabled = false;
+  accessDecision.value = "ban";
+  accessDurationMode.value = "temporary";
+  accessDurationMinutes.value = "60";
+  accessFormExpectedRecordRevision = null;
+  syncAccessDurationControl();
+  renderAccessReasonCodeOptions();
+  accessFormStatus.textContent = "填写主体后可创建新的手动封禁或赦免决定。";
+}
+function formatAccessTime(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "永久";
+  return new Date(seconds * 1000).toLocaleString("zh-CN", { hour12: false });
+}
+function formatAccessSource(value) {
+  return value === "automatic" ? "自动" : value === "manual" ? "手动" : "-";
+}
+function appendAccessMeta(container, label, value) {
+  const item = document.createElement("div");
+  const term = document.createElement("span");
+  const detail = document.createElement("strong");
+  term.textContent = label;
+  detail.textContent = String(value || "-");
+  item.append(term, detail);
+  container.append(item);
+}
+function editAccessRecord(record) {
+  accessPlatformId.value = String(record.platform_id || "");
+  accessSenderId.value = String(record.sender_id || "");
+  // A record revision belongs to this exact principal key.  Replacing its
+  // decision must never accidentally turn into a write against another key.
+  accessPlatformId.disabled = true;
+  accessSenderId.disabled = true;
+  accessDecision.value = record.decision === "pardon" ? "pardon" : "ban";
+  const expiration = Number(record.decision_expires_at);
+  if (expiration === 0) {
+    accessDurationMode.value = "permanent";
+  } else {
+    accessDurationMode.value = "temporary";
+    const remainingMinutes = Math.max(1, Math.ceil((expiration * 1000 - Date.now()) / 60000));
+    accessDurationMinutes.value = String(remainingMinutes);
+  }
+  accessFormExpectedRecordRevision = Number.isInteger(record.record_revision)
+    ? record.record_revision
+    : null;
+  syncAccessDurationControl();
+  renderAccessReasonCodeOptions(record.decision_reason_code);
+  accessFormStatus.textContent = `正在替换 ${record.principal_id} 的当前决定；主体标识已锁定，保存会校验记录版本。`;
+  accessPlatformId.focus();
+}
+function renderAccessRecords() {
+  accessRecordList.replaceChildren();
+  const filter = accessDecisionFilter.value;
+  const records = accessRecords.filter((record) => filter === "all" || record.decision === filter);
+  accessRecordCount.textContent = String(records.length);
+  if (!records.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "没有符合筛选条件的有效访问决定。";
+    accessRecordList.append(empty);
+    return;
+  }
+  for (const record of records) {
+    const card = document.createElement("article");
+    card.className = `access-record is-${record.decision}`;
+    const heading = document.createElement("div");
+    heading.className = "access-record-heading";
+    const identity = document.createElement("strong");
+    const badge = document.createElement("span");
+    identity.textContent = record.principal_id || "未知主体";
+    badge.className = `access-decision-badge is-${record.decision}`;
+    badge.textContent = record.decision === "pardon" ? "赦免" : "封禁";
+    heading.append(identity, badge);
+    const metadata = document.createElement("div");
+    metadata.className = "access-record-meta";
+    appendAccessMeta(metadata, "来源", formatAccessSource(record.decision_source));
+    appendAccessMeta(metadata, "到期", formatAccessTime(record.decision_expires_at));
+    appendAccessMeta(metadata, "违规计数", record.violation_count ?? 0);
+    appendAccessMeta(metadata, "决定原因", record.decision_reason_label || record.decision_reason_code || "-");
+    appendAccessMeta(metadata, "最近违规", record.last_violation_reason_label || record.last_violation_reason_code || "-");
+    const actions = document.createElement("div");
+    actions.className = "access-record-actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "button-secondary";
+    edit.textContent = "替换决定";
+    edit.disabled = accessMutationInFlight;
+    edit.addEventListener("click", () => editAccessRecord(record));
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "button-danger";
+    clear.textContent = record.decision === "pardon" ? "撤销赦免" : "解除封禁";
+    clear.disabled = accessMutationInFlight;
+    clear.addEventListener("click", () => clearAccessDecision(record));
+    actions.append(edit, clear);
+    card.append(heading, metadata, actions);
+    accessRecordList.append(card);
+  }
+}
+function setAccessMutationBusy(busy) {
+  accessMutationInFlight = busy;
+  saveAccessDecision.disabled = busy;
+  resetAccessForm.disabled = busy;
+  refreshAccessRecords.disabled = busy;
+  renderAccessRecords();
+}
+function applyAccessRecordsPayload(payload) {
+  accessRecords = Array.isArray(payload?.records) ? payload.records : [];
+  accessReasonCodes = payload?.reason_codes && typeof payload.reason_codes === "object"
+    ? payload.reason_codes
+    : { ban: [], pardon: [] };
+  renderAccessReasonCodeOptions(accessReasonCode.value);
+  renderAccessRecords();
+}
+async function refreshAccessControl() {
+  if (!bridge) return;
+  const epoch = ++accessRefreshEpoch;
+  refreshAccessRecords.disabled = true;
+  try {
+    const payload = await bridge.apiGet("get_access_control_records");
+    if (epoch !== accessRefreshEpoch) return;
+    if (!payload?.success) {
+      accessRecordsStatus.textContent = payload?.error || "无法读取访问控制状态。";
+      return;
+    }
+    applyAccessRecordsPayload(payload);
+    accessRecordsStatus.textContent = `已加载 ${accessRecords.length} 条有效访问决定。`;
+  } catch (error) {
+    if (epoch === accessRefreshEpoch) {
+      accessRecordsStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  } finally {
+    if (epoch === accessRefreshEpoch && !accessMutationInFlight) {
+      refreshAccessRecords.disabled = false;
+    }
+  }
+}
+async function saveAccessDecisionMutation() {
+  if (!bridge || accessMutationInFlight) return;
+  const platformId = accessPlatformId.value.trim();
+  const senderId = accessSenderId.value.trim();
+  if (!platformId || !senderId) {
+    accessFormStatus.textContent = "平台适配器名和发送者 ID 都不能为空。";
+    return;
+  }
+  const permanent = accessDurationMode.value === "permanent";
+  const durationMinutes = permanent ? -1 : Number(accessDurationMinutes.value);
+  if (!permanent && (!Number.isInteger(durationMinutes) || durationMinutes < 1)) {
+    accessFormStatus.textContent = "临时时长必须是正整数分钟。";
+    return;
+  }
+  const payload = {
+    platform_id: platformId,
+    sender_id: senderId,
+    decision: accessDecision.value,
+    duration_minutes: durationMinutes,
+    reason_code: accessReasonCode.value,
+  };
+  if (Number.isInteger(accessFormExpectedRecordRevision)) {
+    payload.expected_record_revision = accessFormExpectedRecordRevision;
+  }
+  setAccessMutationBusy(true);
+  try {
+    const result = await bridge.apiPost("set_access_control_decision", payload);
+    if (!result?.success) {
+      accessFormStatus.textContent = result?.error || "访问决定保存失败。";
+      if (result?.conflict) await refreshAccessControl();
+      return;
+    }
+    accessFormStatus.textContent = "访问决定已保存。";
+    resetAccessFormState();
+    await refreshAccessControl();
+  } catch (error) {
+    accessFormStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    setAccessMutationBusy(false);
+  }
+}
+async function clearAccessDecision(record) {
+  if (!bridge || accessMutationInFlight) return;
+  setAccessMutationBusy(true);
+  accessRecordsStatus.textContent = `正在解除 ${record.principal_id} 的${record.decision === "pardon" ? "赦免" : "封禁"}…`;
+  try {
+    const result = await bridge.apiPost("clear_access_control_decision", {
+      platform_id: record.platform_id,
+      sender_id: record.sender_id,
+      expected_decision: record.decision,
+      expected_record_revision: record.record_revision,
+    });
+    if (!result?.success) {
+      accessRecordsStatus.textContent = result?.error || "访问决定解除失败。";
+      if (result?.conflict) await refreshAccessControl();
+      return;
+    }
+    accessRecordsStatus.textContent = "访问决定已解除。";
+    await refreshAccessControl();
+  } catch (error) {
+    accessRecordsStatus.textContent = `解除失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    setAccessMutationBusy(false);
+  }
+}
 async function refresh() {
   const [overviewResult, diagnosticsResult, ruleResult, policyResult, systemSettingsResult] =
     await Promise.all([
@@ -2790,6 +3046,7 @@ async function refresh() {
   renderDiagnostics(diagnosticsResult.diagnostics || []);
   renderSystemSettings(systemSettingsResult);
   systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
+  await refreshAccessControl();
   const previousOpenRuleIds = [...openRuleIds];
   ruleLibrary = {
     rules: Array.isArray(ruleResult.rule_library?.rules)
@@ -2981,6 +3238,13 @@ saveSystemSettings.addEventListener("click", async () => {
     saveSystemSettings.disabled = false;
   }
 });
+accessDecision.addEventListener("change", () => renderAccessReasonCodeOptions());
+accessDurationMode.addEventListener("change", syncAccessDurationControl);
+accessDecisionFilter.addEventListener("change", renderAccessRecords);
+refreshAccessRecords.addEventListener("click", refreshAccessControl);
+saveAccessDecision.addEventListener("click", saveAccessDecisionMutation);
+resetAccessForm.addEventListener("click", resetAccessFormState);
+resetAccessFormState();
 if (!bridge) {
   status.textContent = "当前不在 AstrBot Pages 环境中，无法读取或保存配置。";
 } else {
