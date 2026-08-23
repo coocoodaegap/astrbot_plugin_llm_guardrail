@@ -163,6 +163,14 @@ const templateDescriptions = {
   length_anomaly_detector: "长度异常检测器",
   role_marker_spoofing_detector: "角色标记伪造检测器",
   instruction_override_detector: "指令覆盖检测器",
+  contains_request_user_id: "请求者 ID 包含检测器",
+  contains_at_user_id: "@ 用户 ID 包含检测器",
+  contains_forward: "转发消息检测器",
+  contains_file: "文件消息检测器",
+  contains_image: "图片消息检测器",
+  contains_record: "语音消息检测器",
+  contains_video: "视频消息检测器",
+  contains_link: "链接消息检测器",
   rag_judge: "知识库裁判",
   llm_review: "LLM 审查",
   replace_input: "替换输入",
@@ -742,6 +750,68 @@ const componentDefinitions = {
       { key: "detect_role_reassignment", label: "检测角色重设", hint: "仅在同时存在覆盖既有约束意图时命中。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, min_evidence: 2, max_token_gap: 12, detect_instruction_replacement: true, detect_hidden_content_request: true, detect_authority_claim: true, detect_role_reassignment: true }),
+  },
+  contains_request_user_id: {
+    label: "请求者 ID 包含检测器",
+    description: "当前消息发送者 ID 位于给定列表时命中；不读取会话历史。",
+    rails: new Set(["input_rail"]),
+    fields: [
+      { key: "user_ids", label: "用户 ID 列表", hint: "每行一个请求者 ID；空列表不能保存为可用元件。", type: "list", default: [], fullWidth: true },
+    ],
+    defaultConfig: () => ({ user_ids: [] }),
+    defaultAction: "observe",
+  },
+  contains_at_user_id: {
+    label: "@ 用户 ID 包含检测器",
+    description: "消息链中任一 @ 段的目标 ID 位于给定列表时命中。",
+    rails: new Set(["input_rail"]),
+    fields: [
+      { key: "user_ids", label: "用户 ID 列表", hint: "每行一个被 @ 的用户 ID；空列表不能保存为可用元件。", type: "list", default: [], fullWidth: true },
+    ],
+    defaultConfig: () => ({ user_ids: [] }),
+    defaultAction: "observe",
+  },
+  contains_forward: {
+    label: "转发消息检测器",
+    description: "检测 AstrBot Forward、Node 或 Nodes 消息段；不展开转发内容。",
+    rails: new Set(["input_rail"]),
+    defaultConfig: () => ({}),
+    defaultAction: "observe",
+  },
+  contains_file: {
+    label: "文件消息检测器",
+    description: "检测 AstrBot File 消息段；不下载或解析文件。",
+    rails: new Set(["input_rail"]),
+    defaultConfig: () => ({}),
+    defaultAction: "observe",
+  },
+  contains_image: {
+    label: "图片消息检测器",
+    description: "检测 AstrBot Image 消息段；不执行 OCR 或图片理解。",
+    rails: new Set(["input_rail"]),
+    defaultConfig: () => ({}),
+    defaultAction: "observe",
+  },
+  contains_record: {
+    label: "语音消息检测器",
+    description: "检测 AstrBot Record 消息段；不进行音频转写。",
+    rails: new Set(["input_rail"]),
+    defaultConfig: () => ({}),
+    defaultAction: "observe",
+  },
+  contains_video: {
+    label: "视频消息检测器",
+    description: "检测 AstrBot Video 消息段；不下载或分析视频。",
+    rails: new Set(["input_rail"]),
+    defaultConfig: () => ({}),
+    defaultAction: "observe",
+  },
+  contains_link: {
+    label: "链接消息检测器",
+    description: "检测 Plain 段中的 HTTP(S) 链接；不访问 URL。",
+    rails: new Set(["input_rail"]),
+    defaultConfig: () => ({}),
+    defaultAction: "observe",
   },
 };
 const policyGraphStepByRail = new Map(
@@ -1904,6 +1974,12 @@ function renderPolicyGraphNodeEditor(node) {
       control.addEventListener("change", () => {
         let nextValue;
         if (field.type === "boolean") nextValue = control.checked;
+        else if (field.type === "list") {
+          nextValue = control.value
+            .split(/\r?\n/)
+            .map((value) => value.trim())
+            .filter(Boolean);
+        }
         else if (field.type === "integer") {
           const parsed = Number.parseInt(control.value, 10);
           nextValue = Number.isNaN(parsed) ? field.default : parsed;
@@ -2168,7 +2244,7 @@ function createPolicyComponent() {
     rail,
     enabled: true,
     priority: 100,
-    action_on_hit: "default",
+    action_on_hit: definition.defaultAction || "default",
     action_on_error: "default",
     depend_on: "",
     config: definition.defaultConfig(),

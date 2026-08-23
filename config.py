@@ -49,6 +49,14 @@ COMPONENT_TEMPLATES["input_rail"].update(
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
         "instruction_override_detector",
+        "contains_request_user_id",
+        "contains_at_user_id",
+        "contains_forward",
+        "contains_file",
+        "contains_image",
+        "contains_record",
+        "contains_video",
+        "contains_link",
     }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
@@ -409,6 +417,11 @@ def _normalize_node(
         "instruction_override_detector",
     }:
         _normalize_input_detector(rule_id, template_key, config, warnings)
+    elif template_key in MESSAGE_FACT_COMPONENT_TEMPLATES:
+        _normalize_message_fact_component(rule_id, template_key, config, warnings)
+        if template_key in {"contains_request_user_id", "contains_at_user_id"} and not config["user_ids"]:
+            valid = False
+            enabled = False
     elif template_key == "replace_input":
         config["replacement_text"] = _as_str(config.get("replacement_text", ""))
     elif template_key == "strengthen_prompt":
@@ -435,18 +448,26 @@ def _normalize_node(
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
         "instruction_override_detector",
+        *MESSAGE_FACT_COMPONENT_TEMPLATES,
     }:
-        raw_action = raw_action_on_hit
+        raw_action = "observe" if (
+            template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+            and raw_action_on_hit == "default"
+        ) else raw_action_on_hit
         action = raw_action
         config["action_on_hit"] = action
         if action == "sanitize" and template_key not in {"plain_keywords", "regex_pattern"}:
             warnings.append(
                 f"{rule_id}.action_on_hit=sanitize is only supported by plain_keywords and regex_pattern; fallback to default"
             )
-            config["action_on_hit"] = "default"
+            config["action_on_hit"] = (
+                "observe" if template_key in MESSAGE_FACT_COMPONENT_TEMPLATES else "default"
+            )
         if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
             warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
-            config["action_on_hit"] = "default"
+            config["action_on_hit"] = (
+                "observe" if template_key in MESSAGE_FACT_COMPONENT_TEMPLATES else "default"
+            )
         elif rail_name == "output_rail":
             if action not in OUTPUT_ACTIONS:
                 warnings.append(
@@ -613,6 +634,29 @@ def _normalize_input_detector(
         }.items():
             config[key] = _as_bool(config.get(key), default)
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+MESSAGE_FACT_COMPONENT_TEMPLATES = {
+    "contains_request_user_id",
+    "contains_at_user_id",
+    "contains_forward",
+    "contains_file",
+    "contains_image",
+    "contains_record",
+    "contains_video",
+    "contains_link",
+}
+
+
+def _normalize_message_fact_component(
+    rule_id: str, template_key: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize P2 Step 1 message facts without assigning risk semantics."""
+
+    if template_key in {"contains_request_user_id", "contains_at_user_id"}:
+        config["user_ids"] = _clean_string_list(config.get("user_ids", []))
+        if not config["user_ids"]:
+            warnings.append(f"{rule_id}.user_ids is empty; component skipped")
 
 
 def _bounded_int(

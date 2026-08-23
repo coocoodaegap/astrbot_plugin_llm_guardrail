@@ -37,7 +37,12 @@ try:
         make_node_result,
         skipped_node_result,
     )
-    from .components import evaluate_input_detector, evaluate_logic_gate
+    from .components import (
+        MESSAGE_FACT_COMPONENT_TEMPLATES,
+        evaluate_input_detector,
+        evaluate_logic_gate,
+        evaluate_message_fact_component,
+    )
     from .rules import (
         apply_literal_replacements,
         apply_span_replacements,
@@ -73,7 +78,12 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         make_node_result,
         skipped_node_result,
     )
-    from components import evaluate_input_detector, evaluate_logic_gate
+    from components import (
+        MESSAGE_FACT_COMPONENT_TEMPLATES,
+        evaluate_input_detector,
+        evaluate_logic_gate,
+        evaluate_message_fact_component,
+    )
     from rules import (
         apply_literal_replacements,
         apply_span_replacements,
@@ -369,6 +379,14 @@ class GuardrailPipeline:
         await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.original_input, max_chars)
+        message_facts = None
+        if any(
+            rule.enabled and rule.valid and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+            for rule in rail.rules
+        ):
+            adapter_result = self.adapter.get_message_fact_snapshot(context.event)
+            context.warnings.extend(adapter_result.warnings)
+            message_facts = adapter_result.metadata.get("message_fact_snapshot")
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
@@ -380,6 +398,10 @@ class GuardrailPipeline:
                 "instruction_override_detector",
             }:
                 result = evaluate_input_detector(rule, ctx, context.original_input)
+            elif rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES:
+                if message_facts is None:
+                    raise RuntimeError("message fact snapshot is unavailable")
+                result = evaluate_message_fact_component(rule, message_facts)
             elif rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
             elif rule.template_key == "rag_judge":

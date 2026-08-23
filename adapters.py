@@ -20,6 +20,26 @@ class AdapterResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class MessageComponentFact:
+    """A safe, platform-neutral fact extracted from one message component."""
+
+    index: int
+    kind: str
+    target_id: str = ""
+    plain_text: str = ""
+
+
+@dataclass(frozen=True)
+class MessageFactSnapshot:
+    """Read-only Step 1 facts for policy-local message components."""
+
+    request_user_id: str
+    components: tuple[MessageComponentFact, ...]
+    message_chain_available: bool
+    outline_available: bool
+
+
 class AstrBotAdapter:
     """Isolate direct AstrBot object mutation from rule logic."""
 
@@ -46,6 +66,113 @@ class AstrBotAdapter:
         if not platform_id or not sender_id:
             return None
         return platform_id, sender_id
+
+    def get_message_fact_snapshot(self, event: Any) -> AdapterResult:
+        """Return P2 message facts without exposing raw platform objects.
+
+        The official message chain is preferred.  A missing or malformed chain
+        is a non-fatal compatibility condition: matching components simply see
+        no facts and the calling hook can continue normally.
+        """
+
+        warnings: list[str] = []
+        components, available = self._event_message_components(event, warnings)
+        facts: list[MessageComponentFact] = []
+        for index, component in enumerate(components):
+            kind = self._message_component_kind(component)
+            if not kind:
+                continue
+            target_id = ""
+            plain_text = ""
+            if kind == "at":
+                target_id = self._message_component_value(
+                    component, ("qq", "user_id", "target")
+                )
+            elif kind == "plain":
+                plain_text = self._message_component_value(component, ("text",))
+            facts.append(
+                MessageComponentFact(
+                    index=index,
+                    kind=kind,
+                    target_id=target_id,
+                    plain_text=plain_text,
+                )
+            )
+
+        outline_available = False
+        outline_getter = getattr(event, "get_message_outline", None)
+        if callable(outline_getter):
+            try:
+                outline_getter()
+                outline_available = True
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                warnings.append("message outline is unavailable")
+
+        if not available:
+            warnings.append("message component chain is unavailable")
+        snapshot = MessageFactSnapshot(
+            request_user_id=self._event_identity_value(
+                event,
+                method_name="get_sender_id",
+                attribute_name="sender_id",
+            ),
+            components=tuple(facts),
+            message_chain_available=available,
+            outline_available=outline_available,
+        )
+        return AdapterResult(True, warnings, {"message_fact_snapshot": snapshot})
+
+    @staticmethod
+    def _event_message_components(
+        event: Any, warnings: list[str]
+    ) -> tuple[list[Any], bool]:
+        getter = getattr(event, "get_messages", None)
+        raw_components: Any = None
+        available = False
+        if callable(getter):
+            try:
+                raw_components = getter()
+                available = raw_components is not None
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                warnings.append("failed to read message component chain")
+        if raw_components is None:
+            message_obj = getattr(event, "message_obj", None)
+            raw_components = getattr(message_obj, "message", None)
+            available = raw_components is not None
+        if isinstance(raw_components, (list, tuple)):
+            return list(raw_components), available
+        if raw_components is not None:
+            warnings.append("message component chain has an unsupported shape")
+        return [], False
+
+    @staticmethod
+    def _message_component_kind(component: Any) -> str:
+        aliases = {
+            "plain": "plain",
+            "text": "plain",
+            "at": "at",
+            "forward": "forward",
+            "node": "forward",
+            "nodes": "forward",
+            "file": "file",
+            "image": "image",
+            "record": "record",
+            "video": "video",
+        }
+        return aliases.get(type(component).__name__.casefold(), "")
+
+    @staticmethod
+    def _message_component_value(component: Any, names: tuple[str, ...]) -> str:
+        for name in names:
+            try:
+                value = getattr(component, name, None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                value = None
+            if value is not None:
+                value_text = str(value).strip()
+                if value_text:
+                    return value_text
+        return ""
 
     @classmethod
     def _event_platform_name(cls, event: Any) -> str:

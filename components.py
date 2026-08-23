@@ -6,8 +6,10 @@ from collections import Counter
 import json
 import re
 import unicodedata
+from urllib.parse import urlsplit
 
 try:
+    from .adapters import MessageFactSnapshot
     from .config import NormalizedNode
     from .core import (
         NodeSignal,
@@ -17,6 +19,7 @@ try:
         make_node_result,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
+    from adapters import MessageFactSnapshot
     from config import NormalizedNode
     from core import (
         NodeSignal,
@@ -60,6 +63,26 @@ INPUT_DETECTOR_TEMPLATES = {
     "instruction_override_detector",
 }
 
+MESSAGE_FACT_COMPONENT_TEMPLATES = {
+    "contains_request_user_id",
+    "contains_at_user_id",
+    "contains_forward",
+    "contains_file",
+    "contains_image",
+    "contains_record",
+    "contains_video",
+    "contains_link",
+}
+
+_MESSAGE_KIND_BY_TEMPLATE = {
+    "contains_forward": "forward",
+    "contains_file": "file",
+    "contains_image": "image",
+    "contains_record": "record",
+    "contains_video": "video",
+}
+_HTTP_LINK_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+", re.IGNORECASE)
+
 
 def evaluate_input_detector(
     node: NormalizedNode, context: RailContext, text: str,
@@ -82,6 +105,100 @@ def evaluate_input_detector(
         metadata=payload,
         signal=NodeSignal(value=matched, truthy=matched, payload=payload),
     )
+
+
+def evaluate_message_fact_component(
+    node: NormalizedNode, snapshot: MessageFactSnapshot,
+):
+    """Evaluate one P2 message fact component from an adapter snapshot only."""
+
+    payload: dict[str, object] = {
+        "component": node.template_key,
+        "message_chain_available": snapshot.message_chain_available,
+        "outline_available": snapshot.outline_available,
+    }
+    if node.template_key == "contains_request_user_id":
+        configured = {str(value).strip() for value in node.config.get("user_ids", [])}
+        request_id = snapshot.request_user_id
+        matched = bool(request_id and request_id in configured)
+        payload.update(
+            {
+                "configured_user_count": len(configured),
+                "matched_user_ids": [_redact_identifier(request_id)] if matched else [],
+                "component_count": 0,
+                "component_indices": [],
+            }
+        )
+    elif node.template_key == "contains_at_user_id":
+        configured = {str(value).strip() for value in node.config.get("user_ids", [])}
+        matches = [
+            component
+            for component in snapshot.components
+            if component.kind == "at" and component.target_id in configured
+        ]
+        matched = bool(matches)
+        payload.update(
+            {
+                "configured_user_count": len(configured),
+                "matched_user_ids": sorted(
+                    {_redact_identifier(component.target_id) for component in matches}
+                ),
+                "component_count": len(matches),
+                "component_indices": [component.index for component in matches],
+            }
+        )
+    elif node.template_key == "contains_link":
+        links = [
+            (component.index, value)
+            for component in snapshot.components
+            if component.kind == "plain"
+            for value in _HTTP_LINK_RE.findall(component.plain_text)
+        ]
+        hosts = sorted(
+            {
+                hostname.casefold()
+                for _, value in links
+                if (hostname := urlsplit(value).hostname)
+            }
+        )
+        matched = bool(links)
+        payload.update(
+            {
+                "component_count": len(links),
+                "component_indices": sorted({index for index, _ in links}),
+                "host_summaries": hosts,
+            }
+        )
+    else:
+        message_kind = _MESSAGE_KIND_BY_TEMPLATE.get(node.template_key)
+        if not message_kind:
+            raise ValueError(f"unsupported message fact component {node.template_key}")
+        matches = [
+            component for component in snapshot.components if component.kind == message_kind
+        ]
+        matched = bool(matches)
+        payload.update(
+            {
+                "message_kind": message_kind,
+                "component_count": len(matches),
+                "component_indices": [component.index for component in matches],
+            }
+        )
+    payload["score"] = 100 if matched else 0
+    return make_node_result(
+        node,
+        matched=matched,
+        action_on_hit=str(node.config.get("action_on_hit", "observe")),
+        metadata=payload,
+        signal=NodeSignal(value=matched, truthy=matched, payload=payload),
+    )
+
+
+def _redact_identifier(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    return f"***{normalized[-4:]}" if len(normalized) > 4 else "***"
 
 
 def _evaluate_length_anomaly(config: dict, text: str) -> tuple[bool, dict]:

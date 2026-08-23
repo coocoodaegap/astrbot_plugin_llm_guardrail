@@ -177,8 +177,19 @@ class GuardrailPagesUiTests(unittest.TestCase):
             "max_lines",
             "detect_log_like_headers",
             "detect_role_reassignment",
+            "contains_request_user_id",
+            "contains_at_user_id",
+            "contains_forward",
+            "contains_file",
+            "contains_image",
+            "contains_record",
+            "contains_video",
+            "contains_link",
+            "user_ids",
         ):
             self.assertIn(field_name, javascript)
+        self.assertIn('defaultAction: "observe"', javascript)
+        self.assertIn('else if (field.type === "list")', javascript)
         self.assertIn("findPolicyGraphDraftNode", javascript)
         self.assertIn("function savePolicyAsCopy", javascript)
         self.assertIn("function deleteSelectedPolicy", javascript)
