@@ -231,10 +231,21 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn(".session-policy-layout", stylesheet)
         self.assertIn(".session-policy-detail-panel[hidden]", stylesheet)
         self.assertIn("display: none !important", stylesheet)
+        self.assertIn("function setSessionPolicyStateView(showDetail)", javascript)
+        self.assertIn('sessionPolicyListPanel.style.display = showDetail ? "none" : "grid";', javascript)
+        self.assertIn('sessionPolicyDetailPanel.style.display = showDetail ? "grid" : "none";', javascript)
         session_switch_start = javascript.index("function switchTab")
         session_switch_end = javascript.index("\nfunction addSummary", session_switch_start)
         session_list_reset = javascript.index("showSessionPolicyStateList();", session_switch_start)
         self.assertLess(session_list_reset, session_switch_end)
+        session_list_view = javascript.split("function showSessionPolicyStateList", 1)[1].split(
+            "async function showSessionPolicyStateDetail", 1
+        )[0]
+        session_detail_view = javascript.split("async function showSessionPolicyStateDetail", 1)[1].split(
+            "try {", 1
+        )[0]
+        self.assertIn("setSessionPolicyStateView(false);", session_list_view)
+        self.assertIn("setSessionPolicyStateView(true);", session_detail_view)
 
 
 if __name__ == "__main__":

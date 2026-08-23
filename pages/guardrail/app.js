@@ -3422,18 +3422,22 @@ function renderSessionPolicyStateDetail(record) {
   }
   renderSessionPolicyActivities(record?.activities?.items || []);
 }
+function setSessionPolicyStateView(showDetail) {
+  sessionPolicyListPanel.hidden = showDetail;
+  sessionPolicyListPanel.style.display = showDetail ? "none" : "grid";
+  sessionPolicyDetailPanel.hidden = !showDetail;
+  sessionPolicyDetailPanel.style.display = showDetail ? "grid" : "none";
+}
 function showSessionPolicyStateList() {
   selectedSessionPolicyUmo = null;
-  sessionPolicyDetailPanel.hidden = true;
-  sessionPolicyListPanel.hidden = false;
+  setSessionPolicyStateView(false);
   renderSessionPolicyStateList();
 }
 async function showSessionPolicyStateDetail(umo) {
   if (!bridge || !umo) return;
   const epoch = ++sessionPolicyStateDetailEpoch;
   selectedSessionPolicyUmo = String(umo);
-  sessionPolicyListPanel.hidden = true;
-  sessionPolicyDetailPanel.hidden = false;
+  setSessionPolicyStateView(true);
   sessionPolicyDetailUmo.textContent = selectedSessionPolicyUmo;
   sessionPolicyDetailMeta.textContent = "正在加载 UMO 状态…";
   try {
