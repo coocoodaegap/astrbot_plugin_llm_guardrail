@@ -311,6 +311,18 @@ class AstrBotAdapter:
             return False
         if not self.has_input_text(event):
             return False
+        return self.is_message_fact_candidate_event(event)
+
+    def is_message_fact_candidate_event(self, event: Any) -> bool:
+        """Whether a non-text message may enter Step 1 fact components.
+
+        This retains the normal command and wake-up checks while deliberately
+        not requiring a Plain text component.  It is used only when a policy
+        explicitly contains a message-fact component.
+        """
+
+        if self.is_command_event(event):
+            return False
         marker = getattr(event, "is_at_or_wake_command", None)
         if marker is not None:
             return bool(marker)

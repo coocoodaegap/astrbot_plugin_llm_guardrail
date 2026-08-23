@@ -140,10 +140,17 @@ class GuardrailPipeline:
 
     async def run_message_input(self, event: Any) -> RailContext:
         context = self._make_request_context(event, request=None)
-        # Preserve the pre-existing empty/non-text event ignore path.  Access
-        # control is an input gate, but an event without processable text is
-        # not an input and must not emit a blacklist response.
-        if not self.adapter.has_input_text(event):
+        input_rail = self.config.rails["input_rail"]
+        has_input_text = self.adapter.has_input_text(event)
+        has_message_fact_component = any(
+            rule.enabled and rule.valid
+            and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+            for rule in input_rail.rules
+        )
+        # Preserve the empty/non-text ignore path unless a policy explicitly
+        # opts into a P2 message-fact component.  Media-only messages are
+        # meaningful input to those components even without Plain text.
+        if not has_input_text and not has_message_fact_component:
             self._store_context(event, context)
             return context
         # Access control is the input gate: it must run before deciding whether
@@ -152,7 +159,12 @@ class GuardrailPipeline:
         if not await self._admit_access_control(event, context):
             self._store_context(event, context)
             return context
-        if not self.adapter.is_llm_candidate_event(event):
+        is_candidate = (
+            self.adapter.is_llm_candidate_event(event)
+            if has_input_text
+            else self.adapter.is_message_fact_candidate_event(event)
+        )
+        if not is_candidate:
             # A permitted non-wakeup message still has no Rail workload.
             self._store_context(event, context)
             return context
@@ -164,9 +176,12 @@ class GuardrailPipeline:
             self._store_context(event, context)
             return context
 
-        input_rail = self.config.rails["input_rail"]
         if input_rail.enabled:
-            await self._run_input_rail(input_rail, context)
+            await self._run_input_rail(
+                input_rail,
+                context,
+                fact_only=not has_input_text,
+            )
 
         self._store_context(event, context)
         return context
@@ -375,7 +390,13 @@ class GuardrailPipeline:
         result = self.adapter.set_event_extra(event, STATE_EXTRA_KEY, state)
         context.warnings.extend(result.warnings)
 
-    async def _run_input_rail(self, rail: NormalizedRail, context: RailContext) -> None:
+    async def _run_input_rail(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        *,
+        fact_only: bool = False,
+    ) -> None:
         await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.original_input, max_chars)
@@ -390,6 +411,12 @@ class GuardrailPipeline:
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
+            if (
+                fact_only
+                and rule.template_key not in MESSAGE_FACT_COMPONENT_TEMPLATES
+                and rule.template_key != "logic_gate"
+            ):
+                return skipped_node_result(rule, "no_text_input")
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key in {

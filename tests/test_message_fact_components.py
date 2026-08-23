@@ -33,6 +33,7 @@ class _FactEvent:
         self.components = components
         self.sender_id = sender_id
         self.message_str = "ordinary text"
+        self.message_outline = "summary"
         self.unified_msg_origin = "test:message:session"
         self.is_at_or_wake_command = True
         self.extras = {}
@@ -49,7 +50,7 @@ class _FactEvent:
         return self.message_str
 
     def get_message_outline(self):
-        return "summary"
+        return self.message_outline
 
     def is_private_chat(self):
         return False
@@ -213,6 +214,37 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertEqual(context.results["has_image"].action_on_hit, "observe")
         self.assertFalse(context.input_blocked)
         self.assertFalse(self.event.stopped)
+
+    def test_media_only_event_executes_message_fact_component(self):
+        event = _FactEvent([_component("Image")])
+        event.message_str = ""
+        event.message_outline = ""
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "media_only",
+                    "Media only",
+                    components=(
+                        PolicyComponent(
+                            "has_image",
+                            "contains_image",
+                            "input_rail",
+                        ),
+                    ),
+                ),
+            ),
+            active_policy_id="media_only",
+        )
+        raw, validation = compile_policy_to_runtime_config({}, library)
+        context = asyncio.run(
+            GuardrailPipeline(normalize_config(raw)).run_message_input(event)
+        )
+
+        self.assertTrue(validation.valid)
+        self.assertTrue(context.results["has_image"].executed)
+        self.assertTrue(context.results["has_image"].matched)
+        self.assertFalse(context.input_blocked)
 
     def test_explicit_block_action_keeps_existing_pipeline_semantics(self):
         config = normalize_config(
