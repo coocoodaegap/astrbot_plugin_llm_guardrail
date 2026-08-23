@@ -92,6 +92,10 @@ class RailContext:
     warnings: list[str] = field(default_factory=list)
     input_blocked: bool = False
     output_blocked: bool = False
+    # A compact, serializable description of the most recent terminal action.
+    # It is intentionally kept separate from NodeResult because session and
+    # access-control blocks do not necessarily originate from a policy node.
+    terminal_action: dict[str, Any] | None = None
     prompt_mutations: list[dict[str, Any]] = field(default_factory=list)
     route_decision: RouteDecision | None = None
     session_scope_decision: SessionScopeDecision | None = None

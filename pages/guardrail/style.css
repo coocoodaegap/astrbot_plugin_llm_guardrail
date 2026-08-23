@@ -1541,6 +1541,163 @@ textarea {
     gap: 8px
 }
 
+.session-policy-layout,
+.session-policy-detail-panel {
+    display: grid;
+    gap: 18px
+}
+
+.session-policy-heading,
+.session-policy-controls,
+.session-policy-pagination,
+.session-policy-activity>div {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between
+}
+
+.session-policy-controls {
+    align-items: end
+}
+
+.session-policy-controls label {
+    display: grid;
+    gap: 5px;
+    color: #64748b;
+    font-size: .82rem
+}
+
+.session-policy-controls input {
+    min-width: 220px
+}
+
+.session-policy-list-item span:nth-of-type(1) {
+    color: #52627a
+}
+
+.session-policy-list-item span:nth-of-type(2) {
+    color: #748198;
+    font-size: .78rem
+}
+
+.session-policy-pagination {
+    justify-content: flex-end;
+    margin-top: 16px
+}
+
+.session-policy-result-grid,
+.session-target-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    background: #e5eaf2;
+    border: 1px solid #e5eaf2;
+    border-radius: 10px
+}
+
+.session-policy-result-grid>div,
+.session-target-meta>div {
+    display: grid;
+    gap: 4px;
+    padding: 12px;
+    background: #fff
+}
+
+.session-policy-result-grid span,
+.session-target-meta span {
+    color: #718096;
+    font-size: .75rem
+}
+
+.session-policy-result-grid strong,
+.session-target-meta strong {
+    overflow-wrap: anywhere;
+    color: #24324a;
+    font-size: .85rem
+}
+
+.session-policy-signal-list,
+.session-policy-activity-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 16px
+}
+
+.session-policy-signal,
+.session-policy-activity {
+    display: grid;
+    gap: 6px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid #e5eaf2;
+    border-radius: 8px
+}
+
+.session-policy-signal small,
+.session-policy-activity small,
+.session-policy-activity time {
+    color: #718096;
+    font-size: .78rem
+}
+
+.session-policy-signal pre {
+    max-height: 240px;
+    margin: 3px 0 0;
+    padding: 10px;
+    overflow: auto;
+    color: #31425d;
+    background: #eef3f8;
+    border-radius: 6px;
+    font: .76rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere
+}
+
+.session-target-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px
+}
+
+.session-target-card h3,
+.session-policy-comparison-card h3,
+.session-policy-result-card h3,
+.session-policy-activities-card h3 {
+    margin: 3px 0 10px
+}
+
+.session-policy-observe-note {
+    margin: 0 0 12px;
+    color: #8a5e17;
+    font-size: .82rem
+}
+
+.session-target-details .muted {
+    margin: 0
+}
+
+@media(max-width:760px) {
+    .session-policy-heading,
+    .session-policy-controls,
+    .session-policy-pagination {
+        align-items: flex-start;
+        flex-direction: column
+    }
+
+    .session-policy-controls,
+    .session-policy-controls input {
+        width: 100%
+    }
+
+    .session-policy-result-grid,
+    .session-target-meta,
+    .session-target-grid {
+        grid-template-columns: 1fr
+    }
+}
+
 @media(max-width:760px) {
     .page-shell {
         padding: 20px 14px 32px

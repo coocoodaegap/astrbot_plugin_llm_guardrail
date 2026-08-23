@@ -11,7 +11,8 @@ if str(PLUGIN_DIR) not in sys.path:
 from pages_api import GuardrailPagesApiMixin
 from policy_library import PolicyLibrary
 from access_control import AccessControlService
-from session_lock import PrincipalLockManager
+from session_lock import PrincipalLockManager, UmoLockManager
+from session_policy_state import SessionPolicyStateService
 from snapshots import ConfigSnapshotManager
 from state import MemoryStateStore
 
@@ -49,15 +50,21 @@ class _Plugin(GuardrailPagesApiMixin):
         self.context = _Context()
         self.config = _Config({})
         self.snapshot_manager = ConfigSnapshotManager(self.config)
+        self.state_store = MemoryStateStore()
         self.access_control = AccessControlService(
-            MemoryStateStore(),
+            self.state_store,
             principal_locks=PrincipalLockManager(),
+        )
+        self.session_policy_state = SessionPolicyStateService(
+            self.state_store,
+            session_locks=UmoLockManager(),
         )
 
 
 class _Request:
-    def __init__(self, payload):
+    def __init__(self, payload=None, args=None):
         self.payload = payload
+        self.args = args or {}
 
     async def get_json(self, force=True):
         return self.payload
@@ -86,6 +93,8 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/get_access_control_records",
             "/astrbot_plugin_llm_guardrail/set_access_control_decision",
             "/astrbot_plugin_llm_guardrail/clear_access_control_decision",
+            "/astrbot_plugin_llm_guardrail/get_session_policy_states",
+            "/astrbot_plugin_llm_guardrail/get_session_policy_state",
             "/astrbot_plugin_llm_guardrail/get_rule_library",
             "/astrbot_plugin_llm_guardrail/save_rule_library",
             "/astrbot_plugin_llm_guardrail/get_policy_library",
@@ -93,6 +102,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         })
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_rule_library"][2], ["GET"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/save_policy_library"][2], ["POST"])
+        self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_session_policy_states"][2], ["GET"])
 
     def test_system_settings_save_persists_config_then_publishes_snapshot(self):
         plugin = _Plugin()
@@ -218,6 +228,50 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertTrue(ban["success"])
         self.assertEqual(listed["records"][0]["decision"], "ban")
         self.assertTrue(cleared["success"])
+
+    def test_session_policy_state_pages_api_lists_summaries_and_returns_detail(self):
+        plugin = _Plugin()
+        settings = {"enabled": True, "state_ttl_seconds": 0, "max_entries": 500, "activity_log_limit": 50}
+        asyncio.run(
+            plugin.session_policy_state.record_phase(
+                "qq:group:1",
+                run_id="run-a",
+                policy_id="safe-chat",
+                snapshot_revision=4,
+                started_at=1,
+                phase="message_input",
+                outcome="blocked",
+                terminal_action={"source_kind": "rule", "action": "block"},
+                rail_outcomes={"input_rail": {"outcome": "blocked"}},
+                signals=[{
+                    "rail": "input_rail",
+                    "node_id": "risk",
+                    "user_node_id": "risk",
+                    "template_key": "plain_keywords",
+                    "signal": {"value": True, "truthy": True, "payload": {}},
+                }],
+                settings=settings,
+            )
+        )
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request(args={"query": "safe", "page": "1", "page_size": "30"})):
+                listed = asyncio.run(plugin._pages_get_session_policy_states())
+            with patch("pages_api.request", _Request(args={"umo": "qq:group:1"})):
+                detail = asyncio.run(plugin._pages_get_session_policy_state())
+
+        self.assertTrue(listed["success"])
+        self.assertEqual(listed["pagination"]["total"], 1)
+        self.assertNotIn("signals", listed["items"][0]["last_policy_result"])
+        self.assertTrue(detail["success"])
+        self.assertEqual(detail["record"]["last_policy_result"]["signals"][0]["node_id"], "risk")
+
+    def test_session_policy_state_pages_api_returns_not_found_for_unknown_umo(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request(args={"umo": "qq:missing"})):
+                missing = asyncio.run(plugin._pages_get_session_policy_state())
+
+        self.assertEqual(missing[1], 404)
 
     def test_rule_and_policy_libraries_are_returned_without_each_other(self):
         plugin = _Plugin()

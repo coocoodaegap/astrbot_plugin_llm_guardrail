@@ -277,6 +277,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(event.result, {"plain": "access blocked"})
         self.assertNotIn("must_not_run", context.results)
+        self.assertEqual(context.terminal_action["source_kind"], "access_control")
 
     def test_pardon_allows_input_rails_but_prevents_automatic_counting(self):
         cfg = normalize_config(
@@ -353,6 +354,11 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(context.results["__fallback_input_enforcement"].matched)
         self.assertTrue(context.input_blocked)
         self.assertTrue(event.stopped)
+        self.assertEqual(context.terminal_action["source_kind"], "rule")
+        self.assertEqual(
+            context.terminal_action["node_id"],
+            "__fallback_input_enforcement",
+        )
 
     def test_policy_component_compiles_and_blocks_through_input_pipeline(self):
         library = PolicyLibrary(
@@ -663,6 +669,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
         self.assertIn("RuntimeError: simulated", ctx.results["boom"].metadata["error"])
+        self.assertEqual(ctx.terminal_action["source_kind"], "error")
+        self.assertEqual(ctx.terminal_action["node_id"], "boom")
 
     def test_input_error_discard_omits_failed_result(self):
         cfg = normalize_config(
@@ -1463,6 +1471,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
         self.assertNotIn("risk", ctx.results)
         self.assertEqual(ctx.session_scope_decision.action, "block")
+        self.assertEqual(ctx.terminal_action["source_kind"], "session_control")
 
     def test_all_block_blocks_group_before_rails(self):
         cfg = normalize_config(

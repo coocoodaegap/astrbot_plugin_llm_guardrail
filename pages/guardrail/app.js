@@ -120,7 +120,26 @@ const status = $("status"),
   accessDecisionFilter = $("access-decision-filter"),
   refreshAccessRecords = $("refresh-access-records"),
   accessRecordsStatus = $("access-records-status"),
-  accessRecordList = $("access-record-list");
+  accessRecordList = $("access-record-list"),
+  sessionPolicyListPanel = $("session-policy-list-panel"),
+  sessionPolicyDetailPanel = $("session-policy-detail-panel"),
+  sessionPolicyStateQuery = $("session-policy-state-query"),
+  refreshSessionPolicyStatesButton = $("refresh-session-policy-states"),
+  sessionPolicyStateCount = $("session-policy-state-count"),
+  sessionPolicyStateStatus = $("session-policy-state-status"),
+  sessionPolicyStateList = $("session-policy-state-list"),
+  sessionPolicyStatePrevPage = $("session-policy-state-prev-page"),
+  sessionPolicyStatePage = $("session-policy-state-page"),
+  sessionPolicyStateNextPage = $("session-policy-state-next-page"),
+  sessionPolicyDetailUmo = $("session-policy-detail-umo"),
+  sessionPolicyDetailMeta = $("session-policy-detail-meta"),
+  sessionPolicyResultSummary = $("session-policy-result-summary"),
+  sessionPolicySignalList = $("session-policy-signal-list"),
+  sessionPolicyRouteCandidate = $("session-policy-route-candidate"),
+  sessionPolicyRequestObservation = $("session-policy-request-observation"),
+  sessionPolicyTargetComparison = $("session-policy-target-comparison"),
+  sessionPolicyActivityList = $("session-policy-activity-list"),
+  backToSessionPolicyList = $("back-to-session-policy-list");
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
@@ -278,6 +297,14 @@ let accessRecords = [],
   accessFormExpectedRecordRevision = null,
   accessRefreshEpoch = 0,
   accessMutationInFlight = false;
+let sessionPolicyStateItems = [],
+  selectedSessionPolicyUmo = null,
+  sessionPolicyStateCurrentPage = 1,
+  sessionPolicyStateTotal = 0,
+  sessionPolicyStatePageSize = 30,
+  sessionPolicyMonitoringEnabled = false,
+  sessionPolicyStateRefreshEpoch = 0,
+  sessionPolicyStateDetailEpoch = 0;
 function populateRuleActionOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -307,6 +334,7 @@ function switchTab(name) {
     panel.hidden = panel.dataset.panel !== name;
   });
   updatePolicyGraphAnimation();
+  if (name === "session" && bridge) void refreshSessionPolicyStates();
 }
 document
   .querySelectorAll("[data-tab]")
@@ -3159,6 +3187,312 @@ async function clearAccessDecision(record) {
     setAccessMutationBusy(false);
   }
 }
+function formatStateTime(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "未记录";
+  return new Date(seconds * 1000).toLocaleString("zh-CN", { hour12: false });
+}
+function appendSessionStateMeta(container, label, value) {
+  const item = document.createElement("div");
+  const term = document.createElement("span");
+  const detail = document.createElement("strong");
+  term.textContent = label;
+  detail.textContent = String(value || "-");
+  item.append(term, detail);
+  container.append(item);
+}
+function formatObservedTarget(target) {
+  if (!target) return "未记录";
+  const providerId = String(target.provider_id || "").trim();
+  const modelId = String(target.model_id || "").trim();
+  if (!providerId && target.source) return "未观察到目标";
+  const provider = providerId || "AstrBot 默认（未显式指定 Provider）";
+  return modelId ? `${provider} · ${modelId}` : provider;
+}
+function requestTargetSourceLabel(source) {
+  return source === "provider_request"
+    ? "ProviderRequest 字段"
+    : source === "context_current_chat_provider_id"
+      ? "AstrBot 当前会话 Provider"
+      : "当前 SDK 未提供目标字段";
+}
+function sessionPolicyOutcomeLabel(outcome) {
+  return outcome === "blocked" ? "已阻断" : outcome === "allowed" ? "已放行" : "已跳过";
+}
+function sessionPolicyRailOutcomeLabel(outcome) {
+  return {
+    blocked: "已阻断",
+    allowed: "已放行",
+    skipped: "已跳过",
+    completed: "已完成",
+    selected: "已选中目标",
+    abstained: "未选中目标",
+    invalid: "路由无效",
+  }[outcome] || String(outcome || "-");
+}
+function sessionPolicyActivityLabel(kind) {
+  return {
+    policy_stage_completed: "策略阶段完成",
+    late_policy_stage_observed: "迟到策略阶段（未覆盖较新结果）",
+    route_candidate_recorded: "记录路由候选",
+    request_target_observed: "记录请求目标",
+  }[kind] || String(kind || "活动");
+}
+function updateSessionPolicyPagination() {
+  const totalPages = Math.max(1, Math.ceil(sessionPolicyStateTotal / sessionPolicyStatePageSize));
+  sessionPolicyStatePage.textContent = `第 ${sessionPolicyStateCurrentPage} / ${totalPages} 页 · 共 ${sessionPolicyStateTotal} 个 UMO`;
+  sessionPolicyStatePrevPage.disabled = sessionPolicyStateCurrentPage <= 1;
+  sessionPolicyStateNextPage.disabled = sessionPolicyStateCurrentPage >= totalPages;
+}
+function renderSessionPolicyStateList() {
+  sessionPolicyStateList.replaceChildren();
+  sessionPolicyStateCount.textContent = String(sessionPolicyStateTotal);
+  updateSessionPolicyPagination();
+  if (!sessionPolicyStateItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "尚无符合条件的 UMO 状态记录。";
+    sessionPolicyStateList.append(empty);
+    return;
+  }
+  for (const item of sessionPolicyStateItems) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "policy-list-item session-policy-list-item";
+    const title = document.createElement("strong");
+    const summary = document.createElement("small");
+    const targets = document.createElement("span");
+    const metadata = document.createElement("span");
+    const result = item.last_policy_result || {};
+    title.textContent = item.umo || "未知 UMO";
+    summary.textContent = result.policy_id
+      ? `${result.policy_id} · ${sessionPolicyOutcomeLabel(result.outcome)}`
+      : "尚未形成策略结果";
+    targets.textContent = `策略候选：${formatObservedTarget(item.route_candidate)} · 请求观察：${formatObservedTarget(item.last_request_target_observation)}`;
+    metadata.textContent = `观察模式，未参与执行 · 最近活动 ${formatStateTime(item.updated_at)}`;
+    button.append(title, summary, targets, metadata);
+    button.addEventListener("click", () => {
+      void showSessionPolicyStateDetail(item.umo);
+    });
+    sessionPolicyStateList.append(button);
+  }
+}
+function renderSessionPolicySignals(signals) {
+  sessionPolicySignalList.replaceChildren();
+  if (!Array.isArray(signals) || !signals.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "最近一次策略执行没有记录命中 NodeSignal。";
+    sessionPolicySignalList.append(empty);
+    return;
+  }
+  for (const item of signals) {
+    const signal = document.createElement("article");
+    signal.className = "session-policy-signal";
+    const heading = document.createElement("strong");
+    const metadata = document.createElement("small");
+    const payload = document.createElement("pre");
+    heading.textContent = item.node_id || "未知节点";
+    metadata.textContent = [item.rail, item.template_key, item.user_node_id]
+      .filter(Boolean)
+      .join(" · ") || "节点来源未记录";
+    payload.textContent = JSON.stringify(item.signal || {}, null, 2);
+    signal.append(heading, metadata, payload);
+    sessionPolicySignalList.append(signal);
+  }
+}
+function renderSessionPolicyTarget(container, target, kind) {
+  container.replaceChildren();
+  if (!target) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = kind === "candidate" ? "未形成可记录的路由候选。" : "尚未观察到请求阶段目标。";
+    container.append(empty);
+    return;
+  }
+  const metadata = document.createElement("div");
+  metadata.className = "session-target-meta";
+  const providerId = String(target.provider_id || "").trim();
+  const requestTargetUnavailable = kind === "request" && !providerId;
+  appendSessionStateMeta(
+    metadata,
+    "Provider",
+    providerId || (requestTargetUnavailable ? "未观察到目标" : "AstrBot 默认（未显式指定 Provider）"),
+  );
+  appendSessionStateMeta(
+    metadata,
+    "模型",
+    String(target.model_id || "").trim() || (requestTargetUnavailable ? "未观察到" : "未显式指定"),
+  );
+  if (kind === "candidate") {
+    appendSessionStateMeta(metadata, "来源节点", target.source_route_node_id || "未定位");
+    appendSessionStateMeta(metadata, "模式", "observe_only（观察模式）");
+    appendSessionStateMeta(metadata, "记录时间", formatStateTime(target.created_at || target.observed_at));
+  } else {
+    appendSessionStateMeta(metadata, "来源", requestTargetSourceLabel(target.source));
+    appendSessionStateMeta(metadata, "观察时间", formatStateTime(target.observed_at));
+  }
+  appendSessionStateMeta(metadata, "run_id", target.run_id || "未关联");
+  container.append(metadata);
+}
+function renderSessionPolicyActivities(items) {
+  sessionPolicyActivityList.replaceChildren();
+  if (!Array.isArray(items) || !items.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "尚无可展示的状态活动。";
+    sessionPolicyActivityList.append(empty);
+    return;
+  }
+  for (const item of items) {
+    const activity = document.createElement("article");
+    activity.className = "session-policy-activity";
+    const heading = document.createElement("div");
+    const title = document.createElement("strong");
+    const timestamp = document.createElement("time");
+    const detail = document.createElement("small");
+    title.textContent = sessionPolicyActivityLabel(item.kind);
+    timestamp.textContent = formatStateTime(item.at);
+    const parts = [item.phase, item.policy_id, item.provider_id, item.outcome]
+      .filter(Boolean)
+      .map((value) => String(value));
+    detail.textContent = parts.join(" · ") || "无额外摘要";
+    heading.append(title, timestamp);
+    activity.append(heading, detail);
+    sessionPolicyActivityList.append(activity);
+  }
+}
+function renderSessionPolicyStateDetail(record) {
+  const result = record?.last_policy_result || null;
+  sessionPolicyDetailUmo.textContent = record?.umo || "会话策略状态";
+  sessionPolicyDetailMeta.textContent = record
+    ? `记录版本 ${record.record_revision ?? 0} · 最近活动 ${formatStateTime(record.updated_at)}`
+    : "未找到该 UMO 状态。";
+  sessionPolicyResultSummary.replaceChildren();
+  if (!result) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "该 UMO 尚未形成可展示的策略结果。";
+    sessionPolicyResultSummary.append(empty);
+  } else {
+    appendSessionStateMeta(sessionPolicyResultSummary, "策略", result.policy_id || "未记录");
+    appendSessionStateMeta(sessionPolicyResultSummary, "快照 revision", result.snapshot_revision ?? "-");
+    appendSessionStateMeta(sessionPolicyResultSummary, "最近阶段", result.last_stage || "-");
+    appendSessionStateMeta(sessionPolicyResultSummary, "结果", sessionPolicyOutcomeLabel(result.outcome));
+    appendSessionStateMeta(sessionPolicyResultSummary, "run_id", result.run_id || "-");
+    appendSessionStateMeta(sessionPolicyResultSummary, "观察时间", formatStateTime(result.observed_at));
+    const terminal = result.terminal_action;
+    appendSessionStateMeta(
+      sessionPolicyResultSummary,
+      "终止动作",
+      terminal ? [terminal.source_kind, terminal.node_id, terminal.action, terminal.target].filter(Boolean).join(" · ") : "无",
+    );
+    const rails = result.rail_outcomes && typeof result.rail_outcomes === "object"
+      ? Object.entries(result.rail_outcomes)
+        .map(([rail, value]) => `${rail}: ${sessionPolicyRailOutcomeLabel(value?.route_outcome || value?.outcome)}`)
+        .join("；")
+      : "-";
+    appendSessionStateMeta(sessionPolicyResultSummary, "Rail 结果", rails);
+  }
+  renderSessionPolicySignals(result?.signals || []);
+  renderSessionPolicyTarget(sessionPolicyRouteCandidate, record?.route_candidate, "candidate");
+  renderSessionPolicyTarget(sessionPolicyRequestObservation, record?.last_request_target_observation, "request");
+  const candidate = record?.route_candidate;
+  const requestTarget = record?.last_request_target_observation;
+  if (!candidate || !requestTarget) {
+    sessionPolicyTargetComparison.textContent = "缺少其中一侧目标，暂不能比较。";
+  } else if (requestTarget.source === "unavailable" || !String(requestTarget.provider_id || "").trim()) {
+    sessionPolicyTargetComparison.textContent = "请求阶段未获得可比较的目标字段；不会据此判断策略候选是否生效。";
+  } else if (candidate.run_id !== requestTarget.run_id) {
+    sessionPolicyTargetComparison.textContent = "两个目标来自不同 run_id，未将它们作为同一次执行进行比较。";
+  } else {
+    const sameProvider = String(candidate.provider_id || "") === String(requestTarget.provider_id || "");
+    const candidateModel = String(candidate.model_id || "").trim();
+    const sameModel = !candidateModel || candidateModel === String(requestTarget.model_id || "").trim();
+    if (sameProvider && sameModel) {
+      sessionPolicyTargetComparison.textContent = candidateModel
+        ? "同一次执行中，策略路由候选与请求阶段观察目标一致。"
+        : "同一次执行中，Provider 目标一致；策略未显式约束模型，因此未比较模型。";
+    } else {
+      sessionPolicyTargetComparison.textContent = "同一次执行中，策略路由候选与请求阶段观察目标不同；这是一条观察事实，不会触发自动改写。";
+    }
+  }
+  renderSessionPolicyActivities(record?.activities?.items || []);
+}
+function showSessionPolicyStateList() {
+  selectedSessionPolicyUmo = null;
+  sessionPolicyDetailPanel.hidden = true;
+  sessionPolicyListPanel.hidden = false;
+  renderSessionPolicyStateList();
+}
+async function showSessionPolicyStateDetail(umo) {
+  if (!bridge || !umo) return;
+  const epoch = ++sessionPolicyStateDetailEpoch;
+  selectedSessionPolicyUmo = String(umo);
+  sessionPolicyListPanel.hidden = true;
+  sessionPolicyDetailPanel.hidden = false;
+  sessionPolicyDetailUmo.textContent = selectedSessionPolicyUmo;
+  sessionPolicyDetailMeta.textContent = "正在加载 UMO 状态…";
+  try {
+    const payload = await bridge.apiGet("get_session_policy_state", { umo: selectedSessionPolicyUmo });
+    if (epoch !== sessionPolicyStateDetailEpoch) return;
+    if (!payload?.success) {
+      sessionPolicyDetailMeta.textContent = payload?.error || "无法读取该 UMO 状态。";
+      renderSessionPolicyStateDetail(null);
+      return;
+    }
+    renderSessionPolicyStateDetail(payload.record);
+    if (!payload.monitoring_enabled) {
+      sessionPolicyDetailMeta.textContent += " · 监控当前已关闭，已有记录仅供查看。";
+    }
+  } catch (error) {
+    if (epoch === sessionPolicyStateDetailEpoch) {
+      sessionPolicyDetailMeta.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+      renderSessionPolicyStateDetail(null);
+    }
+  }
+}
+async function refreshSessionPolicyStates(resetPage = false) {
+  if (!bridge) return;
+  if (resetPage) sessionPolicyStateCurrentPage = 1;
+  const epoch = ++sessionPolicyStateRefreshEpoch;
+  refreshSessionPolicyStatesButton.disabled = true;
+  try {
+    const payload = await bridge.apiGet("get_session_policy_states", {
+      query: sessionPolicyStateQuery.value.trim(),
+      page: sessionPolicyStateCurrentPage,
+      page_size: sessionPolicyStatePageSize,
+    });
+    if (epoch !== sessionPolicyStateRefreshEpoch) return;
+    if (!payload?.success) {
+      sessionPolicyStateStatus.textContent = payload?.error || "无法读取会话策略状态。";
+      return;
+    }
+    sessionPolicyStateItems = Array.isArray(payload.items) ? payload.items : [];
+    const pagination = payload.pagination || {};
+    sessionPolicyStateCurrentPage = Number.isInteger(pagination.page)
+      ? pagination.page
+      : sessionPolicyStateCurrentPage;
+    sessionPolicyStatePageSize = Number.isInteger(pagination.page_size)
+      ? pagination.page_size
+      : sessionPolicyStatePageSize;
+    sessionPolicyStateTotal = Number.isInteger(pagination.total) ? pagination.total : 0;
+    sessionPolicyMonitoringEnabled = Boolean(payload.monitoring_enabled);
+    renderSessionPolicyStateList();
+    sessionPolicyStateStatus.textContent = sessionPolicyMonitoringEnabled
+      ? `已加载 ${sessionPolicyStateTotal} 个 UMO 状态；P2-A 仅观察，不参与路由。`
+      : `监控当前已关闭；已加载 ${sessionPolicyStateTotal} 条历史状态。`;
+  } catch (error) {
+    if (epoch === sessionPolicyStateRefreshEpoch) {
+      sessionPolicyStateStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  } finally {
+    if (epoch === sessionPolicyStateRefreshEpoch) {
+      refreshSessionPolicyStatesButton.disabled = false;
+      updateSessionPolicyPagination();
+    }
+  }
+}
 async function refresh() {
   const [overviewResult, diagnosticsResult, ruleResult, policyResult, systemSettingsResult] =
     await Promise.all([
@@ -3174,6 +3508,7 @@ async function refresh() {
   renderSystemSettings(systemSettingsResult);
   systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
   await refreshAccessControl();
+  await refreshSessionPolicyStates();
   const previousOpenRuleIds = [...openRuleIds];
   ruleLibrary = {
     rules: Array.isArray(ruleResult.rule_library?.rules)
@@ -3374,6 +3709,30 @@ accessDecisionFilter.addEventListener("change", renderAccessRecords);
 refreshAccessRecords.addEventListener("click", refreshAccessControl);
 saveAccessDecision.addEventListener("click", saveAccessDecisionMutation);
 resetAccessForm.addEventListener("click", resetAccessFormState);
+backToSessionPolicyList.addEventListener("click", showSessionPolicyStateList);
+refreshSessionPolicyStatesButton.addEventListener("click", () => {
+  void refreshSessionPolicyStates(true);
+});
+sessionPolicyStateQuery.addEventListener("change", () => {
+  void refreshSessionPolicyStates(true);
+});
+sessionPolicyStateQuery.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void refreshSessionPolicyStates(true);
+  }
+});
+sessionPolicyStatePrevPage.addEventListener("click", () => {
+  if (sessionPolicyStateCurrentPage <= 1) return;
+  sessionPolicyStateCurrentPage -= 1;
+  void refreshSessionPolicyStates();
+});
+sessionPolicyStateNextPage.addEventListener("click", () => {
+  const totalPages = Math.max(1, Math.ceil(sessionPolicyStateTotal / sessionPolicyStatePageSize));
+  if (sessionPolicyStateCurrentPage >= totalPages) return;
+  sessionPolicyStateCurrentPage += 1;
+  void refreshSessionPolicyStates();
+});
 resetAccessFormState();
 if (!bridge) {
   status.textContent = "当前不在 AstrBot Pages 环境中，无法读取或保存配置。";

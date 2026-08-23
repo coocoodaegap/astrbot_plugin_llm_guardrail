@@ -51,6 +51,8 @@ class GuardrailPagesApiMixin:
             ("get_access_control_records", self._pages_get_access_control_records, ["GET"], "List active input access-control records"),
             ("set_access_control_decision", self._pages_set_access_control_decision, ["POST"], "Create or replace an input access-control decision"),
             ("clear_access_control_decision", self._pages_clear_access_control_decision, ["POST"], "Clear an input access-control decision"),
+            ("get_session_policy_states", self._pages_get_session_policy_states, ["GET"], "List observed UMO policy states"),
+            ("get_session_policy_state", self._pages_get_session_policy_state, ["GET"], "Get one observed UMO policy state"),
             ("get_rule_library", self._pages_get_rule_library, ["GET"], "Get rule library"),
             ("save_rule_library", self._pages_save_rule_library, ["POST"], "Save rule library"),
             ("get_policy_library", self._pages_get_policy_library, ["GET"], "Get policy library"),
@@ -307,6 +309,80 @@ class GuardrailPagesApiMixin:
 
     def _pages_access_control_service(self):
         return getattr(self, "access_control", None)
+
+    async def _pages_get_session_policy_states(self):
+        """List P2-A monitor records without loading every signal payload."""
+
+        service = self._pages_session_policy_state_service()
+        if service is None:
+            return self._pages_error("Session-policy monitor service is unavailable", 503)
+        config = self.snapshot_manager.current.runtime_config
+        result = await service.list_summaries(
+            settings=config.session_policy_state,
+            query=self._pages_query_value("query", ""),
+            page=self._pages_query_value("page", 1),
+            page_size=self._pages_query_value("page_size", 30),
+        )
+        if not result.success:
+            return self._pages_error(
+                result.warning or "Session-policy state is unavailable",
+                503,
+            )
+        return jsonify(
+            {
+                "success": True,
+                "monitoring_enabled": bool(config.session_policy_state.get("enabled", False)),
+                "items": list(result.items),
+                "pagination": {
+                    "page": result.page,
+                    "page_size": result.page_size,
+                    "total": result.total,
+                },
+            }
+        )
+
+    async def _pages_get_session_policy_state(self):
+        """Return the full, bounded monitor state for a selected UMO."""
+
+        service = self._pages_session_policy_state_service()
+        if service is None:
+            return self._pages_error("Session-policy monitor service is unavailable", 503)
+        umo = self._pages_query_value("umo", "")
+        if not str(umo or "").strip():
+            return self._pages_error("umo is required", 400)
+        config = self.snapshot_manager.current.runtime_config
+        result = await service.get_detail(umo, settings=config.session_policy_state)
+        if not result.success:
+            return self._pages_error(
+                result.warning or "Session-policy state is unavailable",
+                503,
+            )
+        if not result.found:
+            return self._pages_error("Session-policy state was not found", 404)
+        return jsonify(
+            {
+                "success": True,
+                "monitoring_enabled": bool(config.session_policy_state.get("enabled", False)),
+                "record": result.record,
+            }
+        )
+
+    def _pages_session_policy_state_service(self):
+        return getattr(self, "session_policy_state", None)
+
+    @staticmethod
+    def _pages_query_value(key: str, default: Any = "") -> Any:
+        if request is None:
+            return default
+        args = getattr(request, "args", None)
+        getter = getattr(args, "get", None)
+        if not callable(getter):
+            return default
+        try:
+            value = getter(key, default)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return default
+        return default if value is None else value
 
     async def _pages_get_policy_library(self):
         snapshot = self.snapshot_manager.current

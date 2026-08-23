@@ -363,6 +363,15 @@ class GuardrailPipeline:
         else:
             adapter_result = self.adapter.stop_event(context.event)
         context.warnings.extend(adapter_result.warnings)
+        self._set_terminal_action(
+            context,
+            rail="",
+            source_kind="session_control",
+            node_id="",
+            action="block",
+            target="output" if context.response is not None else "input",
+            adapter_success=adapter_result.success,
+        )
 
     def _apply_access_control_block(self, context: RailContext) -> None:
         """Block a banned principal using only the configured AC message."""
@@ -377,6 +386,15 @@ class GuardrailPipeline:
         else:
             adapter_result = self.adapter.set_block_result(context.event, message)
         context.warnings.extend(adapter_result.warnings)
+        self._set_terminal_action(
+            context,
+            rail="",
+            source_kind="access_control",
+            node_id="",
+            action="block",
+            target="output" if context.response is not None else "input",
+            adapter_success=adapter_result.success,
+        )
 
     def _store_context(self, event: Any, context: RailContext) -> None:
         result = self.adapter.set_event_extra(event, RESULTS_EXTRA_KEY, context.results)
@@ -525,6 +543,15 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
+            self._set_terminal_action(
+                context,
+                rail=rail.rail,
+                source_kind="rule",
+                node_id=result.node_id,
+                action=hit_plan.action,
+                target="input",
+                adapter_success=adapter_result.success,
+            )
             if (
                 adapter_result.success
                 and rail.rail == "input_rail"
@@ -733,6 +760,15 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
+            self._set_terminal_action(
+                context,
+                rail=rail.rail,
+                source_kind="rule",
+                node_id=result.node_id,
+                action=hit_plan.action,
+                target="output",
+                adapter_success=adapter_result.success,
+            )
 
     async def _record_terminal_input_block(self, context: RailContext) -> None:
         """Count a committed Step 1 block once, never for later rail stages."""
@@ -944,7 +980,7 @@ class GuardrailPipeline:
             ),
         )
         if error_plan.block:
-            self._apply_error_block(rail, context, error_plan)
+            self._apply_error_block(rail, context, error_plan, rule.node_id)
         return result
 
     def _apply_error_block(
@@ -952,6 +988,7 @@ class GuardrailPipeline:
         rail: NormalizedRail,
         context: RailContext,
         error_plan: ErrorActionPlan,
+        node_id: str = "",
     ) -> None:
         if error_plan.target == "input":
             context.input_blocked = True
@@ -963,6 +1000,15 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
+            self._set_terminal_action(
+                context,
+                rail=rail.rail,
+                source_kind="error",
+                node_id=node_id,
+                action=error_plan.action,
+                target="input",
+                adapter_success=adapter_result.success,
+            )
         elif error_plan.target == "output":
             context.output_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
@@ -973,6 +1019,37 @@ class GuardrailPipeline:
             else:
                 adapter_result = self.adapter.stop_event(context.event)
             context.warnings.extend(adapter_result.warnings)
+            self._set_terminal_action(
+                context,
+                rail=rail.rail,
+                source_kind="error",
+                node_id=node_id,
+                action=error_plan.action,
+                target="output",
+                adapter_success=adapter_result.success,
+            )
+
+    @staticmethod
+    def _set_terminal_action(
+        context: RailContext,
+        *,
+        rail: str,
+        source_kind: str,
+        node_id: str,
+        action: str,
+        target: str,
+        adapter_success: bool,
+    ) -> None:
+        """Keep terminal-action provenance for P2-A's policy observation."""
+
+        context.terminal_action = {
+            "rail": str(rail or ""),
+            "source_kind": str(source_kind or ""),
+            "node_id": str(node_id or ""),
+            "action": str(action or "block"),
+            "target": str(target or ""),
+            "adapter_success": bool(adapter_success),
+        }
 
     @staticmethod
     def _rule_by_id(rail: NormalizedRail, rule_id: str) -> NormalizedRule:

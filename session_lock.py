@@ -99,8 +99,18 @@ class PrincipalLockManager(UmoLockManager):
         return value or EMPTY_PRINCIPAL_KEY
 
 
+class SessionPolicyStateLockManager(UmoLockManager):
+    """Serialize persistent UMO-state mutations independently of P1 Rails.
+
+    This is deliberately a distinct lock domain from ``UmoLockManager``'s
+    process-wide execution lock.  A message handler can hold the latter while
+    persisting monitor state, so reusing it here would recursively deadlock.
+    """
+
+
 _GLOBAL_UMO_LOCK_MANAGER = UmoLockManager()
 _GLOBAL_PRINCIPAL_LOCK_MANAGER = PrincipalLockManager()
+_GLOBAL_SESSION_POLICY_STATE_LOCK_MANAGER = SessionPolicyStateLockManager()
 
 
 def get_global_umo_lock_manager() -> UmoLockManager:
@@ -112,3 +122,9 @@ def get_global_principal_lock_manager() -> PrincipalLockManager:
     """Return the process-wide access-control lock manager."""
 
     return _GLOBAL_PRINCIPAL_LOCK_MANAGER
+
+
+def get_global_session_policy_state_lock_manager() -> SessionPolicyStateLockManager:
+    """Return the process-wide lock manager for session monitor state."""
+
+    return _GLOBAL_SESSION_POLICY_STATE_LOCK_MANAGER

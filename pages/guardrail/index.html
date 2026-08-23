@@ -308,11 +308,66 @@
     </section>
     <section class="tab-panel" id="panel-session" role="tabpanel" aria-labelledby="tab-session" data-panel="session"
       hidden>
-      <div class="placeholder">
-        <p class="eyebrow">P2</p>
-        <h2>会话策略监控</h2>
-        <p>路由策略缓存、会话状态查看与清理将在后续版本提供。</p>
-      </div>
+      <section id="session-policy-list-panel" class="session-policy-layout" aria-label="UMO 状态列表">
+        <section class="card session-policy-list-card">
+          <div class="card-heading session-policy-heading">
+            <div>
+              <p class="eyebrow">P2-A · OBSERVE ONLY</p>
+              <h2>会话策略监控 <span id="session-policy-state-count" class="count-badge">0</span></h2>
+              <p>查看 Guardrail 已观测的 UMO 状态。路由候选仅用于解释历史，不参与下一次请求。</p>
+            </div>
+            <div class="session-policy-controls">
+              <label>筛选<input id="session-policy-state-query" type="search" autocomplete="off" placeholder="UMO 或策略 ID" /></label>
+              <button id="refresh-session-policy-states" type="button" class="button-secondary">刷新</button>
+            </div>
+          </div>
+          <p id="session-policy-state-status" class="muted" aria-live="polite"></p>
+          <div id="session-policy-state-list" class="policy-list session-policy-state-list" aria-live="polite"></div>
+          <div class="session-policy-pagination" aria-label="会话状态分页">
+            <button id="session-policy-state-prev-page" type="button" class="button-secondary">上一页</button>
+            <span id="session-policy-state-page" class="muted">第 1 页</span>
+            <button id="session-policy-state-next-page" type="button" class="button-secondary">下一页</button>
+          </div>
+        </section>
+      </section>
+      <section id="session-policy-detail-panel" class="session-policy-detail-panel" aria-label="UMO 状态详情" hidden>
+        <div class="card-heading session-policy-heading">
+          <div>
+            <p class="eyebrow">UMO POLICY STATE</p>
+            <h2 id="session-policy-detail-umo">会话策略状态</h2>
+            <p id="session-policy-detail-meta" class="muted"></p>
+          </div>
+          <button id="back-to-session-policy-list" type="button" class="button-secondary">返回会话列表</button>
+        </div>
+        <section class="card session-policy-result-card" aria-labelledby="session-policy-result-heading">
+          <div class="card-heading"><div><p class="eyebrow">LAST POLICY RESULT</p><h3 id="session-policy-result-heading">最近策略结果</h3></div></div>
+          <div id="session-policy-result-summary" class="session-policy-result-grid"></div>
+          <div id="session-policy-signal-list" class="session-policy-signal-list" aria-live="polite"></div>
+        </section>
+        <section class="session-target-grid" aria-label="路由候选与请求观察">
+          <article class="card session-target-card">
+            <p class="eyebrow">ROUTE CANDIDATE</p>
+            <h3>策略路由候选</h3>
+            <p class="session-policy-observe-note">观察模式，未参与执行</p>
+            <div id="session-policy-route-candidate" class="session-target-details"></div>
+          </article>
+          <article class="card session-target-card">
+            <p class="eyebrow">REQUEST STAGE</p>
+            <h3>请求阶段观察目标</h3>
+            <p class="muted">仅代表 Guardrail 在该阶段可见的信息，不代表生成已成功。</p>
+            <div id="session-policy-request-observation" class="session-target-details"></div>
+          </article>
+        </section>
+        <section class="card session-policy-comparison-card">
+          <p class="eyebrow">TARGET COMPARISON</p>
+          <h3>同次执行目标比较</h3>
+          <p id="session-policy-target-comparison" class="muted"></p>
+        </section>
+        <section class="card session-policy-activities-card">
+          <div class="card-heading"><div><p class="eyebrow">ACTIVITY LOG</p><h3>相关活动</h3></div></div>
+          <div id="session-policy-activity-list" class="session-policy-activity-list" aria-live="polite"></div>
+        </section>
+      </section>
     </section>
     <section class="tab-panel" id="panel-token" role="tabpanel" aria-labelledby="tab-token" data-panel="token" hidden>
       <div class="placeholder">
