@@ -436,10 +436,6 @@ def _runtime_dependency_references(
     for binding in policy.bindings:
         if binding.depend_on:
             references.append((binding.rule_id, binding.depend_on))
-        rule = rule_by_id.get(binding.rule_id)
-        inputs = rule.template_config.get("inputs") if rule and rule.template_key == "logic_gate" else None
-        if isinstance(inputs, list):
-            references.extend((binding.rule_id, str(item)) for item in inputs if str(item).strip())
     for component in policy.components:
         if component.depend_on:
             references.append((component.component_id, component.depend_on))

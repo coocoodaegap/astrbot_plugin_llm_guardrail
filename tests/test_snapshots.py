@@ -153,37 +153,6 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(snapshot.policy_library.rules, ())
         self.assertEqual(snapshot.runtime_config.rails["input_rail"].rules, [])
 
-    def test_legacy_rule_library_logic_gate_migrates_when_snapshot_loads(self):
-        manager = ConfigSnapshotManager(
-            {
-                "policy_library": {
-                    "rules": [
-                        {"rule_id": "source", "template_key": "plain_keywords", "template_config": {"keywords": ["secret"]}},
-                        {"rule_id": "gate", "template_key": "logic_gate", "template_config": {"inputs": ["source"]}},
-                    ],
-                    "policies": [
-                        {"policy_id": "_default", "name": "Default", "builtin": True},
-                        {
-                            "policy_id": "legacy",
-                            "name": "Legacy",
-                            "bindings": [
-                                {"rule_id": "source", "rail": "input_rail"},
-                                {"rule_id": "gate", "rail": "input_rail"},
-                            ],
-                        },
-                    ],
-                    "active_policy_id": "legacy",
-                },
-            }
-        )
-
-        library = manager.current.policy_library
-        policy = library.get_policy("legacy")
-
-        self.assertEqual([rule.rule_id for rule in library.rules], ["source"])
-        self.assertEqual(policy.components[0].component_id, "gate")
-        self.assertEqual(manager.current.runtime_config.rails["input_rail"].rules[1].template_key, "logic_gate")
-
     def test_publish_policy_library_updates_only_new_requests(self):
         manager = ConfigSnapshotManager({})
         event = _Event()

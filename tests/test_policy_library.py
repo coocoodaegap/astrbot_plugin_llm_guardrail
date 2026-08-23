@@ -459,46 +459,6 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(compiled_gate["rule_id"], "gate")
         self.assertEqual(compiled_gate["inputs"], ["source"])
 
-    def test_legacy_logic_gate_is_migrated_to_policy_local_component(self):
-        library = PolicyLibrary.from_dict(
-            {
-                "rules": [
-                    {"rule_id": "source", "template_key": "plain_keywords", "template_config": {"keywords": ["source"]}},
-                    {
-                        "rule_id": "gate",
-                        "template_key": "logic_gate",
-                        "template_config": {"gate": "any", "invert": True, "inputs": ["source"]},
-                        "default_priority": 40,
-                        "default_action_on_hit": "observe",
-                    },
-                ],
-                "policies": [
-                    {"policy_id": "_default", "name": "Default", "builtin": True},
-                    {
-                        "policy_id": "legacy",
-                        "name": "Legacy",
-                        "bindings": [
-                            {"rule_id": "source", "rail": "input_rail"},
-                            {"rule_id": "gate", "rail": "input_rail", "enabled": False, "depend_on": "source"},
-                        ],
-                    },
-                ],
-                "active_policy_id": "legacy",
-            }
-        )
-
-        policy = library.get_policy("legacy")
-        self.assertEqual([rule.rule_id for rule in library.rules], ["source"])
-        self.assertEqual([binding.rule_id for binding in policy.bindings], ["source"])
-        self.assertEqual(policy.node_order, ("source", "gate"))
-        gate = policy.components[0]
-        self.assertEqual(gate.component_id, "gate")
-        self.assertEqual(gate.component_type, "logic_gate")
-        self.assertFalse(gate.enabled)
-        self.assertEqual(gate.priority, 40)
-        self.assertEqual(gate.depend_on, "source")
-        self.assertEqual(gate.config["inputs"], ["source"])
-
     def test_rule_library_rejects_component_types(self):
         library = PolicyLibrary(
             rules=(RuleDefinition("gate", "logic_gate", {}),),

@@ -290,10 +290,6 @@ class PolicyLibrary:
             for item in policies
             if isinstance(item, Mapping)
         ] if isinstance(policies, list) else []
-        parsed_rules, parsed_policies = _migrate_legacy_logic_gate_rules(
-            parsed_rules,
-            parsed_policies,
-        )
         active_policy_id = str(value.get("active_policy_id") or DEFAULT_POLICY_ID).strip()
         return cls(
             rules=tuple(parsed_rules),
@@ -524,75 +520,6 @@ class PolicyLibrary:
         return LibraryValidation(tuple(fatal_errors), tuple(warnings))
 
 
-def _migrate_legacy_logic_gate_rules(
-    rules: list[RuleDefinition],
-    policies: list[PolicyDefinition],
-) -> tuple[list[RuleDefinition], list[PolicyDefinition]]:
-    """Inline old reusable ``logic_gate`` rules into each policy that uses one.
-
-    Older P1 snapshots stored a logic gate in the rule library and referenced
-    it through a normal binding.  A gate is now a policy-local component, so
-    its former binding supplies the placement/overrides and its rule body
-    supplies component configuration.  Keeping the old ID as ``component_id``
-    preserves all existing dependency references without a second rewrite.
-    """
-
-    legacy_gates = {
-        rule.rule_id: rule for rule in rules if rule.template_key == "logic_gate"
-    }
-    if not legacy_gates:
-        return rules, policies
-    migrated_policies: list[PolicyDefinition] = []
-    for policy in policies:
-        bindings: list[PolicyRuleBinding] = []
-        components = list(policy.components)
-        node_order = list(policy.node_order) or [
-            binding.rule_id for binding in policy.bindings
-        ]
-        for binding in policy.bindings:
-            gate = legacy_gates.get(binding.rule_id)
-            if gate is None:
-                bindings.append(binding)
-                continue
-            components.append(
-                PolicyComponent(
-                    component_id=gate.rule_id,
-                    component_type="logic_gate",
-                    rail=binding.rail,
-                    enabled=binding.enabled,
-                    priority=(
-                        gate.default_priority
-                        if binding.priority is None
-                        else binding.priority
-                    ),
-                    action_on_hit=(
-                        gate.default_action_on_hit
-                        if binding.action_on_hit is None
-                        else binding.action_on_hit
-                    ),
-                    action_on_error=(
-                        gate.default_action_on_error
-                        if binding.action_on_error is None
-                        else binding.action_on_error
-                    ),
-                    depend_on=binding.depend_on,
-                    config=copy.deepcopy(gate.template_config),
-                )
-            )
-        migrated_policies.append(
-            replace(
-                policy,
-                bindings=tuple(bindings),
-                components=tuple(components),
-                node_order=tuple(node_order),
-            )
-        )
-    return (
-        [rule for rule in rules if rule.template_key != "logic_gate"],
-        migrated_policies,
-    )
-
-
 def compile_policy_to_runtime_config(
     base_config: Mapping[str, Any] | None,
     library: PolicyLibrary,
@@ -765,11 +692,6 @@ def _policy_dependency_references(
     for binding in policy.bindings:
         if binding.depend_on:
             references.append((binding.rule_id, binding.depend_on, "depend_on"))
-        rule = rule_by_id.get(binding.rule_id)
-        if rule is None or rule.template_key != "logic_gate":
-            continue
-        for value in _clean_string_list(rule.template_config.get("inputs")):
-            references.append((binding.rule_id, value, "logic input"))
     for component in policy.components:
         if component.depend_on:
             references.append((component.component_id, component.depend_on, "depend_on"))
