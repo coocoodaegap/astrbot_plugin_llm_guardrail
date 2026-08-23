@@ -12,25 +12,35 @@
   <div class="page-sticky-header">
     <div class="page-sticky-header-content">
       <header class="page-header">
-      <div>
-        <p class="eyebrow">ASTRBOT PLUGIN PAGE</p>
-        <h1>LLM Guardrail</h1>
-      </div>
-      <p id="status" class="status">正在读取运行状态…</p>
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <div>
+            <p class="eyebrow">ASTRBOT · GUARDRAIL CONTROL SURFACE</p>
+            <h1>LLM Guardrail</h1>
+          </div>
+        </div>
+        <div class="runtime-status">
+          <span class="runtime-status-label">RUNTIME STATUS</span>
+          <p id="status" class="status">正在读取运行状态…</p>
+        </div>
       </header>
       <nav class="tabs" aria-label="Guardrail 功能页面" role="tablist">
-      <button class="tab is-active" id="tab-overview" type="button" role="tab" aria-selected="true"
-        aria-controls="panel-overview" data-tab="overview">总览</button><button class="tab" id="tab-rules" type="button"
-        role="tab" aria-selected="false" aria-controls="panel-rules" data-tab="rules">规则库</button><button class="tab"
-        id="tab-policies" type="button" role="tab" aria-selected="false" aria-controls="panel-policies"
-        data-tab="policies">策略编排</button><button class="tab" id="tab-access" type="button" role="tab"
-        aria-selected="false" aria-controls="panel-access" data-tab="access">访问控制</button><button class="tab"
-        id="tab-knowledge" type="button" role="tab" aria-selected="false" aria-controls="panel-knowledge"
-        data-tab="knowledge">知识库经验</button><button class="tab" id="tab-session" type="button" role="tab"
-        aria-selected="false" aria-controls="panel-session" data-tab="session">会话策略监控</button><button class="tab"
-        id="tab-token" type="button" role="tab" aria-selected="false" aria-controls="panel-token" data-tab="token">Token
-        监控</button><button class="tab" id="tab-system" type="button" role="tab" aria-selected="false"
-        aria-controls="panel-system" data-tab="system">系统设置</button>
+        <button class="tab is-active" id="tab-overview" type="button" role="tab" aria-selected="true"
+          aria-controls="panel-overview" data-tab="overview">总览</button>
+        <button class="tab" id="tab-rules" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-rules" data-tab="rules">规则库</button>
+        <button class="tab" id="tab-policies" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-policies" data-tab="policies">策略编排</button>
+        <button class="tab" id="tab-access" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-access" data-tab="access">访问控制</button>
+        <button class="tab" id="tab-knowledge" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-knowledge" data-tab="knowledge">知识库经验</button>
+        <button class="tab" id="tab-session" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-session" data-tab="session">会话策略监控</button>
+        <button class="tab" id="tab-token" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-token" data-tab="token">Token 监控</button>
+        <button class="tab" id="tab-system" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-system" data-tab="system">系统设置</button>
       </nav>
     </div>
   </div>

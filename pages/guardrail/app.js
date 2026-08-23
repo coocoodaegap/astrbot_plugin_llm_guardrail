@@ -748,12 +748,33 @@ const policyStepSettingHints = {
   default_action_on_error: "该 Step 未覆写错误动作时采用的默认处理方式。",
   block_message: "该 Step 阻断请求或输出时使用的默认提示；留空沿用系统设置。",
 };
+// Canvas does not inherit CSS custom properties. Keep its palette explicit and
+// six-digit so lane color alpha suffixes (for grid and selection overlays) stay valid.
+const policyGraphPalette = Object.freeze({
+  disabled: "#71837e",
+  disabledFill: "#111a18",
+  disabledLabel: "#a7bbb5",
+  disabledBorder: "#61746e",
+  fallbackEdge: "#a2b8b0",
+  logicEdge: "#c8ddd5",
+  invalid: "#ff6d7a",
+  warning: "#ffd166",
+  warningLabel: "#ffe2a0",
+  unavailable: "#ff6472",
+  unavailableLabel: "#ffabb3",
+  normalGlow: "#ffffff",
+  selectedRing: "#ffffff",
+  candidateGlow: "#61dfb5",
+  candidateRing: "#9bf1d2",
+  label: "#e1f0ea",
+  collapsedLabel: "#c5d9d2",
+});
 const policyGraphSteps = [
-  { rail: "input_rail", step: 1, label: "Step 1 · 输入分析", color: "#ff5a78", fill: "#401d31" },
-  { rail: "routing_rail", step: 2, label: "Step 2 · 模型路由", color: "#ff963f", fill: "#41291c" },
-  { rail: "request_rail", step: 3, label: "Step 3 · 请求审查", color: "#eadb41", fill: "#3c3819" },
-  { rail: "prompt_rail", step: 4, label: "Step 4 · 提示词增强", color: "#4ee19a", fill: "#17372b" },
-  { rail: "output_rail", step: 5, label: "Step 5 · 输出检查", color: "#56b9ff", fill: "#17334a" },
+  { rail: "input_rail", step: 1, label: "Step 1 · 输入分析", color: "#ff7d8a", fill: "#29171b" },
+  { rail: "routing_rail", step: 2, label: "Step 2 · 模型路由", color: "#f6b35c", fill: "#2d2216" },
+  { rail: "request_rail", step: 3, label: "Step 3 · 请求审查", color: "#e5d274", fill: "#292715" },
+  { rail: "prompt_rail", step: 4, label: "Step 4 · 提示词增强", color: "#6ed8b4", fill: "#123025" },
+  { rail: "output_rail", step: 5, label: "Step 5 · 输出检查", color: "#79b9ff", fill: "#132940" },
 ];
 const supportedTemplatesByRail = {
   input_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
@@ -1338,21 +1359,21 @@ function layoutPolicyGraph(model, width, height) {
   return { laneLayouts, width, height };
 }
 function graphColorForEdge(edge) {
-  if (edge.source?.state === "disabled" || edge.target?.state === "disabled") return "#718096";
-  if (edge.invalid || edge.source?.state === "unavailable" || edge.target?.state === "unavailable") return "#ff6b74";
-  if (edge.kind === "logic_input") return "#e2e8f0";
-  return edge.target?.theme?.color || "#cbd5e1";
+  if (edge.source?.state === "disabled" || edge.target?.state === "disabled") return policyGraphPalette.disabled;
+  if (edge.invalid || edge.source?.state === "unavailable" || edge.target?.state === "unavailable") return policyGraphPalette.invalid;
+  if (edge.kind === "logic_input") return policyGraphPalette.logicEdge;
+  return edge.target?.theme?.color || policyGraphPalette.fallbackEdge;
 }
 function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion, stepEnabled) {
-  const color = stepEnabled ? lane.step.color : "#94a3b8";
-  context.fillStyle = stepEnabled ? lane.step.fill : "#1e293b";
+  const color = stepEnabled ? lane.step.color : policyGraphPalette.disabled;
+  context.fillStyle = stepEnabled ? lane.step.fill : policyGraphPalette.disabledFill;
   context.fillRect(0, lane.top, lane.width, lane.height);
   if (policyGraphState.selectedRail === lane.step.rail) {
-    context.fillStyle = stepEnabled ? `${lane.step.color}18` : "#94a3b814";
+    context.fillStyle = stepEnabled ? `${lane.step.color}18` : `${policyGraphPalette.disabled}14`;
     context.fillRect(0, lane.top, lane.width, lane.height);
   }
   const offset = reducedMotion || !stepEnabled ? 0 : (timestamp / 7000) % 24;
-  context.strokeStyle = stepEnabled ? `${color}35` : "#94a3b822";
+  context.strokeStyle = stepEnabled ? `${color}35` : `${policyGraphPalette.disabled}22`;
   context.lineWidth = policyGraphState.selectedRail === lane.step.rail ? 1.4 : 1;
   for (let x = -24 + offset; x < lane.width; x += 24) {
     context.beginPath();
@@ -1366,10 +1387,10 @@ function drawPolicyGraphGrid(context, lane, timestamp, reducedMotion, stepEnable
     context.lineTo(lane.width, y);
     context.stroke();
   }
-  context.strokeStyle = stepEnabled ? `${color}aa` : "#64748baa";
+  context.strokeStyle = stepEnabled ? `${color}aa` : `${policyGraphPalette.disabledBorder}aa`;
   context.strokeRect(.5, lane.top + .5, lane.width - 1, lane.height - 1);
-  context.fillStyle = stepEnabled ? color : "#a8b6c8";
-  context.font = "600 14px Inter, system-ui, sans-serif";
+  context.fillStyle = stepEnabled ? color : policyGraphPalette.disabledLabel;
+  context.font = "600 14px \"Cascadia Code\", \"JetBrains Mono\", monospace";
   context.fillText(`${lane.step.label}${stepEnabled ? "" : " · 已关闭"}`, 14, lane.top + 22);
 }
 function drawPolicyGraphArrow(context, source, target, edge) {
@@ -1418,9 +1439,9 @@ function drawPolicyGraphArrow(context, source, target, edge) {
 }
 function graphGlowForNode(node) {
   if (node.state === "disabled") return null;
-  if (node.state === "warning") return "#ffe85b";
-  if (node.state === "unavailable") return "#ff2638";
-  return "#ffffff";
+  if (node.state === "warning") return policyGraphPalette.warning;
+  if (node.state === "unavailable") return policyGraphPalette.unavailable;
+  return policyGraphPalette.normalGlow;
 }
 function markPolicyGraphNodeDirty(ruleId) {
   if (ruleId) policyGraphState.dirtyNodeIds.add(String(ruleId));
@@ -1568,12 +1589,12 @@ function removePolicyBinding() {
 function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   if (!isPolicyGraphNodeVisible(node)) return;
   const color = node.state === "disabled"
-    ? "#94a3b8"
+    ? policyGraphPalette.disabled
     : node.state === "unavailable"
-      ? "#ff5968"
+      ? policyGraphPalette.unavailable
       : node.state === "warning"
-        ? "#ffd84d"
-      : node.theme?.color || "#e2e8f0";
+        ? policyGraphPalette.warning
+      : node.theme?.color || policyGraphPalette.fallbackEdge;
   const glow = graphGlowForNode(node);
   context.save();
   context.strokeStyle = color;
@@ -1611,7 +1632,7 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
     context.stroke();
     context.shadowBlur = 0;
     context.fillStyle = color;
-    context.font = "600 9px Inter, system-ui, sans-serif";
+    context.font = "600 9px \"Cascadia Code\", \"JetBrains Mono\", monospace";
     const symbol = node.component?.config?.gate === "any" ? "∨" : "∧";
     context.fillText(symbol, node.x - 3, node.y + 3);
   } else {
@@ -1623,7 +1644,7 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   if (node.isDirty || selected) {
     const phase = selected && !reducedMotion ? (timestamp / 900) % 1 : 0;
     context.shadowBlur = 0;
-    context.strokeStyle = "#ffffff";
+    context.strokeStyle = policyGraphPalette.selectedRing;
     context.lineWidth = 1.4;
     context.setLineDash([3, 3]);
     context.lineDashOffset = -phase * 12;
@@ -1634,8 +1655,8 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   const dependentId = policyGraphState.dependencySelection?.dependentId;
   if (dependentId && node.id !== dependentId && policyGraphDependencyCandidates(dependentId).has(node.id)) {
     context.shadowBlur = 10;
-    context.shadowColor = "#63e6a0";
-    context.strokeStyle = "#8bf0b9";
+    context.shadowColor = policyGraphPalette.candidateGlow;
+    context.strokeStyle = policyGraphPalette.candidateRing;
     context.lineWidth = 1.5;
     context.setLineDash([2, 3]);
     context.beginPath();
@@ -1645,13 +1666,13 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   context.shadowBlur = 0;
   context.setLineDash([]);
   context.fillStyle = node.state === "disabled"
-    ? "#94a3b8"
+    ? policyGraphPalette.disabled
     : node.state === "unavailable"
-      ? "#ff7884"
+      ? policyGraphPalette.unavailableLabel
       : node.state === "warning"
-        ? "#ffe783"
-      : "#eef6ff";
-  context.font = "500 11px Inter, system-ui, sans-serif";
+        ? policyGraphPalette.warningLabel
+      : policyGraphPalette.label;
+  context.font = "500 11px \"Cascadia Code\", \"JetBrains Mono\", monospace";
   context.fillText(node.id || "未命名", node.x + 11, node.y + 4);
   context.restore();
 }
@@ -1688,8 +1709,8 @@ function drawPolicyGraph(timestamp = performance.now()) {
     drawPolicyGraphGrid(context, lane, timestamp, reducedMotion, stepEnabled);
     if (lane.collapsed) {
       const count = model.nodes.filter((node) => node.rail === lane.step.rail).length;
-      context.fillStyle = "#d8e7f7";
-      context.font = "500 11px Inter, system-ui, sans-serif";
+      context.fillStyle = policyGraphPalette.collapsedLabel;
+      context.font = "500 11px \"Cascadia Code\", \"JetBrains Mono\", monospace";
       context.fillText(`${count} 个节点已折叠`, rect.width - 88, lane.top + 22);
     }
   }

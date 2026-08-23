@@ -144,7 +144,26 @@ class SourceSelectionTests(unittest.TestCase):
 
         self.assertEqual(source["source_kb_name"], "first-kb")
 
-    def test_does_not_guess_source_when_top_result_has_no_kb_name(self) -> None:
+    def test_keeps_top_result_kb_id_when_name_is_missing(self) -> None:
+        source = select_best_evidence_source(
+            [
+                {
+                    "text": "top",
+                    "score": 0.9,
+                    "metadata": {"kb_id": "top-kb-id"},
+                },
+                {
+                    "text": "lower",
+                    "score": 0.8,
+                    "metadata": {"kb_name": "lower-kb"},
+                },
+            ]
+        )
+
+        self.assertEqual(source["source_kb_id"], "top-kb-id")
+        self.assertEqual(source["source_kb_name"], "")
+
+    def test_does_not_guess_source_when_top_result_has_no_kb_identity(self) -> None:
         source = select_best_evidence_source(
             [
                 {"text": "top", "score": 0.9, "metadata": {}},

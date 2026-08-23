@@ -116,8 +116,8 @@ class RagExperienceService:
 
         The selected source is the evidence record with the highest finite
         numeric score.  If an adapter cannot provide both a score and a source
-        knowledge-base name, the experience remains viewable but cannot be
-        uploaded from Pages.
+        knowledge-base identity (ID or name), the experience remains viewable
+        but cannot be uploaded from Pages.
         """
         try:
             normalized_rail = _clean_identifier(rail, "rail")
@@ -378,8 +378,9 @@ def select_best_evidence_source(
     """Project the highest-scoring evidence into stable source fields.
 
     A source is deliberately absent when no finite score or no knowledge-base
-    name is available.  That avoids silently choosing a configured but
-    non-winning knowledge base on compatibility/fallback retrieval paths.
+    identity (ID or name) is available.  That avoids silently choosing a
+    configured but non-winning knowledge base on compatibility/fallback
+    retrieval paths.
     """
     best: tuple[float, int, Mapping[str, Any]] | None = None
     for index, item in enumerate(evidence or ()):
@@ -397,11 +398,12 @@ def select_best_evidence_source(
     metadata = item.get("metadata")
     if not isinstance(metadata, Mapping):
         metadata = {}
+    kb_id = _safe_text(metadata.get("kb_id"), MAX_IDENTIFIER_LENGTH)
     kb_name = _safe_text(metadata.get("kb_name"), MAX_IDENTIFIER_LENGTH)
-    if not kb_name:
+    if not kb_id and not kb_name:
         return _empty_source()
     return {
-        "source_kb_id": _safe_text(metadata.get("kb_id"), MAX_IDENTIFIER_LENGTH),
+        "source_kb_id": kb_id,
         "source_kb_name": kb_name,
         "source_doc_id": _safe_text(metadata.get("doc_id"), MAX_IDENTIFIER_LENGTH),
         "source_doc_name": _safe_text(

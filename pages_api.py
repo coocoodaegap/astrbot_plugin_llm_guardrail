@@ -558,13 +558,15 @@ class GuardrailPagesApiMixin:
         source_kb_name: str,
     ) -> Any | None:
         manager = getattr(self.context, "kb_manager", None)
-        getter = getattr(manager, "get_kb_by_name", None)
-        if not callable(getter):
-            return None
-        for reference in (source_kb_id, source_kb_name):
-            if not reference:
-                continue
-            value = getter(reference)
+        id_getter = getattr(manager, "get_kb", None)
+        if source_kb_id and callable(id_getter):
+            value = id_getter(source_kb_id)
+            helper = await value if inspect.isawaitable(value) else value
+            if helper is not None:
+                return helper
+        name_getter = getattr(manager, "get_kb_by_name", None)
+        if source_kb_name and callable(name_getter):
+            value = name_getter(source_kb_name)
             helper = await value if inspect.isawaitable(value) else value
             if helper is not None:
                 return helper

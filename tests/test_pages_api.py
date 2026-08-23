@@ -60,11 +60,16 @@ class _KBHelper:
 class _KBManager:
     def __init__(self):
         self.helper = _KBHelper()
-        self.references = []
+        self.id_references = []
+        self.name_references = []
+
+    async def get_kb(self, reference):
+        self.id_references.append(reference)
+        return self.helper if reference == "kb-1" else None
 
     async def get_kb_by_name(self, reference):
-        self.references.append(reference)
-        return self.helper if reference in {"kb-1", "source-kb"} else None
+        self.name_references.append(reference)
+        return self.helper if reference == "source-kb" else None
 
 
 class _ProviderMeta:
@@ -161,7 +166,6 @@ class GuardrailPagesApiTests(unittest.TestCase):
                         "score": 0.95,
                         "metadata": {
                             "kb_id": "kb-1",
-                            "kb_name": "source-kb",
                             "doc_name": "source.md",
                         },
                     }
@@ -199,7 +203,8 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertTrue(saved["success"])
         self.assertTrue(uploaded["success"])
         helper = plugin.context.kb_manager.helper
-        self.assertEqual(plugin.context.kb_manager.references[0], "kb-1")
+        self.assertEqual(plugin.context.kb_manager.id_references, ["kb-1"])
+        self.assertEqual(plugin.context.kb_manager.name_references, [])
         self.assertEqual(
             helper.upload_calls[0]["file_content"], b"Edited content for AstrBot KB"
         )
@@ -219,6 +224,39 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertTrue(deleted["success"])
         self.assertEqual(helper.delete_calls, [])
+
+    def test_rag_experience_upload_falls_back_to_source_name(self):
+        plugin = _Plugin()
+        captured = asyncio.run(
+            plugin.rag_experience.capture_match(
+                rail="input_rail",
+                rule_id="rag_policy",
+                content="Matched content",
+                evidence=[
+                    {
+                        "text": "Highest evidence",
+                        "score": 0.95,
+                        "metadata": {"kb_name": "source-kb"},
+                    }
+                ],
+            )
+        ).record
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "record_id": captured["record_id"],
+                        "expected_record_revision": captured["record_revision"],
+                    }
+                ),
+            ):
+                uploaded = asyncio.run(plugin._pages_upload_rag_experience())
+
+        self.assertTrue(uploaded["success"])
+        self.assertEqual(plugin.context.kb_manager.id_references, [])
+        self.assertEqual(plugin.context.kb_manager.name_references, ["source-kb"])
 
     def test_rag_experience_upload_refuses_unknown_source(self):
         plugin = _Plugin()
