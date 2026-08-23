@@ -704,11 +704,9 @@ class AstrBotAdapter:
     async def get_current_chat_provider_id(self, event: Any) -> str:
         """Return AstrBot's current chat Provider without Guardrail route extras.
 
-        Monitoring uses this only as a labelled fallback when the concrete
-        ``ProviderRequest`` object exposes no target fields.  Keeping it
-        separate from :meth:`get_current_request_provider_id` prevents a
-        route-policy's ``selected_provider`` marker from being mistaken for a
-        direct request-stage observation.
+        Keeping this separate from :meth:`get_current_request_provider_id`
+        prevents a route-policy's ``selected_provider`` marker from being
+        mistaken for the session's current Provider.
         """
 
         return await self._resolve_chat_provider_id(event, "")

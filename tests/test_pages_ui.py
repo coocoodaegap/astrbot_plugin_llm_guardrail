@@ -224,6 +224,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("late_policy_stage_observed", javascript)
         self.assertIn('requestTarget.source === "unavailable"', javascript)
         self.assertIn('return "未观察到目标"', javascript)
+        self.assertNotIn("context_current_chat_provider_id", javascript)
         self.assertIn("策略未显式约束模型，因此未比较模型", javascript)
         self.assertIn("观察模式，未参与执行", html)
         self.assertNotIn('apiPost("clear_session_policy', javascript)

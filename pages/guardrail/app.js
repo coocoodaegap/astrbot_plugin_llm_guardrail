@@ -3215,9 +3215,7 @@ function formatObservedTarget(target) {
 function requestTargetSourceLabel(source) {
   return source === "provider_request"
     ? "ProviderRequest 字段"
-    : source === "context_current_chat_provider_id"
-      ? "AstrBot 当前会话 Provider"
-      : "当前 SDK 未提供目标字段";
+    : "当前 ProviderRequest 未提供目标字段";
 }
 function sessionPolicyOutcomeLabel(outcome) {
   return outcome === "blocked" ? "已阻断" : outcome === "allowed" ? "已放行" : "已跳过";

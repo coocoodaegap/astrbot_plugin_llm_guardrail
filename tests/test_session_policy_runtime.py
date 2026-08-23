@@ -199,10 +199,13 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
         self.assertEqual(detail.record["route_candidate"]["provider_id"], "provider-a")
         self.assertEqual(detail.record["route_candidate"]["mode"], "observe_only")
 
-    def test_request_target_observation_labels_direct_fields_and_sdk_fallback(self):
+    def test_request_target_observation_only_reads_direct_provider_request_fields(self):
         _install_astrbot_stubs()
         module = importlib.import_module("main")
-        plugin = module.LlmGuardrailPlugin(object(), {"session_policy_state": {"enabled": True}})
+        context = types.SimpleNamespace(
+            get_current_chat_provider_id=lambda _umo: "session-default-provider"
+        )
+        plugin = module.LlmGuardrailPlugin(context, {"session_policy_state": {"enabled": True}})
         event = _Event()
         event.set_extra("selected_provider", "policy-selected-provider")
         direct = asyncio.run(plugin._request_target_observation(event, _DirectRequest()))
@@ -213,8 +216,11 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
             "model_id": "model-b",
             "source": "provider_request",
         })
-        self.assertEqual(unavailable["source"], "unavailable")
-        self.assertEqual(unavailable["provider_id"], "")
+        self.assertEqual(unavailable, {
+            "provider_id": "",
+            "model_id": "",
+            "source": "unavailable",
+        })
 
     def test_real_handlers_share_run_and_ignore_stream_chunk_monitor_writes(self):
         _install_astrbot_stubs()

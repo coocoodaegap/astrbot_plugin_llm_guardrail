@@ -514,9 +514,9 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         """Capture a request target without assuming undocumented SDK fields.
 
         Newer/third-party ProviderRequest implementations may expose direct
-        ``provider_id`` and ``model`` attributes.  When they do not, AstrBot's
-        documented current-chat-provider query remains useful context, but the
-        source explicitly says it is not a direct ProviderRequest observation.
+        ``provider_id`` and ``model`` attributes.  When they do not, the
+        monitor records an unavailable observation instead of substituting the
+        UMO's session-default Provider, which is not request-scoped evidence.
         """
 
         provider_id = self._request_string_field(request, "provider_id")
@@ -529,19 +529,10 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 "model_id": model_id,
                 "source": "provider_request",
             }
-        try:
-            provider_id = await self.adapter.get_current_chat_provider_id(event)
-            provider_id = str(provider_id or "").strip()
-        except Exception:
-            provider_id = ""
         return {
-            "provider_id": provider_id,
+            "provider_id": "",
             "model_id": "",
-            "source": (
-                "context_current_chat_provider_id"
-                if provider_id
-                else "unavailable"
-            ),
+            "source": "unavailable",
         }
 
     @staticmethod
