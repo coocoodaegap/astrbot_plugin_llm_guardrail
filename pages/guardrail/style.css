@@ -332,6 +332,26 @@ button:disabled {
     line-height: 1.65
 }
 
+.default-policy-summary {
+    display: grid;
+    gap: 8px
+}
+
+.default-policy-summary > strong {
+    color: #26334a
+}
+
+.default-policy-summary p {
+    margin: 0
+}
+
+.default-policy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px
+}
+
 .default-policy-card code {
     padding: 1px 5px;
     color: #315a9c;
@@ -693,6 +713,28 @@ button:disabled {
     margin: 0 0 8px;
     color: #26334a;
     font-size: 1rem
+}
+
+.policy-session-title {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    margin-bottom: 8px
+}
+
+.policy-session-title h3 {
+    margin: 0
+}
+
+.policy-default-indicator {
+    padding: 3px 8px;
+    border: 1px solid #9bc4ff;
+    border-radius: 999px;
+    color: #164d97;
+    background: #e9f2ff;
+    font-size: .76rem;
+    font-weight: 700
 }
 
 .policy-session-actions {

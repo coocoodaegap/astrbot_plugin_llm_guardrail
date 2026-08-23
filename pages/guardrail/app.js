@@ -14,6 +14,7 @@ const status = $("status"),
   policyList = $("policy-list"),
   policyCount = $("policy-count"),
   policyLibraryStatus = $("policy-library-status"),
+  defaultPolicySummary = $("default-policy-summary"),
   policyDetailName = $("policy-detail-name"),
   policyDetailDescription = $("policy-detail-description"),
   policyDetailMeta = $("policy-detail-meta"),
@@ -29,6 +30,7 @@ const status = $("status"),
   savePolicy = $("save-policy"),
   policyUmoList = $("policy-umo-list"),
   setDefaultPolicy = $("set-default-policy"),
+  defaultPolicyIndicator = $("default-policy-indicator"),
   policySessionStatus = $("policy-session-status"),
   backToPolicyList = $("back-to-policy-list"),
   newPolicy = $("new-policy"),
@@ -623,6 +625,7 @@ function renderPolicyList() {
   policyList.replaceChildren();
   const policies = customPolicies();
   policyCount.textContent = String(policies.length);
+  renderDefaultPolicySummary(policies);
   for (const policy of policies) {
     const item = document.createElement("button");
     item.type = "button";
@@ -635,7 +638,7 @@ function renderPolicyList() {
     const bindingCount = Array.isArray(policy.bindings) ? policy.bindings.length : 0;
     const componentCount = Array.isArray(policy.components) ? policy.components.length : 0;
     const umoCount = Array.isArray(policy.umo_list) ? policy.umo_list.length : 0;
-    metadata.textContent = `${bindingCount} 条规则 · ${componentCount} 个元件 · ${umoCount} 个 UMO${policy.policy_id === policyLibrary.active_policy_id ? " · 默认策略" : ""}`;
+    metadata.textContent = `${bindingCount} 条规则 · ${componentCount} 个元件 · ${umoCount} 个 UMO`;
     item.append(title, description, metadata);
     item.addEventListener("click", () => showPolicyDetail(policy.policy_id));
     policyList.append(item);
@@ -2084,6 +2087,48 @@ function renderPolicyComponentOptions(rail) {
     policyComponentOptions.append(option);
   }
 }
+function renderDefaultPolicySummary(policies = customPolicies()) {
+  defaultPolicySummary.replaceChildren();
+  const policy = policies.find((item) => item.policy_id === policyLibrary.active_policy_id);
+  if (!policy) {
+    const description = document.createElement("p");
+    description.textContent = "尚未指定默认策略。未匹配到合法策略的请求将直接使用系统 fallback 图，并按系统设置执行兜底检查。";
+    defaultPolicySummary.append(description);
+    return;
+  }
+  const title = document.createElement("strong");
+  const description = document.createElement("p");
+  const actions = document.createElement("div");
+  const viewButton = document.createElement("button");
+  const clearButton = document.createElement("button");
+  title.textContent = policy.name || policy.policy_id || "未命名策略";
+  description.textContent = String(policy.description || "").trim() || "未说明";
+  actions.className = "default-policy-actions";
+  viewButton.type = "button";
+  viewButton.className = "button-secondary";
+  viewButton.textContent = "查看策略";
+  viewButton.addEventListener("click", () => showPolicyDetail(policy.policy_id));
+  clearButton.type = "button";
+  clearButton.className = "danger-button";
+  clearButton.textContent = "取消默认策略";
+  clearButton.addEventListener("click", () => clearDefaultPolicyFromList(clearButton));
+  actions.append(viewButton, clearButton);
+  defaultPolicySummary.append(title, description, actions);
+}
+async function clearDefaultPolicyFromList(button) {
+  const previousDefaultPolicyId = policyLibrary.active_policy_id;
+  if (!previousDefaultPolicyId) return;
+  policyLibrary.active_policy_id = "";
+  button.disabled = true;
+  const saved = await persistPolicyLibrary(
+    (revision) => `已取消默认策略，revision ${revision}。`,
+    { operation: "取消默认策略" },
+  );
+  if (!saved) {
+    policyLibrary.active_policy_id = previousDefaultPolicyId;
+  }
+  renderPolicyList();
+}
 function openPolicyComponentCreation(rail) {
   if (!getPolicyGraphDraft()) return;
   pendingPolicyComponentRail = rail;
@@ -2224,10 +2269,11 @@ function renderPolicyDetail(policy) {
   policyUmoList.replaceChildren();
   policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
   policyUmoList.append(policyUmoList.umoEditor);
-  setDefaultPolicy.disabled = policy.policy_id === policyLibrary.active_policy_id;
-  setDefaultPolicy.textContent = policy.policy_id === policyLibrary.active_policy_id
-    ? "当前默认策略"
-    : "设为默认策略";
+  const isDefaultPolicy = policy.policy_id === policyLibrary.active_policy_id;
+  defaultPolicyIndicator.hidden = !isDefaultPolicy;
+  setDefaultPolicy.textContent = isDefaultPolicy ? "取消默认规则" : "设为默认策略";
+  setDefaultPolicy.classList.toggle("danger-button", isDefaultPolicy);
+  setDefaultPolicy.classList.toggle("button-secondary", !isDefaultPolicy);
   policySessionStatus.textContent = "";
   savePolicyAs.hidden = policy.builtin;
   deletePolicyButton.hidden = policy.builtin;
@@ -2301,7 +2347,7 @@ async function persistPolicyLibrary(successMessage, { showIssues = false, operat
     return false;
   }
 }
-async function saveCurrentPolicy(makeDefault = false) {
+async function saveCurrentPolicy(makeDefault = false, clearDefault = false) {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
   if (!policy) return false;
   const draft = collectPolicyDetailDraft(policy);
@@ -2313,13 +2359,16 @@ async function saveCurrentPolicy(makeDefault = false) {
   const previousDefaultPolicyId = policyLibrary.active_policy_id;
   Object.assign(policy, draft);
   if (makeDefault) policyLibrary.active_policy_id = policy.policy_id;
+  if (clearDefault) policyLibrary.active_policy_id = "";
   savePolicy.disabled = true;
   setDefaultPolicy.disabled = true;
   const saved = await persistPolicyLibrary((revision) => makeDefault
     ? `策略“${policy.name || policy.policy_id}”已设为默认策略，revision ${revision}。`
-    : `策略“${policy.name || policy.policy_id}”已保存为 revision ${revision}。`, {
+    : clearDefault
+      ? `已取消默认策略，revision ${revision}。`
+      : `策略“${policy.name || policy.policy_id}”已保存为 revision ${revision}。`, {
     showIssues: true,
-    operation: makeDefault ? "设置默认策略" : "保存策略",
+    operation: makeDefault ? "设置默认策略" : clearDefault ? "取消默认策略" : "保存策略",
   });
   savePolicy.disabled = false;
   setDefaultPolicy.disabled = false;
@@ -2332,7 +2381,9 @@ async function saveCurrentPolicy(makeDefault = false) {
   renderPolicyDetail(policy);
   policySessionStatus.textContent = makeDefault
     ? "默认策略已更新。"
-    : "策略的所有修改已保存。";
+    : clearDefault
+      ? "已取消默认策略；未匹配到合法策略的请求将使用系统 fallback 图。"
+      : "策略的所有修改已保存。";
   return true;
 }
 function openCreatePolicyDialog() {
@@ -3179,7 +3230,10 @@ cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
 backToPolicyList.addEventListener("click", showPolicyList);
 savePolicy.addEventListener("click", () => saveCurrentPolicy());
-setDefaultPolicy.addEventListener("click", () => saveCurrentPolicy(true));
+setDefaultPolicy.addEventListener("click", () => {
+  const isDefaultPolicy = selectedPolicyId === policyLibrary.active_policy_id;
+  return saveCurrentPolicy(!isDefaultPolicy, isDefaultPolicy);
+});
 newPolicy.addEventListener("click", openCreatePolicyDialog);
 cancelCreatePolicy.addEventListener("click", () => createPolicyDialog.close());
 confirmCreatePolicy.addEventListener("click", createPolicy);

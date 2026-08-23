@@ -111,9 +111,15 @@
             <p>管理策略的规则编排；未命中可用策略时将使用系统 fallback 图。</p>
           </div>
         </div>
+        <section class="default-policy-card" aria-labelledby="default-policy-list-heading">
+          <div class="list-heading">
+            <strong id="default-policy-list-heading">当前默认策略</strong>
+          </div>
+          <div id="default-policy-summary" class="default-policy-summary"></div>
+        </section>
         <section class="custom-policy-list-card" aria-labelledby="custom-policy-list-heading">
           <div class="list-heading">
-            <strong id="custom-policy-list-heading">策略列表</strong>
+            <strong id="custom-policy-list-heading">自定义策略列表</strong>
             <span id="policy-count" class="count-badge">0</span>
           </div>
           <p id="policy-library-status" class="muted" aria-live="polite"></p>
@@ -167,7 +173,10 @@
         <section class="policy-session-assignment">
           <div class="form-heading">
             <div>
-              <h3>会话策略分配</h3>
+              <div class="policy-session-title">
+                <h3>会话策略分配</h3>
+                <span id="default-policy-indicator" class="policy-default-indicator" hidden>当前默认策略</span>
+              </div>
               <p>指定 UMO 会优先采用此策略；多个策略指定同一 UMO 时，按策略列表顺序选择第一个合法策略。</p>
             </div>
             <button id="set-default-policy" type="button" class="button-secondary">设为默认策略</button>
