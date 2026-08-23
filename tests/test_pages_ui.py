@@ -46,10 +46,12 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("templateParameterFields", javascript)
         self.assertNotIn('JSON.parse(editor.querySelector("textarea").value)', javascript)
         for template_key in (
-            "plain_keywords", "regex_pattern", "logic_gate", "rag_judge",
+            "plain_keywords", "regex_pattern", "rag_judge",
             "llm_review", "replace_input", "strengthen_prompt", "route_policy",
         ):
             self.assertIn(template_key, javascript)
+        rule_template_block = javascript.split("const templates =", 1)[1].split("hitActions", 1)[0]
+        self.assertNotIn('"logic_gate"', rule_template_block)
         self.assertIn(".rule-field-hint", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
         self.assertIn(".template-parameters", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
         self.assertIn(".setting-checkbox:checked", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
@@ -136,11 +138,18 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function showPolicySaveIssues", javascript)
         self.assertIn("策略暂不能另存为", javascript)
         self.assertIn('id="policy-dependency-mode-dialog"', html)
+        self.assertIn('id="policy-rule-picker-dialog"', html)
+        self.assertIn('id="policy-component-creation-dialog"', html)
         self.assertIn('id="confirm-policy-binding-remove-dialog"', html)
         self.assertIn('id="policy-save-issues-dialog"', html)
         self.assertNotIn("syncPolicyBindingsJson", javascript)
         self.assertIn("function saveCurrentPolicy", javascript)
         self.assertIn("function createPolicy", javascript)
+        self.assertIn("componentDefinitions", javascript)
+        self.assertIn("function openPolicyComponentCreation", javascript)
+        self.assertIn("function createPolicyComponent", javascript)
+        self.assertIn("function updatePolicyComponentConfig", javascript)
+        self.assertIn("findPolicyGraphDraftNode", javascript)
         self.assertIn("function savePolicyAsCopy", javascript)
         self.assertIn("function deleteSelectedPolicy", javascript)
         self.assertIn("function saveCurrentPolicy", javascript)

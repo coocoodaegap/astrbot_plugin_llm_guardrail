@@ -13,7 +13,7 @@ from typing import Any
 from collections.abc import Callable, Mapping
 
 try:
-    from .config import NormalizedConfig, normalize_config
+    from .config import COMPONENT_TEMPLATES, NormalizedConfig, normalize_config
     from .core import GraphIndex, build_graph_index
     from .policy_library import (
         LibraryValidation,
@@ -23,7 +23,7 @@ try:
         compile_policy_to_runtime_config,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from config import NormalizedConfig, normalize_config
+    from config import COMPONENT_TEMPLATES, NormalizedConfig, normalize_config
     from core import GraphIndex, build_graph_index
     from policy_library import (
         LibraryValidation,
@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 SNAPSHOT_EVENT_EXTRA = "_llm_guardrail_config_snapshot"
 SNAPSHOT_FILE_VERSION = 1
+POLICY_COMPONENT_TYPES = frozenset().union(*COMPONENT_TEMPLATES.values())
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,19 @@ class ConfigSnapshotManager:
     ) -> SnapshotPublishResult:
         """Publish only reusable rules, retaining all current policies."""
 
+        component_rules = [
+            rule.rule_id or "(empty)"
+            for rule in rules
+            if rule.template_key in POLICY_COMPONENT_TYPES
+        ]
+        if component_rules:
+            return SnapshotPublishResult(
+                success=False,
+                diagnostics=(
+                    "policy component types may not be saved in the rule library: "
+                    + ", ".join(component_rules),
+                ),
+            )
         current_library = self._current.policy_library
         existing_templates = {
             rule.rule_id: rule.template_key for rule in current_library.rules
@@ -422,6 +436,18 @@ def _runtime_dependency_references(
         inputs = rule.template_config.get("inputs") if rule and rule.template_key == "logic_gate" else None
         if isinstance(inputs, list):
             references.extend((binding.rule_id, str(item)) for item in inputs if str(item).strip())
+    for component in policy.components:
+        if component.depend_on:
+            references.append((component.component_id, component.depend_on))
+        if component.component_type != "logic_gate":
+            continue
+        inputs = component.config.get("inputs")
+        if isinstance(inputs, list):
+            references.extend(
+                (component.component_id, str(item))
+                for item in inputs
+                if str(item).strip()
+            )
     return references
 
 

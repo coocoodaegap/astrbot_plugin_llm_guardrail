@@ -238,6 +238,15 @@
           <div class="dialog-actions"><button id="cancel-policy-rule-picker" type="button" class="button-secondary">取消</button><button id="confirm-policy-rule-picker" type="button">添加所选规则</button></div>
         </form>
       </dialog>
+      <dialog id="policy-component-creation-dialog" class="policy-rule-picker-dialog" aria-labelledby="policy-component-creation-title">
+        <form method="dialog">
+          <div class="form-heading"><div><p class="eyebrow">ADD POLICY COMPONENT</p><h3 id="policy-component-creation-title">添加电子元件</h3><p id="policy-component-creation-description">电子元件仅属于当前策略，会随策略快照保存。</p></div></div>
+          <label>元件 ID<input id="new-policy-component-id" autocomplete="off" placeholder="例如 gate_sensitive_input" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
+          <p id="policy-component-creation-status" class="form-status" aria-live="polite"></p>
+          <div id="policy-component-options" class="template-options" role="listbox" aria-label="电子元件类型"></div>
+          <div class="dialog-actions"><button id="cancel-policy-component-creation" type="button" class="button-secondary">取消</button><button id="confirm-policy-component-creation" type="button">添加元件</button></div>
+        </form>
+      </dialog>
       <dialog id="policy-save-issues-dialog" class="policy-save-issues-dialog" aria-labelledby="policy-save-issues-title">
         <div><p class="eyebrow">POLICY VALIDATION</p><h3 id="policy-save-issues-title">策略暂不能保存</h3><p id="policy-save-issues-intro">请修复以下问题后再试。</p><ul id="policy-save-issues-list" class="policy-save-issues-list"></ul></div>
         <div class="dialog-actions"><button id="close-policy-save-issues" type="button">我知道了</button></div>

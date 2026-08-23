@@ -180,6 +180,25 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(rejected[1], 400)
         self.assertIn("references missing rule risk", rejected[0]["detail"])
 
+    def test_rule_library_rejects_policy_component_templates(self):
+        plugin = _Plugin()
+        plugin._register_pages_web_api()
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request({
+                    "expected_revision": 0,
+                    "rule_library": {
+                        "rules": [{"rule_id": "gate", "template_key": "logic_gate"}],
+                    },
+                }),
+            ):
+                rejected = asyncio.run(plugin._pages_save_rule_library())
+
+        self.assertEqual(rejected[1], 400)
+        self.assertIn("policy component types", rejected[0]["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

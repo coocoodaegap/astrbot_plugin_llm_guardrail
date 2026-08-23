@@ -15,30 +15,38 @@ RAIL_NAMES = (
     "output_rail",
 )
 
-SUPPORTED_TEMPLATES: dict[str, set[str]] = {
+RULE_TEMPLATES: dict[str, set[str]] = {
     "input_rail": {
         "plain_keywords",
         "regex_pattern",
-        "logic_gate",
         "rag_judge",
         "llm_review",
     },
     "request_rail": {
         "plain_keywords",
         "regex_pattern",
-        "logic_gate",
         "rag_judge",
         "llm_review",
     },
-    "prompt_rail": {"replace_input", "strengthen_prompt", "logic_gate"},
-    "routing_rail": {"route_policy", "logic_gate"},
+    "prompt_rail": {"replace_input", "strengthen_prompt"},
+    "routing_rail": {"route_policy"},
     "output_rail": {
         "plain_keywords",
         "regex_pattern",
-        "logic_gate",
         "rag_judge",
         "llm_review",
     },
+}
+
+# Components are local policy graph nodes, not reusable rule-library templates.
+# They remain supported by the runtime normalizer because compiled policies emit
+# them into a rail's rule_list alongside reusable rules.
+COMPONENT_TEMPLATES: dict[str, set[str]] = {
+    rail_name: {"logic_gate"} for rail_name in RAIL_NAMES
+}
+SUPPORTED_TEMPLATES: dict[str, set[str]] = {
+    rail_name: RULE_TEMPLATES[rail_name] | COMPONENT_TEMPLATES[rail_name]
+    for rail_name in RAIL_NAMES
 }
 
 INPUT_ACTIONS = {

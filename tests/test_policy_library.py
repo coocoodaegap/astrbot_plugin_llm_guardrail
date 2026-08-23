@@ -11,6 +11,7 @@ from config import normalize_config
 from policy_library import (
     PolicyDefinition,
     PolicyLibrary,
+    PolicyComponent,
     PolicyRuleBinding,
     RuleDefinition,
     compile_policy_to_runtime_config,
@@ -204,15 +205,22 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertFalse(validation.valid)
         self.assertIn("Step 1", validation.fatal_errors[0])
 
-    def test_sanitize_is_rejected_for_non_matching_rule_templates(self):
+    def test_sanitize_is_rejected_for_policy_component(self):
         library = PolicyLibrary(
-            rules=(RuleDefinition("gate", "logic_gate", {}),),
             policies=(
                 PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_action",
                     "Invalid action",
-                    bindings=(PolicyRuleBinding("gate", "input_rail", action_on_hit="sanitize"),),
+                    components=(
+                        PolicyComponent(
+                            "gate",
+                            "logic_gate",
+                            "input_rail",
+                            action_on_hit="sanitize",
+                            config={"inputs": ["source"]},
+                        ),
+                    ),
                 ),
             ),
             active_policy_id="invalid_action",
@@ -221,7 +229,7 @@ class PolicyLibraryTests(unittest.TestCase):
         _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertFalse(validation.valid)
-        self.assertIn("only available", validation.fatal_errors[0])
+        self.assertTrue(any("only available" in error for error in validation.fatal_errors))
 
     def test_rule_library_rejects_invalid_default_sanitize_without_a_binding(self):
         library = PolicyLibrary(
@@ -391,12 +399,11 @@ class PolicyLibraryTests(unittest.TestCase):
         validation = library.validate()
 
         self.assertFalse(validation.valid)
-        self.assertTrue(any("references disabled rule source" in error for error in validation.fatal_errors))
+        self.assertTrue(any("references disabled node source" in error for error in validation.fatal_errors))
 
     def test_logic_gate_inputs_obey_policy_dependency_step_order(self):
         library = PolicyLibrary(
             rules=(
-                RuleDefinition("gate", "logic_gate", {"inputs": ["source"]}),
                 RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),
             ),
             policies=(
@@ -405,8 +412,10 @@ class PolicyLibraryTests(unittest.TestCase):
                     "invalid_gate_order",
                     "Invalid gate order",
                     bindings=(
-                        PolicyRuleBinding("gate", "input_rail"),
                         PolicyRuleBinding("source", "request_rail"),
+                    ),
+                    components=(
+                        PolicyComponent("gate", "logic_gate", "input_rail", config={"inputs": ["source"]}),
                     ),
                 ),
             ),
@@ -417,6 +426,90 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertFalse(validation.valid)
         self.assertTrue(any("gate in Step 1 cannot depend on source in later Step 3" in error for error in validation.fatal_errors))
+
+    def test_policy_component_compiles_as_runtime_logic_gate(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "with_gate",
+                    "With gate",
+                    bindings=(PolicyRuleBinding("source", "input_rail"),),
+                    components=(
+                        PolicyComponent(
+                            "gate",
+                            "logic_gate",
+                            "input_rail",
+                            priority=110,
+                            config={"gate": "all", "invert": False, "inputs": ["source"]},
+                        ),
+                    ),
+                    node_order=("source", "gate"),
+                ),
+            ),
+            active_policy_id="with_gate",
+        )
+
+        raw, validation = compile_policy_to_runtime_config({}, library)
+
+        self.assertTrue(validation.valid)
+        compiled_gate = raw["input_rail"]["rule_list"][1]
+        self.assertEqual(compiled_gate["__template_key"], "logic_gate")
+        self.assertEqual(compiled_gate["rule_id"], "gate")
+        self.assertEqual(compiled_gate["inputs"], ["source"])
+
+    def test_legacy_logic_gate_is_migrated_to_policy_local_component(self):
+        library = PolicyLibrary.from_dict(
+            {
+                "rules": [
+                    {"rule_id": "source", "template_key": "plain_keywords", "template_config": {"keywords": ["source"]}},
+                    {
+                        "rule_id": "gate",
+                        "template_key": "logic_gate",
+                        "template_config": {"gate": "any", "invert": True, "inputs": ["source"]},
+                        "default_priority": 40,
+                        "default_action_on_hit": "observe",
+                    },
+                ],
+                "policies": [
+                    {"policy_id": "_default", "name": "Default", "builtin": True},
+                    {
+                        "policy_id": "legacy",
+                        "name": "Legacy",
+                        "bindings": [
+                            {"rule_id": "source", "rail": "input_rail"},
+                            {"rule_id": "gate", "rail": "input_rail", "enabled": False, "depend_on": "source"},
+                        ],
+                    },
+                ],
+                "active_policy_id": "legacy",
+            }
+        )
+
+        policy = library.get_policy("legacy")
+        self.assertEqual([rule.rule_id for rule in library.rules], ["source"])
+        self.assertEqual([binding.rule_id for binding in policy.bindings], ["source"])
+        self.assertEqual(policy.node_order, ("source", "gate"))
+        gate = policy.components[0]
+        self.assertEqual(gate.component_id, "gate")
+        self.assertEqual(gate.component_type, "logic_gate")
+        self.assertFalse(gate.enabled)
+        self.assertEqual(gate.priority, 40)
+        self.assertEqual(gate.depend_on, "source")
+        self.assertEqual(gate.config["inputs"], ["source"])
+
+    def test_rule_library_rejects_component_types(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("gate", "logic_gate", {}),),
+            policies=(PolicyDefinition("_default", "Default", builtin=True),),
+            active_policy_id="_default",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("components may only be stored" in error for error in validation.fatal_errors))
 
 
 if __name__ == "__main__":
