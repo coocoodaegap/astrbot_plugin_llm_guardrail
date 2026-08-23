@@ -334,7 +334,10 @@ function switchTab(name) {
     panel.hidden = panel.dataset.panel !== name;
   });
   updatePolicyGraphAnimation();
-  if (name === "session" && bridge) void refreshSessionPolicyStates();
+  if (name === "session") {
+    showSessionPolicyStateList();
+    if (bridge) void refreshSessionPolicyStates();
+  }
 }
 document
   .querySelectorAll("[data-tab]")
@@ -3481,7 +3484,7 @@ async function refreshSessionPolicyStates(resetPage = false) {
     renderSessionPolicyStateList();
     sessionPolicyStateStatus.textContent = sessionPolicyMonitoringEnabled
       ? `已加载 ${sessionPolicyStateTotal} 个 UMO 状态；P2-A 仅观察，不参与路由。`
-      : `监控当前已关闭；已加载 ${sessionPolicyStateTotal} 条历史状态。`;
+      : `状态采集当前已关闭；请在“系统设置 → 会话策略状态监控”启用后再发送请求。已加载 ${sessionPolicyStateTotal} 条历史状态。`;
   } catch (error) {
     if (epoch === sessionPolicyStateRefreshEpoch) {
       sessionPolicyStateStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;

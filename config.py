@@ -374,7 +374,7 @@ def _normalize_session_policy_state(
         activity_log_limit = 50
 
     return {
-        "enabled": _as_bool(raw_settings.get("enabled"), False),
+        "enabled": _as_bool(raw_settings.get("enabled"), True),
         "state_ttl_seconds": state_ttl_seconds,
         "max_entries": max_entries,
         "activity_log_limit": activity_log_limit,

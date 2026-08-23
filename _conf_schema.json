@@ -236,7 +236,7 @@
         "type": "bool",
         "description": "启用 UMO 状态监控",
         "hint": "关闭后不再记录或刷新 UMO 状态；不会影响 Guardrail 策略本身的执行。",
-        "default": false
+        "default": true
       },
       "state_ttl_seconds": {
         "type": "int",

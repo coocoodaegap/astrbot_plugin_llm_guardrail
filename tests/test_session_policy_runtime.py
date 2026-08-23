@@ -104,10 +104,8 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
     def test_runtime_observer_persists_block_signal_and_route_candidate(self):
         _install_astrbot_stubs()
         module = importlib.import_module("main")
-        plugin = module.LlmGuardrailPlugin(
-            object(),
-            {"session_policy_state": {"enabled": True}},
-        )
+        plugin = module.LlmGuardrailPlugin(object(), {})
+        self.assertTrue(plugin.normalized_config.session_policy_state["enabled"])
         event = _Event()
         plugin._ensure_policy_run(event)
         result = NodeResult(

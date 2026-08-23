@@ -163,6 +163,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
         self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
+        self.assertTrue(result["settings"]["session_policy_state"]["enabled"])
         self.assertEqual(result["settings"]["session_policy_state"]["state_ttl_seconds"], 604800)
         self.assertFalse(result["settings"]["debug_settings"]["logging"])
         self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])

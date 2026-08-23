@@ -227,7 +227,14 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("策略未显式约束模型，因此未比较模型", javascript)
         self.assertIn("观察模式，未参与执行", html)
         self.assertNotIn('apiPost("clear_session_policy', javascript)
-        self.assertIn(".session-policy-layout", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
+        stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
+        self.assertIn(".session-policy-layout", stylesheet)
+        self.assertIn(".session-policy-detail-panel[hidden]", stylesheet)
+        self.assertIn("display: none !important", stylesheet)
+        session_switch_start = javascript.index("function switchTab")
+        session_switch_end = javascript.index("\nfunction addSummary", session_switch_start)
+        session_list_reset = javascript.index("showSessionPolicyStateList();", session_switch_start)
+        self.assertLess(session_list_reset, session_switch_end)
 
 
 if __name__ == "__main__":

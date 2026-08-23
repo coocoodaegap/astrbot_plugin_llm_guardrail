@@ -33,6 +33,11 @@ class ConfigNormalizerTests(unittest.TestCase):
             },
         )
 
+    def test_session_policy_state_monitoring_is_enabled_by_default(self):
+        cfg = normalize_config({})
+
+        self.assertTrue(cfg.session_policy_state["enabled"])
+
     def test_session_policy_state_migrates_legacy_ttl_and_rejects_bad_limits(self):
         migrated = normalize_config({"session_policy_state": {"ttl_seconds": 3600}})
         invalid = normalize_config(

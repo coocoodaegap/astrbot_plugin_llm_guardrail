@@ -244,6 +244,11 @@ button:disabled {
     display: none
 }
 
+.session-policy-list-panel[hidden],
+.session-policy-detail-panel[hidden] {
+    display: none !important
+}
+
 .policy-detail-panel {
     padding: 20px;
     background: #fff;
