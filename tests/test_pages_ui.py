@@ -228,9 +228,41 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("策略未显式约束模型，因此未比较模型", javascript)
         self.assertIn("观察模式，未参与执行", html)
         self.assertNotIn('apiPost("clear_session_policy', javascript)
+        for element_id in (
+            "rag-experience-list-panel",
+            "rag-experience-detail-panel",
+            "rag-experience-query",
+            "refresh-rag-experiences",
+            "rag-experience-list",
+            "rag-experience-source-meta",
+            "rag-experience-title",
+            "rag-experience-content",
+            "save-rag-experience",
+            "upload-rag-experience",
+            "delete-rag-experience",
+            "back-to-rag-experience-list",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("最高分证据所属的原知识库", html)
+        self.assertIn("不再由 Guardrail 跟踪、编辑或删除", html)
+        self.assertIn('apiGet("get_rag_experiences"', javascript)
+        self.assertIn('apiGet("get_rag_experience"', javascript)
+        self.assertIn('apiPost("save_rag_experience"', javascript)
+        self.assertIn('apiPost("upload_rag_experience"', javascript)
+        self.assertIn('apiPost("delete_rag_experience"', javascript)
+        self.assertIn("function renderRagExperienceDetail", javascript)
+        self.assertIn("function showRagExperienceDetail", javascript)
+        self.assertIn("function refreshRagExperiences", javascript)
+        self.assertIn("function setRagExperienceView(showDetail)", javascript)
+        self.assertIn("function hasRagExperienceSource", javascript)
+        self.assertIn("请先保存编辑，再写入原知识库", javascript)
+        self.assertIn("不会删除任何 AstrBot 知识库文档", javascript)
         stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
         self.assertIn(".session-policy-layout", stylesheet)
         self.assertIn(".session-policy-detail-panel[hidden]", stylesheet)
+        self.assertIn(".rag-experience-layout", stylesheet)
+        self.assertIn(".rag-experience-detail-panel[hidden]", stylesheet)
+        self.assertIn(".rag-experience-source-meta", stylesheet)
         self.assertIn("display: none !important", stylesheet)
         self.assertIn("function setSessionPolicyStateView(showDetail)", javascript)
         self.assertIn('sessionPolicyListPanel.style.display = showDetail ? "none" : "grid";', javascript)

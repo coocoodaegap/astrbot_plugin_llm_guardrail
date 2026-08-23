@@ -139,7 +139,27 @@ const status = $("status"),
   sessionPolicyRequestObservation = $("session-policy-request-observation"),
   sessionPolicyTargetComparison = $("session-policy-target-comparison"),
   sessionPolicyActivityList = $("session-policy-activity-list"),
-  backToSessionPolicyList = $("back-to-session-policy-list");
+  backToSessionPolicyList = $("back-to-session-policy-list"),
+  ragExperienceListPanel = $("rag-experience-list-panel"),
+  ragExperienceDetailPanel = $("rag-experience-detail-panel"),
+  ragExperienceQuery = $("rag-experience-query"),
+  refreshRagExperiencesButton = $("refresh-rag-experiences"),
+  ragExperienceCount = $("rag-experience-count"),
+  ragExperienceStatus = $("rag-experience-status"),
+  ragExperienceList = $("rag-experience-list"),
+  ragExperiencePrevPage = $("rag-experience-prev-page"),
+  ragExperiencePage = $("rag-experience-page"),
+  ragExperienceNextPage = $("rag-experience-next-page"),
+  ragExperienceDetailHeading = $("rag-experience-detail-heading"),
+  ragExperienceDetailMeta = $("rag-experience-detail-meta"),
+  ragExperienceSourceMeta = $("rag-experience-source-meta"),
+  ragExperienceTitle = $("rag-experience-title"),
+  ragExperienceContent = $("rag-experience-content"),
+  ragExperienceDetailStatus = $("rag-experience-detail-status"),
+  saveRagExperience = $("save-rag-experience"),
+  deleteRagExperience = $("delete-rag-experience"),
+  uploadRagExperience = $("upload-rag-experience"),
+  backToRagExperienceList = $("back-to-rag-experience-list");
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
@@ -305,6 +325,14 @@ let sessionPolicyStateItems = [],
   sessionPolicyMonitoringEnabled = false,
   sessionPolicyStateRefreshEpoch = 0,
   sessionPolicyStateDetailEpoch = 0;
+let ragExperienceItems = [],
+  selectedRagExperience = null,
+  ragExperienceCurrentPage = 1,
+  ragExperienceTotal = 0,
+  ragExperiencePageSize = 30,
+  ragExperienceRefreshEpoch = 0,
+  ragExperienceDetailEpoch = 0,
+  ragExperienceMutationInFlight = false;
 function populateRuleActionOptions(select, values) {
   for (const value of values) {
     const option = document.createElement("option");
@@ -337,6 +365,10 @@ function switchTab(name) {
   if (name === "session") {
     showSessionPolicyStateList();
     if (bridge) void refreshSessionPolicyStates();
+  }
+  if (name === "knowledge") {
+    showRagExperienceList();
+    if (bridge) void refreshRagExperiences();
   }
 }
 document
@@ -3498,6 +3530,306 @@ async function refreshSessionPolicyStates(resetPage = false) {
     }
   }
 }
+function formatRagExperienceScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return "未提供";
+  return score.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
+}
+function appendRagExperienceMeta(container, label, value) {
+  const item = document.createElement("div");
+  const term = document.createElement("span");
+  const detail = document.createElement("strong");
+  term.textContent = label;
+  detail.textContent = String(value || "-");
+  item.append(term, detail);
+  container.append(item);
+}
+function hasRagExperienceSource(record) {
+  return Boolean(
+    String(record?.source_kb_id || "").trim() ||
+    String(record?.source_kb_name || "").trim(),
+  );
+}
+function ragExperienceHasUnsavedEdits() {
+  const record = selectedRagExperience;
+  return Boolean(
+    record && (
+      ragExperienceTitle.value !== String(record.title || "") ||
+      ragExperienceContent.value !== String(record.content || "")
+    ),
+  );
+}
+function setRagExperienceMutationBusy(busy) {
+  ragExperienceMutationInFlight = busy;
+  updateRagExperienceActionState();
+}
+function updateRagExperienceActionState() {
+  const record = selectedRagExperience;
+  const hasRecord = Boolean(record && Number.isInteger(record.record_revision));
+  const hasSource = hasRagExperienceSource(record);
+  const hasContent = Boolean(ragExperienceContent.value.trim());
+  const hasUnsavedEdits = ragExperienceHasUnsavedEdits();
+  const disabled = ragExperienceMutationInFlight || !hasRecord;
+  saveRagExperience.disabled = disabled;
+  deleteRagExperience.disabled = disabled;
+  uploadRagExperience.disabled = disabled || !hasSource || !hasContent || hasUnsavedEdits;
+  uploadRagExperience.title = !hasRecord
+    ? "请先选择一条经验记录。"
+    : !hasSource
+      ? "该最高分证据未提供可确认的原知识库。"
+      : !hasContent
+        ? "经验内容不能为空。"
+        : hasUnsavedEdits
+          ? "请先保存编辑，再写入原知识库。"
+          : "将当前已保存的内容作为新 Markdown 文档写入原知识库。";
+}
+function updateRagExperiencePagination() {
+  const totalPages = Math.max(1, Math.ceil(ragExperienceTotal / ragExperiencePageSize));
+  ragExperiencePage.textContent = `第 ${ragExperienceCurrentPage} / ${totalPages} 页 · 共 ${ragExperienceTotal} 条`;
+  ragExperiencePrevPage.disabled = ragExperienceCurrentPage <= 1;
+  ragExperienceNextPage.disabled = ragExperienceCurrentPage >= totalPages;
+}
+function renderRagExperienceList() {
+  ragExperienceList.replaceChildren();
+  ragExperienceCount.textContent = String(ragExperienceTotal);
+  updateRagExperiencePagination();
+  if (!ragExperienceItems.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "尚无符合条件的 RAG 命中经验记录。";
+    ragExperienceList.append(empty);
+    return;
+  }
+  for (const item of ragExperienceItems) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "policy-list-item rag-experience-list-item";
+    const title = document.createElement("strong");
+    const summary = document.createElement("small");
+    const source = document.createElement("span");
+    const preview = document.createElement("span");
+    const metadata = document.createElement("span");
+    const sourceKb = String(item.source_kb_name || "").trim();
+    const sourceDoc = String(item.source_doc_name || "").trim();
+    title.textContent = item.title || "未命名经验";
+    summary.textContent = [item.rail, item.rule_id].filter(Boolean).join(" · ") || "RAG 命中";
+    source.textContent = sourceKb
+      ? `最高分来源：${sourceKb}${sourceDoc ? ` · ${sourceDoc}` : ""} · 分数 ${formatRagExperienceScore(item.source_score)}`
+      : "最高分来源未提供可确认的知识库，不能写入。";
+    preview.textContent = item.content_preview || "（内容为空）";
+    metadata.textContent = `最近编辑 ${formatStateTime(item.updated_at)} · 版本 ${item.record_revision ?? "-"}`;
+    button.append(title, summary, source, preview, metadata);
+    button.addEventListener("click", () => {
+      void showRagExperienceDetail(item.record_id);
+    });
+    ragExperienceList.append(button);
+  }
+}
+function renderRagExperienceDetail(record) {
+  selectedRagExperience = record || null;
+  ragExperienceDetailHeading.textContent = record?.title || "经验详情";
+  ragExperienceDetailMeta.textContent = record
+    ? `规则 ${record.rule_id || "-"} · ${record.rail || "-"} · 记录版本 ${record.record_revision ?? 0} · 最近编辑 ${formatStateTime(record.updated_at)}`
+    : "未找到该经验记录。";
+  ragExperienceTitle.value = record?.title || "";
+  ragExperienceContent.value = record?.content || "";
+  ragExperienceSourceMeta.replaceChildren();
+  if (!record) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "无法读取来源信息。";
+    ragExperienceSourceMeta.append(empty);
+  } else if (!hasRagExperienceSource(record)) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "该次最高分证据没有提供可确认的知识库名称或 ID；记录仍可编辑，但不能推测写入目标。";
+    ragExperienceSourceMeta.append(empty);
+  } else {
+    appendRagExperienceMeta(
+      ragExperienceSourceMeta,
+      "原知识库",
+      record.source_kb_name || record.source_kb_id,
+    );
+    appendRagExperienceMeta(ragExperienceSourceMeta, "来源文档", record.source_doc_name || "未提供");
+    appendRagExperienceMeta(ragExperienceSourceMeta, "检索分数", formatRagExperienceScore(record.source_score));
+    appendRagExperienceMeta(ragExperienceSourceMeta, "记录时间", formatStateTime(record.created_at));
+    if (record.source_evidence_preview) {
+      const evidence = document.createElement("p");
+      evidence.className = "rag-experience-evidence-preview";
+      evidence.textContent = `命中证据摘要：${record.source_evidence_preview}`;
+      ragExperienceSourceMeta.append(evidence);
+    }
+  }
+  ragExperienceDetailStatus.textContent = record
+    ? "编辑后请先保存；写入会新建 Markdown 文档，不会修改来源文档。"
+    : "";
+  updateRagExperienceActionState();
+}
+function setRagExperienceView(showDetail) {
+  ragExperienceListPanel.hidden = showDetail;
+  ragExperienceListPanel.style.display = showDetail ? "none" : "grid";
+  ragExperienceDetailPanel.hidden = !showDetail;
+  ragExperienceDetailPanel.style.display = showDetail ? "grid" : "none";
+}
+function showRagExperienceList() {
+  selectedRagExperience = null;
+  setRagExperienceView(false);
+  renderRagExperienceList();
+}
+async function showRagExperienceDetail(recordId) {
+  if (!bridge || !recordId) return;
+  const epoch = ++ragExperienceDetailEpoch;
+  setRagExperienceView(true);
+  renderRagExperienceDetail(null);
+  ragExperienceDetailHeading.textContent = "正在加载经验记录…";
+  try {
+    const payload = await bridge.apiGet("get_rag_experience", { record_id: String(recordId) });
+    if (epoch !== ragExperienceDetailEpoch) return;
+    if (!payload?.success || !payload.record) {
+      ragExperienceDetailMeta.textContent = payload?.error || "无法读取该经验记录。";
+      return;
+    }
+    renderRagExperienceDetail(payload.record);
+  } catch (error) {
+    if (epoch === ragExperienceDetailEpoch) {
+      ragExperienceDetailMeta.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+}
+async function refreshRagExperiences(resetPage = false) {
+  if (!bridge) return;
+  if (resetPage) ragExperienceCurrentPage = 1;
+  const epoch = ++ragExperienceRefreshEpoch;
+  refreshRagExperiencesButton.disabled = true;
+  try {
+    const payload = await bridge.apiGet("get_rag_experiences", {
+      query: ragExperienceQuery.value.trim(),
+      page: ragExperienceCurrentPage,
+      page_size: ragExperiencePageSize,
+    });
+    if (epoch !== ragExperienceRefreshEpoch) return;
+    if (!payload?.success) {
+      ragExperienceStatus.textContent = payload?.error || "无法读取 RAG 经验记录。";
+      return;
+    }
+    ragExperienceItems = Array.isArray(payload.items) ? payload.items : [];
+    const pagination = payload.pagination || {};
+    ragExperienceCurrentPage = Number.isInteger(pagination.page)
+      ? pagination.page
+      : ragExperienceCurrentPage;
+    ragExperiencePageSize = Number.isInteger(pagination.page_size)
+      ? pagination.page_size
+      : ragExperiencePageSize;
+    ragExperienceTotal = Number.isInteger(pagination.total) ? pagination.total : 0;
+    renderRagExperienceList();
+    ragExperienceStatus.textContent = `已加载 ${ragExperienceTotal} 条 RAG 命中经验记录。`;
+  } catch (error) {
+    if (epoch === ragExperienceRefreshEpoch) {
+      ragExperienceStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+    }
+  } finally {
+    if (epoch === ragExperienceRefreshEpoch) {
+      refreshRagExperiencesButton.disabled = false;
+      updateRagExperiencePagination();
+    }
+  }
+}
+async function saveCurrentRagExperience() {
+  const record = selectedRagExperience;
+  if (!bridge || ragExperienceMutationInFlight || !record) return;
+  const title = ragExperienceTitle.value.trim();
+  if (!title) {
+    ragExperienceDetailStatus.textContent = "文档标题不能为空。";
+    return;
+  }
+  setRagExperienceMutationBusy(true);
+  try {
+    const result = await bridge.apiPost("save_rag_experience", {
+      record_id: record.record_id,
+      expected_record_revision: record.record_revision,
+      title,
+      content: ragExperienceContent.value,
+    });
+    if (!result?.success || !result.record) {
+      ragExperienceDetailStatus.textContent = result?.error || "保存经验记录失败。";
+      if (result?.conflict && result.record) {
+        renderRagExperienceDetail(result.record);
+        ragExperienceDetailStatus.textContent = "记录已被其他操作更新，已载入最新版本。";
+      }
+      return;
+    }
+    renderRagExperienceDetail(result.record);
+    ragExperienceDetailStatus.textContent = "编辑已保存；现在可将该内容作为新文档写入原知识库。";
+    await refreshRagExperiences();
+  } catch (error) {
+    ragExperienceDetailStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    setRagExperienceMutationBusy(false);
+  }
+}
+async function uploadCurrentRagExperience() {
+  const record = selectedRagExperience;
+  if (!bridge || ragExperienceMutationInFlight || !record) return;
+  if (ragExperienceHasUnsavedEdits()) {
+    ragExperienceDetailStatus.textContent = "请先保存编辑，再写入原知识库。";
+    return;
+  }
+  if (!hasRagExperienceSource(record)) {
+    ragExperienceDetailStatus.textContent = "该记录没有可确认的原知识库，不能安全地选择写入目标。";
+    return;
+  }
+  if (!String(record.content || "").trim()) {
+    ragExperienceDetailStatus.textContent = "经验内容不能为空。";
+    return;
+  }
+  setRagExperienceMutationBusy(true);
+  try {
+    const result = await bridge.apiPost("upload_rag_experience", {
+      record_id: record.record_id,
+      expected_record_revision: record.record_revision,
+    });
+    if (!result?.success) {
+      ragExperienceDetailStatus.textContent = result?.error || "写入原知识库失败。";
+      if (result?.conflict && result.record) {
+        renderRagExperienceDetail(result.record);
+        ragExperienceDetailStatus.textContent = "记录已被其他操作更新，已载入最新版本。";
+      }
+      return;
+    }
+    ragExperienceDetailStatus.textContent = `已新建文档 ${result.doc_name || result.doc_id || ""}（${result.chunk_count ?? 0} 个分块）到 ${result.source_knowledge_base || "原知识库"}；该文档后续由 AstrBot 管理。`;
+  } catch (error) {
+    ragExperienceDetailStatus.textContent = `写入失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    setRagExperienceMutationBusy(false);
+  }
+}
+async function deleteCurrentRagExperience() {
+  const record = selectedRagExperience;
+  if (!bridge || ragExperienceMutationInFlight || !record) return;
+  if (!window.confirm("确定删除这条本地 RAG 经验记录吗？这不会删除任何 AstrBot 知识库文档。")) return;
+  setRagExperienceMutationBusy(true);
+  try {
+    const result = await bridge.apiPost("delete_rag_experience", {
+      record_id: record.record_id,
+      expected_record_revision: record.record_revision,
+    });
+    if (!result?.success) {
+      ragExperienceDetailStatus.textContent = result?.error || "删除经验记录失败。";
+      if (result?.conflict && result.record) {
+        renderRagExperienceDetail(result.record);
+        ragExperienceDetailStatus.textContent = "记录已被其他操作更新，已载入最新版本。";
+      }
+      return;
+    }
+    showRagExperienceList();
+    await refreshRagExperiences();
+    ragExperienceStatus.textContent = "本地 RAG 经验记录已删除；AstrBot 知识库文档未受影响。";
+  } catch (error) {
+    ragExperienceDetailStatus.textContent = `删除失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    setRagExperienceMutationBusy(false);
+  }
+}
 async function refresh() {
   const [overviewResult, diagnosticsResult, ruleResult, policyResult, systemSettingsResult] =
     await Promise.all([
@@ -3514,6 +3846,7 @@ async function refresh() {
   systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
   await refreshAccessControl();
   await refreshSessionPolicyStates();
+  await refreshRagExperiences();
   const previousOpenRuleIds = [...openRuleIds];
   ruleLibrary = {
     rules: Array.isArray(ruleResult.rule_library?.rules)
@@ -3738,7 +4071,43 @@ sessionPolicyStateNextPage.addEventListener("click", () => {
   sessionPolicyStateCurrentPage += 1;
   void refreshSessionPolicyStates();
 });
+backToRagExperienceList.addEventListener("click", showRagExperienceList);
+refreshRagExperiencesButton.addEventListener("click", () => {
+  void refreshRagExperiences(true);
+});
+ragExperienceQuery.addEventListener("change", () => {
+  void refreshRagExperiences(true);
+});
+ragExperienceQuery.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    void refreshRagExperiences(true);
+  }
+});
+ragExperiencePrevPage.addEventListener("click", () => {
+  if (ragExperienceCurrentPage <= 1) return;
+  ragExperienceCurrentPage -= 1;
+  void refreshRagExperiences();
+});
+ragExperienceNextPage.addEventListener("click", () => {
+  const totalPages = Math.max(1, Math.ceil(ragExperienceTotal / ragExperiencePageSize));
+  if (ragExperienceCurrentPage >= totalPages) return;
+  ragExperienceCurrentPage += 1;
+  void refreshRagExperiences();
+});
+ragExperienceTitle.addEventListener("input", updateRagExperienceActionState);
+ragExperienceContent.addEventListener("input", updateRagExperienceActionState);
+saveRagExperience.addEventListener("click", () => {
+  void saveCurrentRagExperience();
+});
+uploadRagExperience.addEventListener("click", () => {
+  void uploadCurrentRagExperience();
+});
+deleteRagExperience.addEventListener("click", () => {
+  void deleteCurrentRagExperience();
+});
 resetAccessFormState();
+updateRagExperienceActionState();
 if (!bridge) {
   status.textContent = "当前不在 AstrBot Pages 环境中，无法读取或保存配置。";
 } else {

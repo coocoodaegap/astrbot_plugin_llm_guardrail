@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +36,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 class GuardrailPagesApiMixin:
-    """Register the small read-only Pages surface introduced in P1."""
+    """Register the Guardrail Pages API surface."""
 
     def _register_pages_web_api(self) -> None:
         register_web_api = getattr(self.context, "register_web_api", None)
@@ -53,6 +55,11 @@ class GuardrailPagesApiMixin:
             ("clear_access_control_decision", self._pages_clear_access_control_decision, ["POST"], "Clear an input access-control decision"),
             ("get_session_policy_states", self._pages_get_session_policy_states, ["GET"], "List observed UMO policy states"),
             ("get_session_policy_state", self._pages_get_session_policy_state, ["GET"], "Get one observed UMO policy state"),
+            ("get_rag_experiences", self._pages_get_rag_experiences, ["GET"], "List RAG experience records"),
+            ("get_rag_experience", self._pages_get_rag_experience, ["GET"], "Get one RAG experience record"),
+            ("save_rag_experience", self._pages_save_rag_experience, ["POST"], "Save one RAG experience record"),
+            ("delete_rag_experience", self._pages_delete_rag_experience, ["POST"], "Delete one local RAG experience record"),
+            ("upload_rag_experience", self._pages_upload_rag_experience, ["POST"], "Upload one RAG experience record to its source knowledge base"),
             ("get_rule_library", self._pages_get_rule_library, ["GET"], "Get rule library"),
             ("save_rule_library", self._pages_save_rule_library, ["POST"], "Save rule library"),
             ("get_policy_library", self._pages_get_policy_library, ["GET"], "Get policy library"),
@@ -370,6 +377,199 @@ class GuardrailPagesApiMixin:
     def _pages_session_policy_state_service(self):
         return getattr(self, "session_policy_state", None)
 
+    async def _pages_get_rag_experiences(self):
+        """List only concise RAG experience summaries for the Page."""
+        service = self._pages_rag_experience_service()
+        if service is None:
+            return self._pages_error("RAG experience service is unavailable", 503)
+        result = await service.list_records(
+            query=self._pages_query_value("query", ""),
+            page=self._pages_query_value("page", 1),
+            page_size=self._pages_query_value("page_size", 30),
+        )
+        if not result.success:
+            return self._pages_error(result.warning or "RAG experience is unavailable", 503)
+        return jsonify(
+            {
+                "success": True,
+                "items": list(result.items),
+                "pagination": {
+                    "page": result.page,
+                    "page_size": result.page_size,
+                    "total": result.total,
+                },
+            }
+        )
+
+    async def _pages_get_rag_experience(self):
+        """Return one editable RAG experience record."""
+        service = self._pages_rag_experience_service()
+        if service is None:
+            return self._pages_error("RAG experience service is unavailable", 503)
+        record_id = self._pages_query_value("record_id", "")
+        result = await service.get_record(record_id)
+        if not result.success:
+            return self._pages_error(result.warning or "RAG experience is unavailable", 503)
+        if not result.found:
+            return self._pages_error("RAG experience record was not found", 404)
+        return jsonify({"success": True, "record": result.record})
+
+    async def _pages_save_rag_experience(self):
+        """Save only the user-editable title/content fields of one record."""
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        service = self._pages_rag_experience_service()
+        if service is None:
+            return self._pages_error("RAG experience service is unavailable", 503)
+        result = await service.update_record(
+            payload.get("record_id"),
+            expected_revision=payload.get("expected_record_revision"),
+            title=payload.get("title"),
+            content=payload.get("content"),
+        )
+        if not result.success:
+            return self._pages_error(result.warning or "RAG experience was not saved")
+        if not result.found:
+            return self._pages_error("RAG experience record was not found", 404)
+        if result.conflict:
+            return jsonify(
+                {
+                    "success": False,
+                    "conflict": True,
+                    "error": "RAG experience record was changed elsewhere.",
+                    "record": result.record,
+                }
+            ), 409
+        return jsonify({"success": True, "record": result.record})
+
+    async def _pages_delete_rag_experience(self):
+        """Delete a local experience record; never touch a KB document."""
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        service = self._pages_rag_experience_service()
+        if service is None:
+            return self._pages_error("RAG experience service is unavailable", 503)
+        result = await service.delete_record(
+            payload.get("record_id"),
+            expected_revision=payload.get("expected_record_revision"),
+        )
+        if not result.success:
+            return self._pages_error(result.warning or "RAG experience was not deleted")
+        if not result.found:
+            return self._pages_error("RAG experience record was not found", 404)
+        if result.conflict:
+            return jsonify(
+                {
+                    "success": False,
+                    "conflict": True,
+                    "error": "RAG experience record was changed elsewhere.",
+                    "record": result.record,
+                }
+            ), 409
+        return jsonify({"success": True})
+
+    async def _pages_upload_rag_experience(self):
+        """Upload edited Markdown to the highest-scoring evidence's source KB.
+
+        A successful document belongs wholly to AstrBot's knowledge-base
+        system.  This endpoint neither persists its document ID nor exposes
+        later document-management operations.
+        """
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        service = self._pages_rag_experience_service()
+        if service is None:
+            return self._pages_error("RAG experience service is unavailable", 503)
+        expected_revision = payload.get("expected_record_revision")
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            return self._pages_error("expected_record_revision must be an integer")
+        detail = await service.get_record(payload.get("record_id"))
+        if not detail.success:
+            return self._pages_error(detail.warning or "RAG experience is unavailable", 503)
+        if not detail.found or not isinstance(detail.record, dict):
+            return self._pages_error("RAG experience record was not found", 404)
+        record = detail.record
+        if record.get("record_revision") != expected_revision:
+            return jsonify(
+                {
+                    "success": False,
+                    "conflict": True,
+                    "error": "RAG experience record was changed elsewhere.",
+                    "record": record,
+                }
+            ), 409
+
+        content = str(record.get("content", "") or "")
+        if not content.strip():
+            return self._pages_error("RAG experience content must not be empty")
+        source_kb_id = str(record.get("source_kb_id", "") or "").strip()
+        source_kb_name = str(record.get("source_kb_name", "") or "").strip()
+        if not source_kb_id and not source_kb_name:
+            return self._pages_error(
+                "The highest-scoring evidence did not provide a source knowledge base"
+            )
+
+        try:
+            helper = await self._pages_get_source_kb_helper(source_kb_id, source_kb_name)
+            if helper is None:
+                raise ValueError("source knowledge base is unavailable")
+            document = await helper.upload_document(
+                file_name=_rag_experience_file_name(record),
+                file_content=content.encode("utf-8"),
+                file_type="md",
+            )
+            doc_id = str(getattr(document, "doc_id", "") or "").strip()
+            doc_name = str(getattr(document, "doc_name", "") or "").strip()
+            chunk_count = getattr(document, "chunk_count", 0)
+            if not doc_id or not doc_name or not isinstance(chunk_count, int) or chunk_count < 1:
+                raise RuntimeError("AstrBot returned an incomplete upload receipt")
+            verified = await helper.get_document(doc_id)
+            chunks = await helper.get_chunks_by_doc_id(doc_id, limit=1)
+            if verified is None or not chunks:
+                raise RuntimeError("uploaded document could not be verified")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return self._pages_error(f"Knowledge-base upload failed: {exc}")
+        except Exception as exc:
+            logger.exception("[LLMGuardrail] unexpected RAG experience upload failure")
+            return self._pages_error(
+                f"Knowledge-base upload failed with {type(exc).__name__}; check server logs.",
+                500,
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "source_knowledge_base": source_kb_name or source_kb_id,
+                "doc_id": doc_id,
+                "doc_name": doc_name,
+                "chunk_count": chunk_count,
+            }
+        )
+
+    def _pages_rag_experience_service(self):
+        return getattr(self, "rag_experience", None)
+
+    async def _pages_get_source_kb_helper(
+        self,
+        source_kb_id: str,
+        source_kb_name: str,
+    ) -> Any | None:
+        manager = getattr(self.context, "kb_manager", None)
+        getter = getattr(manager, "get_kb_by_name", None)
+        if not callable(getter):
+            return None
+        for reference in (source_kb_id, source_kb_name):
+            if not reference:
+                continue
+            value = getter(reference)
+            helper = await value if inspect.isawaitable(value) else value
+            if helper is not None:
+                return helper
+        return None
+
     @staticmethod
     def _pages_query_value(key: str, default: Any = "") -> Any:
         if request is None:
@@ -508,6 +708,18 @@ class GuardrailPagesApiMixin:
         if detail:
             payload["detail"] = detail
         return jsonify(payload), status
+
+
+def _rag_experience_file_name(record: dict[str, Any]) -> str:
+    """Build a display-safe Markdown name without accepting a path from Pages."""
+    title = str(record.get("title", "") or "").strip()
+    record_id = str(record.get("record_id", "") or "").strip()
+    stem = re.sub(r"[^\w.-]+", "_", title, flags=re.UNICODE).strip("._")
+    if not stem:
+        stem = f"rag_experience_{record_id[:16]}" or "rag_experience"
+    if stem.lower().endswith(".md"):
+        stem = stem[:-3].rstrip(".") or "rag_experience"
+    return f"{stem[:100]}.md"
 
 
 def _load_system_settings_schema() -> dict[str, Any]:

@@ -11,6 +11,7 @@ if str(PLUGIN_DIR) not in sys.path:
 from pages_api import GuardrailPagesApiMixin
 from policy_library import PolicyLibrary
 from access_control import AccessControlService
+from rag_experience import RagExperienceService
 from session_lock import PrincipalLockManager, UmoLockManager
 from session_policy_state import SessionPolicyStateService
 from snapshots import ConfigSnapshotManager
@@ -21,12 +22,49 @@ class _Context:
     def __init__(self):
         self.routes = []
         self.providers = []
+        self.kb_manager = _KBManager()
 
     def register_web_api(self, route, handler, methods, description):
         self.routes.append((route, handler, methods, description))
 
     def get_all_providers(self):
         return self.providers
+
+
+class _KBHelper:
+    def __init__(self):
+        self.upload_calls = []
+        self.documents = {}
+        self.delete_calls = []
+
+    async def upload_document(self, **kwargs):
+        self.upload_calls.append(kwargs)
+        document = type(
+            "Document",
+            (),
+            {"doc_id": "doc-1", "doc_name": kwargs["file_name"], "chunk_count": 1},
+        )()
+        self.documents[document.doc_id] = document
+        return document
+
+    async def get_document(self, doc_id):
+        return self.documents.get(doc_id)
+
+    async def get_chunks_by_doc_id(self, doc_id, limit=1):
+        return [{"chunk_id": "chunk-1"}] if doc_id in self.documents else []
+
+    async def delete_document(self, doc_id):
+        self.delete_calls.append(doc_id)
+
+
+class _KBManager:
+    def __init__(self):
+        self.helper = _KBHelper()
+        self.references = []
+
+    async def get_kb_by_name(self, reference):
+        self.references.append(reference)
+        return self.helper if reference in {"kb-1", "source-kb"} else None
 
 
 class _ProviderMeta:
@@ -59,6 +97,7 @@ class _Plugin(GuardrailPagesApiMixin):
             self.state_store,
             session_locks=UmoLockManager(),
         )
+        self.rag_experience = RagExperienceService(self.state_store)
 
 
 class _Request:
@@ -95,6 +134,11 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/clear_access_control_decision",
             "/astrbot_plugin_llm_guardrail/get_session_policy_states",
             "/astrbot_plugin_llm_guardrail/get_session_policy_state",
+            "/astrbot_plugin_llm_guardrail/get_rag_experiences",
+            "/astrbot_plugin_llm_guardrail/get_rag_experience",
+            "/astrbot_plugin_llm_guardrail/save_rag_experience",
+            "/astrbot_plugin_llm_guardrail/delete_rag_experience",
+            "/astrbot_plugin_llm_guardrail/upload_rag_experience",
             "/astrbot_plugin_llm_guardrail/get_rule_library",
             "/astrbot_plugin_llm_guardrail/save_rule_library",
             "/astrbot_plugin_llm_guardrail/get_policy_library",
@@ -103,6 +147,104 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_rule_library"][2], ["GET"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/save_policy_library"][2], ["POST"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_session_policy_states"][2], ["GET"])
+
+    def test_rag_experience_pages_edit_delete_and_upload_to_saved_source(self):
+        plugin = _Plugin()
+        captured = asyncio.run(
+            plugin.rag_experience.capture_match(
+                rail="input_rail",
+                rule_id="rag_policy",
+                content="Original matched content",
+                evidence=[
+                    {
+                        "text": "Highest evidence",
+                        "score": 0.95,
+                        "metadata": {
+                            "kb_id": "kb-1",
+                            "kb_name": "source-kb",
+                            "doc_name": "source.md",
+                        },
+                    }
+                ],
+            )
+        ).record
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request(args={"query": "", "page": "1"})):
+                listed = asyncio.run(plugin._pages_get_rag_experiences())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "record_id": captured["record_id"],
+                        "expected_record_revision": captured["record_revision"],
+                        "title": "Edited RAG experience",
+                        "content": "Edited content for AstrBot KB",
+                    }
+                ),
+            ):
+                saved = asyncio.run(plugin._pages_save_rag_experience())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "record_id": captured["record_id"],
+                        "expected_record_revision": saved["record"]["record_revision"],
+                    }
+                ),
+            ):
+                uploaded = asyncio.run(plugin._pages_upload_rag_experience())
+
+        self.assertTrue(listed["success"])
+        self.assertNotIn("content", listed["items"][0])
+        self.assertTrue(saved["success"])
+        self.assertTrue(uploaded["success"])
+        helper = plugin.context.kb_manager.helper
+        self.assertEqual(plugin.context.kb_manager.references[0], "kb-1")
+        self.assertEqual(
+            helper.upload_calls[0]["file_content"], b"Edited content for AstrBot KB"
+        )
+        self.assertEqual(helper.delete_calls, [])
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "record_id": captured["record_id"],
+                        "expected_record_revision": saved["record"]["record_revision"],
+                    }
+                ),
+            ):
+                deleted = asyncio.run(plugin._pages_delete_rag_experience())
+
+        self.assertTrue(deleted["success"])
+        self.assertEqual(helper.delete_calls, [])
+
+    def test_rag_experience_upload_refuses_unknown_source(self):
+        plugin = _Plugin()
+        captured = asyncio.run(
+            plugin.rag_experience.capture_match(
+                rail="input_rail",
+                rule_id="rag_policy",
+                content="Matched content",
+                evidence=[{"text": "scoreless", "score": None, "metadata": {}}],
+            )
+        ).record
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "record_id": captured["record_id"],
+                        "expected_record_revision": captured["record_revision"],
+                    }
+                ),
+            ):
+                refused = asyncio.run(plugin._pages_upload_rag_experience())
+
+        self.assertEqual(refused[1], 400)
+        self.assertIn("source knowledge base", refused[0]["error"])
 
     def test_system_settings_save_persists_config_then_publishes_snapshot(self):
         plugin = _Plugin()

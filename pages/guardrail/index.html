@@ -300,11 +300,57 @@
     </section>
     <section class="tab-panel" id="panel-knowledge" role="tabpanel" aria-labelledby="tab-knowledge"
       data-panel="knowledge" hidden>
-      <div class="placeholder">
-        <p class="eyebrow">P3</p>
-        <h2>知识库经验</h2>
-        <p>RAG 命中样本的诊断、编辑与导出将在后续版本接入。</p>
-      </div>
+      <section id="rag-experience-list-panel" class="rag-experience-layout" aria-label="RAG 经验列表">
+        <section class="card rag-experience-list-card">
+          <div class="card-heading rag-experience-heading">
+            <div>
+              <p class="eyebrow">P2 · LOCAL EXPERIENCE</p>
+              <h2>知识库经验 <span id="rag-experience-count" class="count-badge">0</span></h2>
+              <p>每次 RAG 裁判命中会留下本地经验记录；可编辑后写入该次最高分证据所属的原知识库。</p>
+            </div>
+            <div class="rag-experience-controls">
+              <label>筛选<input id="rag-experience-query" type="search" autocomplete="off" placeholder="规则、知识库或内容" /></label>
+              <button id="refresh-rag-experiences" type="button" class="button-secondary">刷新</button>
+            </div>
+          </div>
+          <p id="rag-experience-status" class="muted" aria-live="polite"></p>
+          <div id="rag-experience-list" class="policy-list rag-experience-list" aria-live="polite"></div>
+          <div class="rag-experience-pagination" aria-label="RAG 经验分页">
+            <button id="rag-experience-prev-page" type="button" class="button-secondary">上一页</button>
+            <span id="rag-experience-page" class="muted">第 1 页</span>
+            <button id="rag-experience-next-page" type="button" class="button-secondary">下一页</button>
+          </div>
+        </section>
+      </section>
+      <section id="rag-experience-detail-panel" class="rag-experience-detail-panel" aria-label="RAG 经验详情" hidden>
+        <div class="card-heading rag-experience-heading">
+          <div>
+            <p class="eyebrow">RAG EXPERIENCE</p>
+            <h2 id="rag-experience-detail-heading">经验详情</h2>
+            <p id="rag-experience-detail-meta" class="muted"></p>
+          </div>
+          <button id="back-to-rag-experience-list" type="button" class="button-secondary">返回经验列表</button>
+        </div>
+        <section class="card rag-experience-source-card">
+          <p class="eyebrow">HIGHEST-SCORING EVIDENCE</p>
+          <h3>写入目标</h3>
+          <p class="rag-experience-boundary-note">写入会新建 AstrBot 知识库文档；成功后的文档不再由 Guardrail 跟踪、编辑或删除。</p>
+          <div id="rag-experience-source-meta" class="rag-experience-source-meta"></div>
+        </section>
+        <section class="card rag-experience-editor-card">
+          <div class="card-heading"><div><p class="eyebrow">EDIT CONTENT</p><h3>编辑经验内容</h3></div></div>
+          <div class="rag-experience-editor-grid">
+            <label>文档标题<input id="rag-experience-title" type="text" autocomplete="off" maxlength="240" /></label>
+            <label>文档内容<textarea id="rag-experience-content" rows="14" spellcheck="true"></textarea></label>
+          </div>
+          <p id="rag-experience-detail-status" class="muted" aria-live="polite"></p>
+          <div class="floating-action-group rag-experience-actions" aria-label="RAG 经验操作">
+            <button id="delete-rag-experience" type="button" class="button-danger">删除本地记录</button>
+            <button id="save-rag-experience" type="button" class="button-secondary">保存编辑</button>
+            <button id="upload-rag-experience" type="button">写入原知识库</button>
+          </div>
+        </section>
+      </section>
     </section>
     <section class="tab-panel" id="panel-session" role="tabpanel" aria-labelledby="tab-session" data-panel="session"
       hidden>

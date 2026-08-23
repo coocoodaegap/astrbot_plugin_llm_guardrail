@@ -933,6 +933,11 @@ class AstrBotAdapter:
                 for key, value in item.items()
                 if key not in {"text", "content", "chunk_text", "page_content"}
             }
+            nested_metadata = item.get("metadata")
+            if isinstance(nested_metadata, dict):
+                for key in ("kb_id", "kb_name", "doc_id", "doc_name"):
+                    if key not in metadata and nested_metadata.get(key) is not None:
+                        metadata[key] = nested_metadata[key]
             metadata["index"] = index
             return {"text": text, "score": score, "metadata": metadata}
 
@@ -943,7 +948,17 @@ class AstrBotAdapter:
             item,
             ("score", "similarity", "relevance_score", "rerank_score"),
         )
-        return {"text": text, "score": score, "metadata": {"index": index}}
+        metadata: dict[str, Any] = {"index": index}
+        for key in ("kb_id", "kb_name", "doc_id", "doc_name"):
+            value = getattr(item, key, None)
+            if value is not None:
+                metadata[key] = value
+        nested_metadata = getattr(item, "metadata", None)
+        if isinstance(nested_metadata, dict):
+            for key in ("kb_id", "kb_name", "doc_id", "doc_name"):
+                if key not in metadata and nested_metadata.get(key) is not None:
+                    metadata[key] = nested_metadata[key]
+        return {"text": text, "score": score, "metadata": metadata}
 
     @staticmethod
     def _first_text_value(source: Any, keys: tuple[str, ...]) -> str:

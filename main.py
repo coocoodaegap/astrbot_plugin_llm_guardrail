@@ -27,6 +27,7 @@ try:
     )
     from .rails import GuardrailPipeline
     from .pages_api import GuardrailPagesApiMixin
+    from .rag_experience import RagExperienceService
     from .session_policy_state import SessionPolicyStateService
     from .session_lock import UmoLockManager, get_global_umo_lock_manager
     from .snapshots import ConfigSnapshotManager
@@ -42,6 +43,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     )
     from rails import GuardrailPipeline
     from pages_api import GuardrailPagesApiMixin
+    from rag_experience import RagExperienceService
     from session_policy_state import SessionPolicyStateService
     from session_lock import UmoLockManager, get_global_umo_lock_manager
     from snapshots import ConfigSnapshotManager
@@ -86,10 +88,12 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self.state_store: StateStore = self._build_state_store()
         self.access_control = AccessControlService(self.state_store)
         self.session_policy_state = SessionPolicyStateService(self.state_store)
+        self.rag_experience = RagExperienceService(self.state_store)
         self.pipeline = GuardrailPipeline(
             self.normalized_config,
             self.adapter,
             access_control=self.access_control,
+            rag_experience=self.rag_experience,
         )
         self._register_pages_web_api()
 
@@ -100,6 +104,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             self.normalized_config,
             self.adapter,
             access_control=self.access_control,
+            rag_experience=self.rag_experience,
         )
         logger.info(
             "[LLMGuardrail] loaded P2 v%s | warnings=%s",
@@ -275,6 +280,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             runtime_config,
             self.adapter,
             access_control=self.access_control,
+            rag_experience=self.rag_experience,
         )
 
     def _ensure_policy_run(self, event: AstrMessageEvent) -> tuple[str, int]:

@@ -51,6 +51,7 @@ try:
         evaluate_rag_judge_evidence,
         evaluate_text_rule,
     )
+    from .rag_experience import RagExperienceService
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from access_control import AccessControlService, make_principal_identity
     from actions import (
@@ -92,6 +93,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_rag_judge_evidence,
         evaluate_text_rule,
     )
+    from rag_experience import RagExperienceService
 
 
 RESULTS_EXTRA_KEY = "_llm_guardrail_results"
@@ -125,10 +127,12 @@ class GuardrailPipeline:
         adapter: AstrBotAdapter | None = None,
         *,
         access_control: AccessControlService | None = None,
+        rag_experience: RagExperienceService | None = None,
     ) -> None:
         self.config = config
         self.adapter = adapter or AstrBotAdapter()
         self.access_control = access_control
+        self.rag_experience = rag_experience
         self.graph = build_graph_index(config)
         self.scheduler = NodeScheduler(self.graph)
 
@@ -877,8 +881,36 @@ class GuardrailPipeline:
         result.metadata["raw_result_type"] = adapter_result.metadata.get(
             "raw_result_type", ""
         )
+        if result.matched:
+            await self._capture_rag_experience(rule, inspected_text, evidence, context)
         self._log_rag_judge_result(rule, result)
         return result
+
+    async def _capture_rag_experience(
+        self,
+        rule: NormalizedRule,
+        inspected_text: str,
+        evidence: list[dict[str, Any]],
+        context: RailContext,
+    ) -> None:
+        """Store one newly matched RAG result without changing rail behavior."""
+        service = self.rag_experience
+        if service is None:
+            return
+        try:
+            result = await service.capture_match(
+                rail=rule.rail,
+                rule_id=rule.user_rule_id or rule.rule_id,
+                content=inspected_text,
+                evidence=evidence,
+            )
+        except Exception as exc:  # Defensive boundary for an optional recorder.
+            context.warnings.append(
+                f"rag experience capture failed: {type(exc).__name__}"
+            )
+            return
+        if not result.success and result.warning:
+            context.warnings.append(result.warning)
 
     def _log_llm_review_result(
         self, rule: NormalizedRule, result: RuleResult
