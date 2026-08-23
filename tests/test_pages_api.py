@@ -100,6 +100,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
             settings["fallback_policy_settings"]["max_text_chars"] = 321
             settings["session_control"]["group_chat_mode"] = "all_pass"
+            settings["session_policy_state"]["state_ttl_seconds"] = 7200
             settings["debug_settings"]["logging"] = True
             with patch(
                 "pages_api.request",
@@ -111,6 +112,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(saved["revision"], 1)
         self.assertEqual(plugin.config.save_count, 1)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_text_chars"], 321)
+        self.assertEqual(plugin.config["session_policy_state"]["state_ttl_seconds"], 7200)
         self.assertTrue(plugin.config["debug_settings"]["logging"])
         self.assertEqual(
             plugin.snapshot_manager.current.runtime_config.session_control[
@@ -143,6 +145,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
                 "fallback_policy_settings",
                 "session_control",
                 "access_control",
+                "session_policy_state",
                 "debug_settings",
             },
         )
@@ -150,6 +153,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
         self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
+        self.assertEqual(result["settings"]["session_policy_state"]["state_ttl_seconds"], 604800)
         self.assertFalse(result["settings"]["debug_settings"]["logging"])
         self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])
 
@@ -166,6 +170,20 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertEqual(result[1], 400)
         self.assertIn("must be -1 or a positive integer", result[0]["detail"])
+
+    def test_system_settings_rejects_invalid_session_policy_state_retention(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
+            settings["session_policy_state"]["state_ttl_seconds"] = 1
+            with patch(
+                "pages_api.request",
+                _Request({"expected_revision": 0, "settings": settings}),
+            ):
+                result = asyncio.run(plugin._pages_save_system_settings())
+
+        self.assertEqual(result[1], 400)
+        self.assertIn("must be 0 or an integer of at least 60", result[0]["detail"])
 
     def test_access_control_pages_api_supports_ban_pardon_and_versioned_clear(self):
         plugin = _Plugin()

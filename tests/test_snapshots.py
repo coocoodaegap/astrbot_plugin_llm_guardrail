@@ -77,6 +77,12 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
                         "blacklist_max_violations": 2,
                         "blacklist_message": "blocked",
                     },
+                    "session_policy_state": {
+                        "enabled": True,
+                        "state_ttl_seconds": 7200,
+                        "max_entries": 123,
+                        "activity_log_limit": 25,
+                    },
                     "debug_settings": {"logging": True},
                 },
                 expected_revision=0,
@@ -90,6 +96,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 2)
         self.assertTrue(manager.current.runtime_config.debug_settings["logging"])
         self.assertTrue(manager.current.runtime_config.access_control["auto_blacklist_enabled"])
+        self.assertEqual(
+            manager.current.runtime_config.session_policy_state["state_ttl_seconds"],
+            7200,
+        )
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
 

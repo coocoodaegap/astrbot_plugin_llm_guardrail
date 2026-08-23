@@ -156,6 +156,7 @@ class NormalizedConfig:
     fallback_policy_settings: dict[str, Any]
     session_control: dict[str, Any]
     access_control: dict[str, Any]
+    session_policy_state: dict[str, Any]
     debug_settings: dict[str, Any]
     rails: dict[str, NormalizedRail]
     warnings: list[str] = field(default_factory=list)
@@ -178,6 +179,10 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     )
     access_control = _normalize_access_control(
         _as_dict(_config_get(raw_config, "access_control", {})),
+        warnings,
+    )
+    session_policy_state = _normalize_session_policy_state(
+        _as_dict(_config_get(raw_config, "session_policy_state", {})),
         warnings,
     )
     debug_settings = _normalize_debug_settings(
@@ -205,6 +210,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
         fallback_policy_settings=fallback_policy_settings,
         session_control=session_control,
         access_control=access_control,
+        session_policy_state=session_policy_state,
         debug_settings=debug_settings,
         rails=rails,
         warnings=warnings,
@@ -329,6 +335,49 @@ def _normalize_access_control(
                 "你已因多次触发风险规则被临时限制使用，请稍后再试。",
             )
         ),
+    }
+
+
+def _normalize_session_policy_state(
+    raw_settings: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Normalize P2-A UMO state-monitoring retention settings.
+
+    The former ``ttl_seconds`` field is accepted as a migration alias only.
+    It is no longer a route-cache TTL: it controls inactivity retention of the
+    whole UMO state record until P2-C introduces a separate route-cache policy.
+    """
+
+    ttl_source = raw_settings.get(
+        "state_ttl_seconds", raw_settings.get("ttl_seconds", 604800)
+    )
+    state_ttl_seconds = _as_int(ttl_source, 604800)
+    if state_ttl_seconds < 0 or (0 < state_ttl_seconds < 60):
+        warnings.append(
+            "session_policy_state.state_ttl_seconds must be 0 or at least 60; fallback to 604800"
+        )
+        state_ttl_seconds = 604800
+
+    max_entries = _as_int(raw_settings.get("max_entries"), 500)
+    if max_entries < 1:
+        warnings.append(
+            "session_policy_state.max_entries must be positive; fallback to 500"
+        )
+        max_entries = 500
+
+    activity_log_limit = _as_int(raw_settings.get("activity_log_limit"), 50)
+    if activity_log_limit < 1:
+        warnings.append(
+            "session_policy_state.activity_log_limit must be positive; fallback to 50"
+        )
+        activity_log_limit = 50
+
+    return {
+        "enabled": _as_bool(raw_settings.get("enabled"), False),
+        "state_ttl_seconds": state_ttl_seconds,
+        "max_entries": max_entries,
+        "activity_log_limit": activity_log_limit,
     }
 
 

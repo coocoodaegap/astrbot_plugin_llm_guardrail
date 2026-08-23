@@ -229,33 +229,32 @@
   },
   "session_policy_state": {
     "type": "object",
-    "description": "路由会话状态",
-    "hint": "保存路由缓存、任务延续和临时锁定等状态。完整查看与清理建议在插件面板中进行。",
+    "description": "会话策略状态监控",
+    "hint": "P2-A 记录每个 UMO 最近的策略执行结果、路由候选/请求目标观察和活动记录，并在会话策略监控面板中只读展示。它不会改变现有策略执行或固定 Provider。",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用路由会话状态",
+        "description": "启用 UMO 状态监控",
+        "hint": "关闭后不再记录或刷新 UMO 状态；不会影响 Guardrail 策略本身的执行。",
         "default": false
       },
-      "cache_enabled": {
-        "type": "bool",
-        "description": "启用路由缓存",
-        "default": false
-      },
-      "lock_enabled": {
-        "type": "bool",
-        "description": "启用会话锁定",
-        "default": false
-      },
-      "ttl_seconds": {
+      "state_ttl_seconds": {
         "type": "int",
-        "description": "状态有效期",
-        "default": 3600
+        "description": "UMO 非活动保留时长（秒）",
+        "hint": "UMO 在此时长内没有新的状态活动时删除其完整监控记录。设置为 0 表示不按时间删除，但仍受最大状态数量限制。最小非零值为 60 秒。",
+        "default": 604800
       },
       "max_entries": {
         "type": "int",
-        "description": "最大状态数量",
+        "description": "最大 UMO 状态数量",
+        "hint": "超过上限时，优先淘汰最久未更新的 UMO 完整状态记录。必须为正整数。",
         "default": 500
+      },
+      "activity_log_limit": {
+        "type": "int",
+        "description": "每个 UMO 的活动记录上限",
+        "hint": "每个 UMO 仅保留最近 N 条活动记录；超过后按时间顺序淘汰最早记录。必须为正整数。",
+        "default": 50
       }
     }
   },

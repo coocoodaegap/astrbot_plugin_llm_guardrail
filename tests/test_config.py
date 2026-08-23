@@ -11,6 +11,49 @@ from config import normalize_config
 
 
 class ConfigNormalizerTests(unittest.TestCase):
+    def test_session_policy_state_settings_are_normalized(self):
+        cfg = normalize_config(
+            {
+                "session_policy_state": {
+                    "enabled": True,
+                    "state_ttl_seconds": 7200,
+                    "max_entries": 321,
+                    "activity_log_limit": 25,
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.session_policy_state,
+            {
+                "enabled": True,
+                "state_ttl_seconds": 7200,
+                "max_entries": 321,
+                "activity_log_limit": 25,
+            },
+        )
+
+    def test_session_policy_state_migrates_legacy_ttl_and_rejects_bad_limits(self):
+        migrated = normalize_config({"session_policy_state": {"ttl_seconds": 3600}})
+        invalid = normalize_config(
+            {
+                "session_policy_state": {
+                    "state_ttl_seconds": 1,
+                    "max_entries": 0,
+                    "activity_log_limit": 0,
+                }
+            }
+        )
+
+        self.assertEqual(migrated.session_policy_state["state_ttl_seconds"], 3600)
+        self.assertEqual(invalid.session_policy_state["state_ttl_seconds"], 604800)
+        self.assertEqual(invalid.session_policy_state["max_entries"], 500)
+        self.assertEqual(invalid.session_policy_state["activity_log_limit"], 50)
+        self.assertIn(
+            "session_policy_state.state_ttl_seconds must be 0 or at least 60",
+            " ".join(invalid.warnings),
+        )
+
     def test_access_control_settings_are_normalized(self):
         cfg = normalize_config(
             {

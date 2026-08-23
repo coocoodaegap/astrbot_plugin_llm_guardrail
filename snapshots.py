@@ -251,6 +251,7 @@ class ConfigSnapshotManager:
                 "fallback_policy_settings",
                 "session_control",
                 "access_control",
+                "session_policy_state",
                 "debug_settings",
             ):
                 value = settings.get(key)
@@ -282,6 +283,9 @@ class ConfigSnapshotManager:
                         ),
                         "access_control": copy.deepcopy(
                             candidate.source_config["access_control"]
+                        ),
+                        "session_policy_state": copy.deepcopy(
+                            candidate.source_config["session_policy_state"]
                         ),
                         "debug_settings": copy.deepcopy(
                             candidate.source_config["debug_settings"]

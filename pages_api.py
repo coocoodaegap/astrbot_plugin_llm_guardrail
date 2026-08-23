@@ -94,6 +94,7 @@ class GuardrailPagesApiMixin:
                         for key, value in config.session_control.items()
                     },
                     "access_control": dict(config.access_control),
+                    "session_policy_state": dict(config.session_policy_state),
                     "debug_settings": dict(config.debug_settings),
                 },
                 "schema": _load_system_settings_schema(),
@@ -182,6 +183,7 @@ class GuardrailPagesApiMixin:
                 "fallback_policy_settings",
                 "session_control",
                 "access_control",
+                "session_policy_state",
                 "debug_settings",
             )
         }
@@ -447,6 +449,7 @@ def _load_system_settings_schema() -> dict[str, Any]:
             "fallback_policy_settings",
             "session_control",
             "access_control",
+            "session_policy_state",
             "debug_settings",
         )
         if isinstance(raw_schema.get(key), dict)
@@ -463,6 +466,7 @@ def _validate_system_settings_payload(
         "fallback_policy_settings",
         "session_control",
         "access_control",
+        "session_policy_state",
         "debug_settings",
     }
     if set(settings) != expected_groups:
@@ -510,6 +514,20 @@ def _validate_system_settings_payload(
                 not isinstance(value, int)
                 or isinstance(value, bool)
                 or value < 1
+            ):
+                diagnostics.append(f"{label} must be a positive integer")
+            if label == "session_policy_state.state_ttl_seconds" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+                or (0 < value < 60)
+            ):
+                diagnostics.append(f"{label} must be 0 or an integer of at least 60")
+            if label in {
+                "session_policy_state.max_entries",
+                "session_policy_state.activity_log_limit",
+            } and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 1
             ):
                 diagnostics.append(f"{label} must be a positive integer")
     return diagnostics
