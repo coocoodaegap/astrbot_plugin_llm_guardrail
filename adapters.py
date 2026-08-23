@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -78,9 +79,11 @@ class AstrBotAdapter:
         warnings: list[str] = []
         components, available = self._event_message_components(event, warnings)
         facts: list[MessageComponentFact] = []
+        unknown_component_types: set[str] = set()
         for index, component in enumerate(components):
             kind = self._message_component_kind(component)
             if not kind:
+                unknown_component_types.add(type(component).__name__)
                 continue
             target_id = ""
             plain_text = ""
@@ -110,6 +113,11 @@ class AstrBotAdapter:
 
         if not available:
             warnings.append("message component chain is unavailable")
+        elif unknown_component_types:
+            warnings.append(
+                "unrecognized message component types: "
+                + ", ".join(sorted(unknown_component_types)[:4])
+            )
         snapshot = MessageFactSnapshot(
             request_user_id=self._event_identity_value(
                 event,
@@ -139,11 +147,32 @@ class AstrBotAdapter:
             message_obj = getattr(event, "message_obj", None)
             raw_components = getattr(message_obj, "message", None)
             available = raw_components is not None
-        if isinstance(raw_components, (list, tuple)):
-            return list(raw_components), available
+        components = AstrBotAdapter._coerce_message_component_list(raw_components)
+        if components is not None:
+            return components, available
         if raw_components is not None:
             warnings.append("message component chain has an unsupported shape")
         return [], False
+
+    @staticmethod
+    def _coerce_message_component_list(value: Any) -> list[Any] | None:
+        """Accept documented lists plus compatible MessageChain containers."""
+
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        if value is None or isinstance(value, (str, bytes, bytearray, Mapping)):
+            return None
+        for attribute_name in ("chain", "components", "message"):
+            try:
+                nested = getattr(value, attribute_name, None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                nested = None
+            if isinstance(nested, (list, tuple)):
+                return list(nested)
+        try:
+            return list(iter(value))
+        except (TypeError, RuntimeError, ValueError):
+            return None
 
     @staticmethod
     def _message_component_kind(component: Any) -> str:
@@ -159,15 +188,39 @@ class AstrBotAdapter:
             "record": "record",
             "video": "video",
         }
-        return aliases.get(type(component).__name__.casefold(), "")
+        values = [type(component).__name__]
+        if isinstance(component, Mapping):
+            values.extend(
+                component.get(key)
+                for key in ("type", "component_type", "message_type")
+            )
+        else:
+            for attribute_name in ("type", "component_type", "message_type"):
+                try:
+                    values.append(getattr(component, attribute_name, None))
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    continue
+        for value in values:
+            normalized = re.sub(r"[^a-z]", "", str(value or "").casefold())
+            if normalized in aliases:
+                return aliases[normalized]
+            for suffix in ("component", "segment", "message"):
+                if normalized.endswith(suffix):
+                    candidate = normalized.removesuffix(suffix)
+                    if candidate in aliases:
+                        return aliases[candidate]
+        return ""
 
     @staticmethod
     def _message_component_value(component: Any, names: tuple[str, ...]) -> str:
         for name in names:
-            try:
-                value = getattr(component, name, None)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                value = None
+            if isinstance(component, Mapping):
+                value = component.get(name)
+            else:
+                try:
+                    value = getattr(component, name, None)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    value = None
             if value is not None:
                 value_text = str(value).strip()
                 if value_text:

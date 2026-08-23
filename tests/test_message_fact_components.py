@@ -74,6 +74,16 @@ class _FactEvent:
         self.stopped = True
 
 
+class _MessageChain:
+    """Iterable chain shape used by compatibility adapters."""
+
+    def __init__(self, components):
+        self.components = components
+
+    def __iter__(self):
+        return iter(self.components)
+
+
 def _all_fact_rules(action_on_hit="default"):
     return [
         {
@@ -184,6 +194,23 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertEqual(snapshot.components, ())
         self.assertFalse(snapshot.message_chain_available)
         self.assertTrue(any("component chain" in warning for warning in result.warnings))
+
+    def test_adapter_accepts_iterable_chains_and_type_based_components(self):
+        event = _FactEvent(
+            _MessageChain(
+                [
+                    {"type": "image"},
+                    {"component_type": "forward"},
+                ]
+            )
+        )
+
+        result = AstrBotAdapter().get_message_fact_snapshot(event)
+        snapshot = result.metadata["message_fact_snapshot"]
+
+        self.assertTrue(snapshot.message_chain_available)
+        self.assertEqual([component.kind for component in snapshot.components], ["image", "forward"])
+        self.assertFalse(result.warnings)
 
     def test_policy_component_compiles_and_observes_in_pipeline(self):
         library = PolicyLibrary(
