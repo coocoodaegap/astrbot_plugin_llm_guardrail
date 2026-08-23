@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 RULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 POLICY_ID_PATTERN = re.compile(r"^(?:_default|[a-z][a-z0-9_]{0,63})$")
-DEFAULT_POLICY_ID = "_default"
+LEGACY_DEFAULT_POLICY_ID = "_default"
 STEP_BY_RAIL = {
     "input_rail": 1,
     "routing_rail": 2,
@@ -231,31 +231,22 @@ class PolicyLibrary:
 
     rules: tuple[RuleDefinition, ...] = ()
     policies: tuple[PolicyDefinition, ...] = ()
-    active_policy_id: str = DEFAULT_POLICY_ID
+    active_policy_id: str = ""
 
     @classmethod
     def empty(cls) -> "PolicyLibrary":
-        return cls(
-            policies=(cls.default_policy(),),
-            active_policy_id=DEFAULT_POLICY_ID,
-        )
+        return cls()
 
-    @staticmethod
-    def default_policy() -> PolicyDefinition:
-        return PolicyDefinition(
-            policy_id=DEFAULT_POLICY_ID,
-            name="Default",
-            description="默认策略，暂不绑定 Guardrail 规则。",
-            builtin=True,
-        )
+    def without_legacy_default_policy(self) -> "PolicyLibrary":
+        """Remove the retired built-in policy and clear unusable pointers."""
 
-    def with_default_policy(self) -> "PolicyLibrary":
-        policies = self.policies
-        if not any(policy.policy_id == DEFAULT_POLICY_ID for policy in policies):
-            policies = (*policies, self.default_policy())
+        policies = tuple(
+            policy for policy in self.policies
+            if policy.policy_id != LEGACY_DEFAULT_POLICY_ID
+        )
         active_policy_id = self.active_policy_id
-        if not any(policy.policy_id == active_policy_id for policy in policies):
-            active_policy_id = DEFAULT_POLICY_ID
+        if active_policy_id == LEGACY_DEFAULT_POLICY_ID:
+            active_policy_id = ""
         library = PolicyLibrary(
             rules=self.rules,
             policies=policies,
@@ -265,7 +256,7 @@ class PolicyLibrary:
             return PolicyLibrary(
                 rules=library.rules,
                 policies=library.policies,
-                active_policy_id=DEFAULT_POLICY_ID,
+                active_policy_id="",
             )
         return library
 
@@ -290,7 +281,7 @@ class PolicyLibrary:
             for item in policies
             if isinstance(item, Mapping)
         ] if isinstance(policies, list) else []
-        active_policy_id = str(value.get("active_policy_id") or DEFAULT_POLICY_ID).strip()
+        active_policy_id = str(value.get("active_policy_id") or "").strip()
         return cls(
             rules=tuple(parsed_rules),
             policies=tuple(parsed_policies),
@@ -301,8 +292,8 @@ class PolicyLibrary:
         target = str(policy_id or self.active_policy_id).strip()
         return next((policy for policy in self.policies if policy.policy_id == target), None)
 
-    def select_policy_for_umo(self, umo: str) -> PolicyDefinition:
-        """Select the first usable UMO override, then the configured default."""
+    def select_usable_policy_for_umo(self, umo: str) -> PolicyDefinition | None:
+        """Select a usable UMO override or configured default, if one exists."""
 
         usable_ids = self._usable_policy_ids()
         normalized_umo = str(umo or "").strip()
@@ -316,10 +307,7 @@ class PolicyLibrary:
         default_policy = self.get_policy()
         if default_policy is not None and default_policy.policy_id in usable_ids:
             return default_policy
-        builtin_default = self.get_policy(DEFAULT_POLICY_ID)
-        if builtin_default is not None:
-            return builtin_default
-        return self.default_policy()
+        return None
 
     def _usable_policy_ids(self) -> set[str]:
         usable: set[str] = set()
@@ -515,7 +503,7 @@ class PolicyLibrary:
         for policy in self.policies:
             fatal_errors.extend(_validate_policy_dependency_graph(policy, rule_by_id))
 
-        if self.active_policy_id not in policy_ids:
+        if self.active_policy_id and self.active_policy_id not in policy_ids:
             fatal_errors.append(f"active policy does not exist: {self.active_policy_id}")
         return LibraryValidation(tuple(fatal_errors), tuple(warnings))
 
@@ -530,7 +518,15 @@ def compile_policy_to_runtime_config(
     validation = library.validate()
     if not validation.valid:
         return _copy_dict(base_config), validation
-    policy = library.get_policy(policy_id)
+    selected_policy_id = policy_id if policy_id is not None else library.active_policy_id
+    if not selected_policy_id:
+        compiled = _copy_dict(base_config)
+        for rail_name in RAIL_NAMES:
+            rail = _copy_dict(compiled.get(rail_name))
+            rail["rule_list"] = []
+            compiled[rail_name] = rail
+        return compiled, validation
+    policy = library.get_policy(selected_policy_id)
     if policy is None:
         return _copy_dict(base_config), LibraryValidation(
             fatal_errors=(f"policy does not exist: {policy_id}",),

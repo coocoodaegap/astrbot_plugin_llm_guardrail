@@ -74,7 +74,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('id="policy-list-panel"', html)
         self.assertIn('id="policy-detail-panel"', html)
         self.assertIn('id="policy-list"', html)
-        self.assertIn('class="default-policy-card"', html)
+        self.assertNotIn('class="default-policy-card"', html)
         self.assertIn('id="custom-policy-list-heading"', html)
         self.assertNotIn('id="policy-bindings-json"', html)
         self.assertIn('id="policy-name-input"', html)
@@ -156,8 +156,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertNotIn("data-policy-bindings-rail", javascript)
         self.assertNotIn("json-editor", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
         self.assertIn('apiPost("save_policy_library"', javascript)
-        self.assertIn('policy.policy_id !== "_default"', javascript)
-        self.assertIn("function customPolicies", javascript)
+        self.assertIn("function customPolicies() { return policyLibrary.policies; }", javascript)
         self.assertIn("规则命中风险时采用的默认处理方式", javascript)
         self.assertIn("所有群聊进入 Guardrail", javascript)
 

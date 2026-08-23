@@ -108,18 +108,12 @@
           <div>
             <p class="eyebrow">POLICY LIBRARY</p>
             <h2>策略编排</h2>
-            <p>管理默认策略与自定义策略的规则编排。</p>
+            <p>管理策略的规则编排；未命中可用策略时将使用系统 fallback 图。</p>
           </div>
         </div>
-        <section class="default-policy-card" aria-labelledby="default-policy-heading">
-          <p class="eyebrow">BUILT-IN POLICY</p>
-          <h3 id="default-policy-heading">Default</h3>
-          <p><code>_default</code> 是始终可用的内置空策略，不绑定任何 Guardrail 规则。每次快照保存都会检查它；若被移除，系统会自动补回完整策略。</p>
-          <p class="muted">它适合作为安全基线、回退目标，以及开始新编排前的干净起点。</p>
-        </section>
         <section class="custom-policy-list-card" aria-labelledby="custom-policy-list-heading">
           <div class="list-heading">
-            <strong id="custom-policy-list-heading">自定义策略列表</strong>
+            <strong id="custom-policy-list-heading">策略列表</strong>
             <span id="policy-count" class="count-badge">0</span>
           </div>
           <p id="policy-library-status" class="muted" aria-live="polite"></p>

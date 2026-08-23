@@ -215,7 +215,7 @@ const systemOptionDescriptions = {
 };
 let currentRevision = null,
   ruleLibrary = { rules: [] },
-  policyLibrary = { policies: [], active_policy_id: "_default" },
+  policyLibrary = { policies: [], active_policy_id: "" },
   openRuleIds = [],
   selectedPolicyId = null,
   pendingPolicyDeletionId = null,
@@ -592,9 +592,7 @@ function showPolicyDetail(policyId) {
   policyDetailPanel.hidden = false;
   renderPolicyDetail(policy);
 }
-function customPolicies() {
-  return policyLibrary.policies.filter((policy) => policy.policy_id !== "_default");
-}
+function customPolicies() { return policyLibrary.policies; }
 function renderPolicyList() {
   policyList.replaceChildren();
   const policies = customPolicies();
@@ -2154,7 +2152,7 @@ function collectPolicyDetailDraft(policy) {
   };
 }
 function validCustomPolicyId(id) {
-  return /^[a-z][a-z0-9_]{0,63}$/.test(id) && id !== "_default";
+  return /^[a-z][a-z0-9_]{0,63}$/.test(id);
 }
 function currentPolicyGraphIssues() {
   return policyGraphState.model?.nodes
@@ -2351,7 +2349,7 @@ async function deleteSelectedPolicy() {
   if (!policy || policy.builtin) return;
   const previousActivePolicyId = policyLibrary.active_policy_id;
   policyLibrary.policies = policyLibrary.policies.filter((item) => item.policy_id !== policyId);
-  if (policyLibrary.active_policy_id === policyId) policyLibrary.active_policy_id = "_default";
+  if (policyLibrary.active_policy_id === policyId) policyLibrary.active_policy_id = "";
   confirmPolicyDelete.disabled = true;
   const saved = await persistPolicyLibrary((revision) => `策略“${policy.name || policyId}”已删除，revision ${revision}。`);
   confirmPolicyDelete.disabled = false;
@@ -2723,7 +2721,7 @@ async function refresh() {
     policies: Array.isArray(policyResult.policy_library?.policies)
       ? policyResult.policy_library.policies
       : [],
-    active_policy_id: String(policyResult.policy_library?.active_policy_id || "_default"),
+    active_policy_id: String(policyResult.policy_library?.active_policy_id || ""),
   };
   openRuleEditors.replaceChildren();
   openRuleIds = [];
@@ -2745,7 +2743,7 @@ async function refresh() {
   ];
   policyLibraryStatus.textContent = policyMessages.length
     ? policyMessages.join(" · ")
-    : `已加载 ${customPolicies().length} 条自定义策略，revision ${policyResult.revision}。`;
+    : `已加载 ${customPolicies().length} 条策略，revision ${policyResult.revision}。`;
   const validation = ruleResult.validation || {
       warnings: [],
       fatal_errors: [],

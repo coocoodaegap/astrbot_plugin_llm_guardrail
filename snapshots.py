@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping
 try:
     from .config import COMPONENT_TEMPLATES, NormalizedConfig, normalize_config
     from .core import GraphIndex, build_graph_index
+    from .fallback_graph import build_fallback_runtime_config
     from .policy_library import (
         LibraryValidation,
         PolicyDefinition,
@@ -25,6 +26,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from config import COMPONENT_TEMPLATES, NormalizedConfig, normalize_config
     from core import GraphIndex, build_graph_index
+    from fallback_graph import build_fallback_runtime_config
     from policy_library import (
         LibraryValidation,
         PolicyDefinition,
@@ -37,6 +39,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 SNAPSHOT_EVENT_EXTRA = "_llm_guardrail_config_snapshot"
 SNAPSHOT_FILE_VERSION = 1
 POLICY_COMPONENT_TYPES = frozenset().union(*COMPONENT_TEMPLATES.values())
+SYSTEM_FALLBACK_POLICY_ID = "__system_fallback__"
 
 
 @dataclass(frozen=True)
@@ -50,15 +53,24 @@ class ConfigSnapshot:
     library_validation: LibraryValidation
     runtime_config: NormalizedConfig
     policy_runtime_configs: Mapping[str, NormalizedConfig]
+    fallback_runtime_config: NormalizedConfig
+    fallback_graph: GraphIndex
     graph: GraphIndex
     diagnostics: tuple[str, ...]
 
     def runtime_config_for_umo(self, umo: str) -> tuple[str, NormalizedConfig]:
-        policy = self.policy_library.select_policy_for_umo(umo)
-        return policy.policy_id, self.policy_runtime_configs.get(
-            policy.policy_id,
-            self.runtime_config,
-        )
+        """Resolve a usable policy graph, or the snapshot's system fallback.
+
+        A missing/invalid policy graph must never silently select an unrelated
+        normal runtime config; the terminal fallback is system-owned.
+        """
+
+        policy = self.policy_library.select_usable_policy_for_umo(umo)
+        if policy is not None:
+            runtime_config = self.policy_runtime_configs.get(policy.policy_id)
+            if runtime_config is not None:
+                return policy.policy_id, runtime_config
+        return SYSTEM_FALLBACK_POLICY_ID, self.fallback_runtime_config
 
 
 @dataclass(frozen=True)
@@ -321,13 +333,16 @@ class ConfigSnapshotManager:
 
     def _build_snapshot(self, raw_config: Any, revision: int) -> ConfigSnapshot:
         source_config = _copy_config(raw_config)
-        library = _load_policy_library(source_config).with_default_policy()
+        library = _load_policy_library(source_config).without_legacy_default_policy()
         source_config["policy_library"] = library.to_dict()
         compiled_config, library_validation = compile_policy_to_runtime_config(
             source_config,
             library,
         )
         runtime_config = normalize_config(compiled_config)
+        fallback_runtime_config = build_fallback_runtime_config(
+            runtime_config.fallback_policy_settings,
+        )
         policy_runtime_configs = {
             policy.policy_id: normalize_config(
                 compile_policy_to_runtime_config(
@@ -349,10 +364,12 @@ class ConfigSnapshotManager:
                     warnings=library_validation.warnings,
                 )
         graph = build_graph_index(runtime_config)
+        fallback_graph = build_graph_index(fallback_runtime_config)
         diagnostics = list(self._startup_diagnostics)
         diagnostics.extend(library_validation.fatal_errors)
         diagnostics.extend(library_validation.warnings)
         diagnostics.extend(runtime_config.warnings)
+        diagnostics.extend(fallback_runtime_config.warnings)
         if graph.metrics.has_cycle_suspect:
             diagnostics.append("dependency graph contains a cycle suspect")
         return ConfigSnapshot(
@@ -363,6 +380,8 @@ class ConfigSnapshotManager:
             library_validation=library_validation,
             runtime_config=runtime_config,
             policy_runtime_configs=policy_runtime_configs,
+            fallback_runtime_config=fallback_runtime_config,
+            fallback_graph=fallback_graph,
             graph=graph,
             diagnostics=tuple(diagnostics),
         )
@@ -515,7 +534,7 @@ def _copy_config(raw_config: Any) -> dict[str, Any]:
 
 
 def _load_policy_library(source_config: dict[str, Any]) -> PolicyLibrary:
-    """Load the Pages-owned policy library or initialize the built-in Default policy."""
+    """Load the Pages-owned policy library or an empty user-policy collection."""
 
     raw_library = source_config.get("policy_library")
     if isinstance(raw_library, Mapping):

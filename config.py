@@ -554,6 +554,11 @@ def _validate_cross_references(
                 continue
             inputs = _clean_string_list(rule.config.get("inputs", []))
             if not inputs:
+                # Reserved runtime marker used only by the code-owned system
+                # fallback OR gate.  ``any([])`` is intentionally false, so
+                # its dependent LLM review never runs until a detector exists.
+                if bool(rule.config.get("__allow_empty_inputs", False)):
+                    continue
                 message = f"{rule.rule_id}.inputs is empty; logic gate skipped"
                 rule.valid = False
                 rule.enabled = False

@@ -165,8 +165,8 @@ class PolicyLibraryTests(unittest.TestCase):
             active_policy_id="fallback",
         )
 
-        self.assertEqual(library.select_policy_for_umo("umo:shared").policy_id, "first")
-        self.assertEqual(library.select_policy_for_umo("umo:other").policy_id, "fallback")
+        self.assertEqual(library.select_usable_policy_for_umo("umo:shared").policy_id, "first")
+        self.assertEqual(library.select_usable_policy_for_umo("umo:other").policy_id, "fallback")
 
     def test_missing_rule_binding_is_fatal(self):
         library = PolicyLibrary(

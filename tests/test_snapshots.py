@@ -2,6 +2,7 @@ import asyncio
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -9,7 +10,8 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from snapshots import ConfigSnapshotManager
+from snapshots import ConfigSnapshotManager, SYSTEM_FALLBACK_POLICY_ID
+from fallback_graph import FallbackDetectorSpec, build_fallback_runtime_config
 from policy_library import (
     PolicyComponent,
     PolicyDefinition,
@@ -84,6 +86,79 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
 
+    def test_fallback_graph_has_fixed_steps_and_empty_detector_catalogue_is_valid(self):
+        manager = ConfigSnapshotManager({})
+
+        config = manager.current.fallback_runtime_config
+
+        self.assertTrue(config.rails["input_rail"].enabled)
+        self.assertFalse(config.rails["routing_rail"].enabled)
+        self.assertFalse(config.rails["request_rail"].enabled)
+        self.assertFalse(config.rails["prompt_rail"].enabled)
+        self.assertTrue(config.rails["output_rail"].enabled)
+        self.assertEqual(
+            [node.node_id for node in config.rails["input_rail"].nodes],
+            ["__fallback_input_or"],
+        )
+        self.assertTrue(config.rails["input_rail"].nodes[0].enabled)
+        self.assertTrue(config.rails["input_rail"].nodes[0].valid)
+        self.assertFalse(config.rails["input_rail"].nodes[0].config["inputs"])
+        self.assertNotIn("inputs is empty", " ".join(config.warnings))
+        self.assertFalse(config.rails["output_rail"].nodes)
+
+    def test_fallback_llm_review_is_controlled_by_system_settings_and_snapshot_safe(self):
+        manager = ConfigSnapshotManager(
+            {"fallback_policy_settings": {"enable_llm_review_in_fallback_policy": False}}
+        )
+        old_snapshot = manager.current
+
+        result = asyncio.run(
+            manager.publish(
+                {"fallback_policy_settings": {"enable_llm_review_in_fallback_policy": True}},
+                expected_revision=0,
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [node.node_id for node in old_snapshot.fallback_runtime_config.rails["input_rail"].nodes],
+            ["__fallback_input_or"],
+        )
+        nodes = result.snapshot.fallback_runtime_config.rails["input_rail"].nodes
+        self.assertEqual([node.node_id for node in nodes], ["__fallback_input_or", "__fallback_llm_review"])
+        self.assertEqual(nodes[1].depend_on, "__fallback_input_or")
+
+    def test_fallback_detector_registry_honors_its_system_switch(self):
+        detector = FallbackDetectorSpec(
+            "enable_test_detector",
+            "__fallback_test_detector",
+            "input_rail",
+            "plain_keywords",
+            {"keywords": ["risk"]},
+        )
+
+        disabled = build_fallback_runtime_config(
+            {"enable_test_detector": False},
+            implemented_detectors=(detector,),
+        )
+        enabled = build_fallback_runtime_config(
+            {"enable_test_detector": True},
+            implemented_detectors=(detector,),
+        )
+
+        self.assertEqual(
+            [node.node_id for node in disabled.rails["input_rail"].nodes],
+            ["__fallback_input_or"],
+        )
+        self.assertEqual(
+            [node.node_id for node in enabled.rails["input_rail"].nodes],
+            ["__fallback_test_detector", "__fallback_input_or"],
+        )
+        self.assertEqual(
+            enabled.rails["input_rail"].nodes[1].config["inputs"],
+            ["__fallback_test_detector"],
+        )
+
     def test_conflicting_revision_does_not_publish(self):
         manager = ConfigSnapshotManager({})
 
@@ -149,7 +224,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         snapshot = manager.current
 
-        self.assertEqual(snapshot.policy_library.active_policy_id, "_default")
+        self.assertEqual(snapshot.policy_library.active_policy_id, "")
         self.assertEqual(snapshot.policy_library.rules, ())
         self.assertEqual(snapshot.runtime_config.rails["input_rail"].rules, [])
 
@@ -178,7 +253,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(manager.current.policy_library.active_policy_id, "input_policy")
         self.assertEqual(manager.current.runtime_config.rails["input_rail"].rules[0].rule_id, "risk")
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
-        self.assertEqual(old_snapshot.policy_library.active_policy_id, "_default")
+        self.assertEqual(old_snapshot.policy_library.active_policy_id, "")
 
     def test_policy_component_is_compiled_into_the_published_snapshot(self):
         manager = ConfigSnapshotManager({})
@@ -230,7 +305,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertFalse(changed.success)
         self.assertIn("template cannot change", changed.diagnostics[0])
 
-    def test_missing_default_policy_is_restored_when_publishing_snapshot(self):
+    def test_legacy_default_policy_is_removed_when_publishing_snapshot(self):
         manager = ConfigSnapshotManager({})
 
         result = asyncio.run(
@@ -238,11 +313,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         )
 
         self.assertTrue(result.success)
-        default_policy = result.snapshot.policy_library.get_policy("_default")
-        self.assertIsNotNone(default_policy)
-        self.assertTrue(default_policy.builtin)
+        self.assertIsNone(result.snapshot.policy_library.get_policy("_default"))
+        self.assertEqual(result.snapshot.policy_library.active_policy_id, "")
 
-    def test_missing_or_invalid_default_pointer_falls_back_to_builtin_default(self):
+    def test_missing_or_invalid_default_pointer_is_cleared(self):
         manager = ConfigSnapshotManager(
             {
                 "policy_library": {
@@ -252,7 +326,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(manager.current.policy_library.active_policy_id, "_default")
+        self.assertEqual(manager.current.policy_library.active_policy_id, "")
 
     def test_snapshot_selects_policy_runtime_config_by_umo(self):
         manager = ConfigSnapshotManager({})
@@ -276,8 +350,24 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         self.assertEqual(policy_id, "protected")
         self.assertEqual(config.rails["input_rail"].rules[0].rule_id, "risk")
-        self.assertEqual(fallback_policy_id, "_default")
-        self.assertEqual(fallback_config.rails["input_rail"].rules, [])
+        self.assertEqual(fallback_policy_id, SYSTEM_FALLBACK_POLICY_ID)
+        self.assertEqual(
+            [node.node_id for node in fallback_config.rails["input_rail"].nodes],
+            ["__fallback_input_or"],
+        )
+
+    def test_missing_usable_policy_graph_selects_system_fallback(self):
+        manager = ConfigSnapshotManager({})
+        snapshot = replace(manager.current, policy_runtime_configs={})
+
+        policy_id, config = snapshot.runtime_config_for_umo("umo:any")
+
+        self.assertEqual(policy_id, SYSTEM_FALLBACK_POLICY_ID)
+        self.assertIs(config, snapshot.fallback_runtime_config)
+        self.assertEqual(
+            [node.node_id for node in config.rails["input_rail"].nodes],
+            ["__fallback_input_or"],
+        )
 
     def test_publish_rejects_dependency_target_that_normalizes_as_unavailable(self):
         manager = ConfigSnapshotManager({})
