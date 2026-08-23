@@ -149,6 +149,16 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function openPolicyComponentCreation", javascript)
         self.assertIn("function createPolicyComponent", javascript)
         self.assertIn("function updatePolicyComponentConfig", javascript)
+        for field_name in (
+            "duplicate_line_min_chars",
+            "duplicate_line_min_count",
+            "min_invisible_chars",
+            "max_invisible_ratio",
+            "max_lines",
+            "detect_log_like_headers",
+            "detect_role_reassignment",
+        ):
+            self.assertIn(field_name, javascript)
         self.assertIn("findPolicyGraphDraftNode", javascript)
         self.assertIn("function savePolicyAsCopy", javascript)
         self.assertIn("function deleteSelectedPolicy", javascript)

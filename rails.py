@@ -36,7 +36,7 @@ try:
         make_node_result,
         skipped_node_result,
     )
-    from .components import evaluate_logic_gate
+    from .components import evaluate_input_detector, evaluate_logic_gate
     from .rules import (
         apply_literal_replacements,
         apply_span_replacements,
@@ -71,7 +71,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         make_node_result,
         skipped_node_result,
     )
-    from components import evaluate_logic_gate
+    from components import evaluate_input_detector, evaluate_logic_gate
     from rules import (
         apply_literal_replacements,
         apply_span_replacements,
@@ -303,6 +303,12 @@ class GuardrailPipeline:
             nonlocal current_text
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
+            elif rule.template_key in {
+                "length_anomaly_detector",
+                "role_marker_spoofing_detector",
+                "instruction_override_detector",
+            }:
+                result = evaluate_input_detector(rule, ctx, context.original_input)
             elif rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
             elif rule.template_key == "rag_judge":

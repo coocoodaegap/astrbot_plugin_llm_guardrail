@@ -284,7 +284,7 @@ class PolicyLibraryTests(unittest.TestCase):
     def test_unsupported_legacy_template_is_preserved_as_warning(self):
         library = PolicyLibrary(
             rules=(
-                RuleDefinition("future_rule", "preset_encoded_payload", {}),
+                RuleDefinition("future_rule", "encoded_payload_detector", {}),
             ),
             policies=(
                 PolicyDefinition("_default", "Default", builtin=True),
@@ -301,7 +301,7 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertTrue(validation.valid)
         self.assertTrue(validation.warnings)
-        self.assertEqual(raw["input_rail"]["rule_list"][0]["__template_key"], "preset_encoded_payload")
+        self.assertEqual(raw["input_rail"]["rule_list"][0]["__template_key"], "encoded_payload_detector")
 
     def test_template_specific_threshold_is_not_a_rule_or_policy_default(self):
         rule = RuleDefinition(

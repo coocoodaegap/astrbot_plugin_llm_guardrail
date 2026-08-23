@@ -140,6 +140,9 @@ const templateDescriptions = {
   plain_keywords: "关键词匹配",
   regex_pattern: "正则匹配",
   logic_gate: "逻辑门",
+  length_anomaly_detector: "长度异常检测器",
+  role_marker_spoofing_detector: "角色标记伪造检测器",
+  instruction_override_detector: "指令覆盖检测器",
   rag_judge: "知识库裁判",
   llm_review: "LLM 审查",
   replace_input: "替换输入",
@@ -664,6 +667,55 @@ const componentDefinitions = {
     description: "组合当前策略内其他节点的执行结果，形成 all / any 逻辑判断。",
     rails: new Set(policyGraphSteps.map((step) => step.rail)),
     defaultConfig: () => ({ gate: "all", invert: false, inputs: [] }),
+  },
+  length_anomaly_detector: {
+    label: "长度异常检测器",
+    description: "检测超长、重复、异常分隔符与不可见字符等输入形态；不判断文本语义。",
+    rails: new Set(["input_rail"]),
+    fields: [
+      { key: "hard_max_chars", label: "硬长度上限", hint: "达到该字符数立即命中。", type: "integer", default: 8000 },
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "形态扫描的最大窗口。", type: "integer", default: 12000 },
+      { key: "max_code_fence_pairs", label: "代码围栏对数", hint: "超过该数量作为一个结构信号。", type: "integer", default: 6 },
+      { key: "max_separator_run", label: "分隔符连续长度", hint: "超过该长度作为一个结构信号。", type: "integer", default: 48 },
+      { key: "max_repeat_run", label: "重复字符连续长度", hint: "超过该长度作为一个结构信号。", type: "integer", default: 80 },
+      { key: "duplicate_line_min_chars", label: "重复行最小长度", hint: "只统计达到该长度的非空行。", type: "integer", default: 16 },
+      { key: "duplicate_line_min_count", label: "重复行最少次数", hint: "达到该次数才视为重复行信号。", type: "integer", default: 4 },
+      { key: "duplicate_line_ratio", label: "重复行比例", hint: "相同长行的最高占比阈值。", type: "number", default: 0.66 },
+      { key: "min_invisible_chars", label: "不可见字符最少数量", hint: "达到该数量后才计算不可见字符比例。", type: "integer", default: 8 },
+      { key: "max_invisible_ratio", label: "不可见字符比例", hint: "超过该比例作为一个结构信号。", type: "number", default: 0.04 },
+      { key: "min_structural_signals", label: "最少结构信号", hint: "未超硬长度时需要满足的信号数量。", type: "integer", default: 2 },
+    ],
+    defaultConfig: () => ({ hard_max_chars: 8000, scan_limit_chars: 12000, max_code_fence_pairs: 6, max_separator_run: 48, max_repeat_run: 80, duplicate_line_min_chars: 16, duplicate_line_min_count: 4, duplicate_line_ratio: 0.66, min_invisible_chars: 8, max_invisible_ratio: 0.04, min_structural_signals: 2 }),
+  },
+  role_marker_spoofing_detector: {
+    label: "角色标记伪造检测器",
+    description: "检测伪造角色、消息包络、工具调用与保留分隔符的组合结构。",
+    rails: new Set(["input_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "结构扫描的最大窗口。", type: "integer", default: 12000 },
+      { key: "min_indicators", label: "最少结构指标", hint: "至少满足多少种独立指标才命中。", type: "integer", default: 2 },
+      { key: "max_lines", label: "扫描最大行数", hint: "只分析窗口中的前若干行。", type: "integer", default: 160 },
+      { key: "detect_serialized_message_envelope", label: "检测消息包络", hint: "识别序列化消息结构。", type: "boolean", default: true },
+      { key: "detect_tool_invocation_envelope", label: "检测工具包络", hint: "识别工具调用结构。", type: "boolean", default: true },
+      { key: "detect_reserved_delimiters", label: "检测保留分隔符", hint: "识别成对协议分隔符。", type: "boolean", default: true },
+      { key: "detect_log_like_headers", label: "检测伪日志头", hint: "只在角色头共现时视为独立结构指标。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, min_indicators: 2, detect_serialized_message_envelope: true, detect_tool_invocation_envelope: true, detect_reserved_delimiters: true, detect_log_like_headers: true }),
+  },
+  instruction_override_detector: {
+    label: "指令覆盖检测器",
+    description: "检测覆盖约束、索取隐藏内容与冒充权限的显性组合意图。",
+    rails: new Set(["input_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "意图结构扫描的最大窗口。", type: "integer", default: 12000 },
+      { key: "min_evidence", label: "最少证据", hint: "满足多少类意图证据才命中。", type: "integer", default: 2 },
+      { key: "max_token_gap", label: "最大邻近距离", hint: "操作与目标在文本中的最大邻近范围。", type: "integer", default: 12 },
+      { key: "detect_instruction_replacement", label: "检测指令替换", hint: "检测覆盖既有约束的结构。", type: "boolean", default: true },
+      { key: "detect_hidden_content_request", label: "检测隐藏内容索取", hint: "检测索取受保护内容的结构。", type: "boolean", default: true },
+      { key: "detect_authority_claim", label: "检测权限冒充", hint: "检测伪造高权限的结构。", type: "boolean", default: true },
+      { key: "detect_role_reassignment", label: "检测角色重设", hint: "仅在同时存在覆盖既有约束意图时命中。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, min_evidence: 2, max_token_gap: 12, detect_instruction_replacement: true, detect_hidden_content_request: true, detect_authority_claim: true, detect_role_reassignment: true }),
   },
 };
 const policyGraphStepByRail = new Map(
@@ -1815,6 +1867,33 @@ function renderPolicyGraphNodeEditor(node) {
       inputs,
       true,
     ));
+    editor.append(componentGrid);
+  } else if (isComponent && componentDefinitions[templateKey]?.fields) {
+    const componentGrid = document.createElement("div");
+    componentGrid.className = "form-grid";
+    const config = node.component?.config || {};
+    for (const field of componentDefinitions[templateKey].fields) {
+      const value = Object.hasOwn(config, field.key) ? config[field.key] : field.default;
+      const control = createTemplateParameterControl(field, value);
+      control.addEventListener("change", () => {
+        let nextValue;
+        if (field.type === "boolean") nextValue = control.checked;
+        else if (field.type === "integer") {
+          const parsed = Number.parseInt(control.value, 10);
+          nextValue = Number.isNaN(parsed) ? field.default : parsed;
+        } else if (field.type === "number") {
+          const parsed = Number.parseFloat(control.value);
+          nextValue = Number.isNaN(parsed) ? field.default : parsed;
+        } else nextValue = control.value;
+        updatePolicyComponentConfig(node.id, field.key, nextValue);
+      });
+      componentGrid.append(createPolicyGraphEditorField(
+        field.label,
+        field.hint,
+        control,
+        Boolean(field.fullWidth),
+      ));
+    }
     editor.append(componentGrid);
   }
   const dependencyHint = document.createElement("p");

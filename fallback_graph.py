@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 FALLBACK_INPUT_OR_ID = "__fallback_input_or"
 FALLBACK_LLM_REVIEW_ID = "__fallback_llm_review"
+FALLBACK_ENFORCEMENT_ID = "__fallback_input_enforcement"
 FALLBACK_LLM_REVIEW_PROMPT = (
     "Review the supplied text for safety risks indicated by the preceding "
     "detectors. Return whether the text should be treated as unsafe."
@@ -30,9 +31,10 @@ FALLBACK_LLM_REVIEW_PROMPT = (
 class FallbackDetectorSpec:
     """A future built-in detector's placement and controlling system switch.
 
-    No detector template is registered in P1 yet.  The catalogue records the
-    stable system-setting contract now; a detector joins the runtime graph only
-    after its template/evaluator is implemented and registered here.
+    The catalogue records the stable system-setting contract; a detector joins
+    the runtime graph only after its template/evaluator is implemented and
+    registered here.  P1 starts with the three local input detectors; all
+    remaining catalogue entries stay dormant until their later implementation.
     """
 
     setting_key: str
@@ -42,10 +44,10 @@ class FallbackDetectorSpec:
     config: Mapping[str, Any] = field(default_factory=dict)
 
 
-# P2 implementations will replace the placeholder template keys with actual
-# supported component templates.  Keeping them out of ``implemented`` avoids
-# emitting invalid nodes while still making the intended fallback composition
-# explicit and testable.
+# P1 starts with length anomaly, role-marker spoofing and explicit instruction
+# override.  The remaining entries are later-phase placeholders.  Keeping a
+# spec out of ``implemented`` avoids emitting invalid nodes while preserving
+# the intended fallback composition as an explicit contract.
 FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
     FallbackDetectorSpec("enable_encoded_payload_detector", "__fallback_encoded_payload", "input_rail", "encoded_payload_detector"),
     FallbackDetectorSpec("enable_length_anomaly_detector", "__fallback_length_anomaly", "input_rail", "length_anomaly_detector"),
@@ -62,10 +64,13 @@ FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
     FallbackDetectorSpec("enable_prompt_leakage_detector", "__fallback_prompt_leakage", "output_rail", "prompt_leakage_detector"),
 )
 
-# This deliberately remains empty until a detector has both a supported runtime
-# template and an evaluator.  Adding a detector here activates its catalogue
-# entry for all fallback snapshots subject to its system switch.
-IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = ()
+# A registered detector is only an observation node in fallback.  The terminal
+# LLM review or enforcement gate owns the default block/observe action.
+IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
+    FALLBACK_DETECTOR_CATALOGUE[1],
+    FALLBACK_DETECTOR_CATALOGUE[2],
+    FALLBACK_DETECTOR_CATALOGUE[4],
+)
 
 
 def build_fallback_runtime_config(
@@ -75,9 +80,8 @@ def build_fallback_runtime_config(
 ) -> NormalizedConfig:
     """Create the immutable fallback graph's normalized runtime configuration.
 
-    ``implemented_detectors`` is intentionally empty in P1.  An implementation
-    adds supported detector specs here; disabled system switches then keep that
-    detector node out of the graph.
+    ``implemented_detectors`` contains only completed detector implementations.
+    Disabled system switches keep those detector nodes out of the graph.
     """
 
     settings = dict(fallback_policy_settings)
@@ -103,7 +107,7 @@ def build_fallback_runtime_config(
             "gate": "any",
             "inputs": input_detector_ids,
             "__allow_empty_inputs": True,
-            "action_on_hit": "default",
+            "action_on_hit": "observe",
             "action_on_error": "default",
         }
     )
@@ -117,6 +121,19 @@ def build_fallback_runtime_config(
                 "depend_on": FALLBACK_INPUT_OR_ID,
                 "provider_id": str(settings.get("default_llm_provider", "") or ""),
                 "audit_prompt": FALLBACK_LLM_REVIEW_PROMPT,
+                "action_on_hit": "default",
+                "action_on_error": "default",
+            }
+        )
+    else:
+        input_nodes.append(
+            {
+                "__template_key": "logic_gate",
+                "rule_id": FALLBACK_ENFORCEMENT_ID,
+                "enabled": True,
+                "priority": 1000,
+                "gate": "all",
+                "inputs": [FALLBACK_INPUT_OR_ID],
                 "action_on_hit": "default",
                 "action_on_error": "default",
             }
@@ -156,7 +173,7 @@ def _detector_node(spec: FallbackDetectorSpec, settings: Mapping[str, Any]) -> d
         "rule_id": spec.node_id,
         "enabled": True,
         "priority": 100,
-        "action_on_hit": "default",
+        "action_on_hit": "observe",
         "action_on_error": "default",
     })
     return node

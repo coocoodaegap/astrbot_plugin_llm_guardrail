@@ -86,7 +86,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
 
-    def test_fallback_graph_has_fixed_steps_and_empty_detector_catalogue_is_valid(self):
+    def test_fallback_graph_has_fixed_steps_and_registered_detectors(self):
         manager = ConfigSnapshotManager({})
 
         config = manager.current.fallback_runtime_config
@@ -98,11 +98,20 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertTrue(config.rails["output_rail"].enabled)
         self.assertEqual(
             [node.node_id for node in config.rails["input_rail"].nodes],
-            ["__fallback_input_or"],
+            [
+                "__fallback_length_anomaly",
+                "__fallback_role_marker_spoofing",
+                "__fallback_instruction_override",
+                "__fallback_input_or",
+                "__fallback_input_enforcement",
+            ],
         )
         self.assertTrue(config.rails["input_rail"].nodes[0].enabled)
         self.assertTrue(config.rails["input_rail"].nodes[0].valid)
-        self.assertFalse(config.rails["input_rail"].nodes[0].config["inputs"])
+        self.assertEqual(
+            config.rails["input_rail"].nodes[3].config["inputs"],
+            ["__fallback_length_anomaly", "__fallback_role_marker_spoofing", "__fallback_instruction_override"],
+        )
         self.assertNotIn("inputs is empty", " ".join(config.warnings))
         self.assertFalse(config.rails["output_rail"].nodes)
 
@@ -122,11 +131,26 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(
             [node.node_id for node in old_snapshot.fallback_runtime_config.rails["input_rail"].nodes],
-            ["__fallback_input_or"],
+            [
+                "__fallback_length_anomaly",
+                "__fallback_role_marker_spoofing",
+                "__fallback_instruction_override",
+                "__fallback_input_or",
+                "__fallback_input_enforcement",
+            ],
         )
         nodes = result.snapshot.fallback_runtime_config.rails["input_rail"].nodes
-        self.assertEqual([node.node_id for node in nodes], ["__fallback_input_or", "__fallback_llm_review"])
-        self.assertEqual(nodes[1].depend_on, "__fallback_input_or")
+        self.assertEqual(
+            [node.node_id for node in nodes],
+            [
+                "__fallback_length_anomaly",
+                "__fallback_role_marker_spoofing",
+                "__fallback_instruction_override",
+                "__fallback_input_or",
+                "__fallback_llm_review",
+            ],
+        )
+        self.assertEqual(nodes[4].depend_on, "__fallback_input_or")
 
     def test_fallback_detector_registry_honors_its_system_switch(self):
         detector = FallbackDetectorSpec(
@@ -148,11 +172,11 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         self.assertEqual(
             [node.node_id for node in disabled.rails["input_rail"].nodes],
-            ["__fallback_input_or"],
+            ["__fallback_input_or", "__fallback_input_enforcement"],
         )
         self.assertEqual(
             [node.node_id for node in enabled.rails["input_rail"].nodes],
-            ["__fallback_test_detector", "__fallback_input_or"],
+            ["__fallback_test_detector", "__fallback_input_or", "__fallback_input_enforcement"],
         )
         self.assertEqual(
             enabled.rails["input_rail"].nodes[1].config["inputs"],
@@ -353,7 +377,13 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(fallback_policy_id, SYSTEM_FALLBACK_POLICY_ID)
         self.assertEqual(
             [node.node_id for node in fallback_config.rails["input_rail"].nodes],
-            ["__fallback_input_or"],
+            [
+                "__fallback_length_anomaly",
+                "__fallback_role_marker_spoofing",
+                "__fallback_instruction_override",
+                "__fallback_input_or",
+                "__fallback_input_enforcement",
+            ],
         )
 
     def test_missing_usable_policy_graph_selects_system_fallback(self):
@@ -366,7 +396,13 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertIs(config, snapshot.fallback_runtime_config)
         self.assertEqual(
             [node.node_id for node in config.rails["input_rail"].nodes],
-            ["__fallback_input_or"],
+            [
+                "__fallback_length_anomaly",
+                "__fallback_role_marker_spoofing",
+                "__fallback_instruction_override",
+                "__fallback_input_or",
+                "__fallback_input_enforcement",
+            ],
         )
 
     def test_publish_rejects_dependency_target_that_normalizes_as_unavailable(self):

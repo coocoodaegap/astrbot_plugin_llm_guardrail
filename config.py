@@ -44,6 +44,13 @@ RULE_TEMPLATES: dict[str, set[str]] = {
 COMPONENT_TEMPLATES: dict[str, set[str]] = {
     rail_name: {"logic_gate"} for rail_name in RAIL_NAMES
 }
+COMPONENT_TEMPLATES["input_rail"].update(
+    {
+        "length_anomaly_detector",
+        "role_marker_spoofing_detector",
+        "instruction_override_detector",
+    }
+)
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     rail_name: RULE_TEMPLATES[rail_name] | COMPONENT_TEMPLATES[rail_name]
     for rail_name in RAIL_NAMES
@@ -350,6 +357,12 @@ def _normalize_node(
             enabled = False
     elif template_key == "logic_gate":
         _normalize_logic_gate(rule_id, config, warnings)
+    elif template_key in {
+        "length_anomaly_detector",
+        "role_marker_spoofing_detector",
+        "instruction_override_detector",
+    }:
+        _normalize_input_detector(rule_id, template_key, config, warnings)
     elif template_key == "replace_input":
         config["replacement_text"] = _as_str(config.get("replacement_text", ""))
     elif template_key == "strengthen_prompt":
@@ -373,6 +386,9 @@ def _normalize_node(
         "logic_gate",
         "rag_judge",
         "llm_review",
+        "length_anomaly_detector",
+        "role_marker_spoofing_detector",
+        "instruction_override_detector",
     }:
         raw_action = raw_action_on_hit
         action = raw_action
@@ -481,6 +497,96 @@ def _normalize_logic_gate(
     config["inputs"] = _clean_string_list(config.get("inputs", []))
     config["invert"] = _as_bool(config.get("invert", False), False)
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _normalize_input_detector(
+    rule_id: str, template_key: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize P1 policy-local, deterministic input detector parameters."""
+
+    config["scan_limit_chars"] = _bounded_int(
+        config.get("scan_limit_chars"), 12000, 256, 100000, rule_id, "scan_limit_chars", warnings
+    )
+    if template_key == "length_anomaly_detector":
+        config["hard_max_chars"] = _bounded_int(
+            config.get("hard_max_chars"), 8000, 1, 1000000, rule_id, "hard_max_chars", warnings
+        )
+        config["max_code_fence_pairs"] = _bounded_int(
+            config.get("max_code_fence_pairs"), 6, 1, 1000, rule_id, "max_code_fence_pairs", warnings
+        )
+        config["max_separator_run"] = _bounded_int(
+            config.get("max_separator_run"), 48, 4, 10000, rule_id, "max_separator_run", warnings
+        )
+        config["max_repeat_run"] = _bounded_int(
+            config.get("max_repeat_run"), 80, 4, 10000, rule_id, "max_repeat_run", warnings
+        )
+        config["duplicate_line_min_chars"] = _bounded_int(
+            config.get("duplicate_line_min_chars"), 16, 1, 10000, rule_id, "duplicate_line_min_chars", warnings
+        )
+        config["duplicate_line_min_count"] = _bounded_int(
+            config.get("duplicate_line_min_count"), 4, 2, 10000, rule_id, "duplicate_line_min_count", warnings
+        )
+        config["duplicate_line_ratio"] = _bounded_float(
+            config.get("duplicate_line_ratio"), 0.66, 0.01, 1.0, rule_id, "duplicate_line_ratio", warnings
+        )
+        config["min_invisible_chars"] = _bounded_int(
+            config.get("min_invisible_chars"), 8, 1, 100000, rule_id, "min_invisible_chars", warnings
+        )
+        config["max_invisible_ratio"] = _bounded_float(
+            config.get("max_invisible_ratio"), 0.04, 0.0, 1.0, rule_id, "max_invisible_ratio", warnings
+        )
+        config["min_structural_signals"] = _bounded_int(
+            config.get("min_structural_signals"), 2, 1, 5, rule_id, "min_structural_signals", warnings
+        )
+    elif template_key == "role_marker_spoofing_detector":
+        config["min_indicators"] = _bounded_int(
+            config.get("min_indicators"), 2, 1, 5, rule_id, "min_indicators", warnings
+        )
+        config["max_lines"] = _bounded_int(
+            config.get("max_lines"), 160, 1, 10000, rule_id, "max_lines", warnings
+        )
+        for key, default in {
+            "detect_serialized_message_envelope": True,
+            "detect_tool_invocation_envelope": True,
+            "detect_reserved_delimiters": True,
+            "detect_log_like_headers": True,
+        }.items():
+            config[key] = _as_bool(config.get(key), default)
+    else:
+        config["min_evidence"] = _bounded_int(
+            config.get("min_evidence"), 2, 1, 4, rule_id, "min_evidence", warnings
+        )
+        config["max_token_gap"] = _bounded_int(
+            config.get("max_token_gap"), 12, 1, 100, rule_id, "max_token_gap", warnings
+        )
+        for key, default in {
+            "detect_instruction_replacement": True,
+            "detect_hidden_content_request": True,
+            "detect_authority_claim": True,
+            "detect_role_reassignment": True,
+        }.items():
+            config[key] = _as_bool(config.get(key), default)
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _bounded_int(
+    value: Any, default: int, minimum: int, maximum: int, rule_id: str, key: str, warnings: list[str]
+) -> int:
+    normalized = _as_int(value, default)
+    if normalized < minimum or normalized > maximum:
+        warnings.append(f"{rule_id}.{key} is outside {minimum}..{maximum}; fallback to {default}")
+        return default
+    return normalized
+
+
+def _bounded_float(
+    value: Any, default: float, minimum: float, maximum: float, rule_id: str, key: str, warnings: list[str]
+) -> float:
+    normalized = _as_float(value, default)
+    if normalized < minimum or normalized > maximum:
+        warnings.append(f"{rule_id}.{key} is outside {minimum}..{maximum}; fallback to {default}")
+        return default
+    return normalized
 
 
 def _normalize_strengthen_prompt(
