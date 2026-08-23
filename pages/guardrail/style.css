@@ -2586,6 +2586,10 @@ button:disabled {
     text-align: center;
 }
 
+#rule-empty-state[hidden] {
+    display: none !important;
+}
+
 .placeholder {
     max-width: 720px;
     padding: 30px;
@@ -3271,9 +3275,14 @@ textarea,
 }
 
 .floating-action-group {
+    position: fixed;
+    z-index: 40;
     top: auto;
     right: 30px;
     bottom: 28px;
+    left: auto;
+    inset: auto 30px 28px auto;
+    margin: 0;
     transform: none;
     gap: 7px;
     min-width: 172px;
@@ -3293,6 +3302,21 @@ textarea,
     font-size: .59rem;
     font-weight: 700;
     letter-spacing: .15em;
+}
+
+.floating-save-status {
+    margin: 0;
+    padding: 7px 8px;
+    color: #d9fff0;
+    background: #12362c;
+    border: 1px solid #3d826c;
+    border-radius: 5px;
+    font-size: .74rem;
+    line-height: 1.45;
+}
+
+.floating-save-status:empty {
+    display: none;
 }
 
 .floating-action-group button {
@@ -3397,20 +3421,22 @@ textarea,
 @keyframes guardrail-panel-enter {
     from {
         opacity: 0;
-        transform: translateY(5px);
     }
 
     to {
         opacity: 1;
-        transform: translateY(0);
     }
 }
 
-@media (min-width: 1640px) {
+/* Only move the action rail outside the content when there is room for it.
+   Below this width, a deterministic bottom-right position is less surprising. */
+@media (min-width: 1760px) {
     .floating-action-group {
         top: 50%;
-        right: max(28px, calc((100vw - var(--page-max)) / 2 - 172px));
+        right: calc((100vw - var(--page-max)) / 2 - 190px);
         bottom: auto;
+        left: auto;
+        inset: 50% calc((100vw - var(--page-max)) / 2 - 190px) auto auto;
         transform: translateY(-50%);
     }
 }
@@ -3569,8 +3595,11 @@ textarea,
     }
 
     .floating-action-group {
+        top: auto;
         right: 14px;
         bottom: 14px;
+        left: auto;
+        inset: auto 14px 14px auto;
         min-width: min(184px, calc(100vw - 28px));
     }
 

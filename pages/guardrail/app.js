@@ -5,10 +5,12 @@ const status = $("status"),
   diagnostics = $("diagnostics"),
   systemSettings = $("system-settings"),
   systemSettingsStatus = $("system-settings-status"),
+  systemSaveStatus = $("system-save-status"),
   saveSystemSettings = $("save-system-settings"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
+  ruleSaveStatus = $("rule-save-status"),
   policyListPanel = $("policy-list-panel"),
   policyDetailPanel = $("policy-detail-panel"),
   policyList = $("policy-list"),
@@ -27,6 +29,7 @@ const status = $("status"),
   policyGraphStatus = $("policy-graph-status"),
   policyGraphEditor = $("policy-graph-editor"),
   policyGraphEditorStatus = $("policy-graph-editor-status"),
+  policySaveStatus = $("policy-save-status"),
   savePolicy = $("save-policy"),
   policyUmoList = $("policy-umo-list"),
   setDefaultPolicy = $("set-default-policy"),
@@ -114,6 +117,7 @@ const status = $("status"),
   accessDurationMinutes = $("access-duration-minutes"),
   accessReasonCode = $("access-reason-code"),
   accessFormStatus = $("access-form-status"),
+  accessSaveStatus = $("access-save-status"),
   saveAccessDecision = $("save-access-decision"),
   resetAccessForm = $("reset-access-form"),
   accessRecordCount = $("access-record-count"),
@@ -2419,6 +2423,7 @@ function renderPolicyDetail(policy) {
   policyNameInput.value = policy.name || "";
   policyDescriptionInput.value = policy.description || "";
   policyBasicStatus.textContent = "";
+  policySaveStatus.textContent = "";
   const bindings = Array.isArray(policy.bindings) ? policy.bindings : [];
   const components = Array.isArray(policy.components) ? policy.components : [];
   policyDetailMeta.replaceChildren(
@@ -2543,7 +2548,7 @@ async function saveCurrentPolicy(makeDefault = false, clearDefault = false) {
   }
   renderPolicyList();
   renderPolicyDetail(policy);
-  policySessionStatus.textContent = makeDefault
+  policySaveStatus.textContent = makeDefault
     ? "默认策略已更新。"
     : clearDefault
       ? "已取消默认策略；未匹配到合法策略的请求将使用系统 fallback 图。"
@@ -2652,6 +2657,7 @@ async function savePolicyAsCopy() {
   savePolicyAsDialog.close();
   renderPolicyList();
   showPolicyDetail(id);
+  policySaveStatus.textContent = `策略“${name}”已另存为并保存。`;
 }
 function requestPolicyDeletion() {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
@@ -2886,7 +2892,8 @@ async function persistRuleLibrary(successMessage) {
       return false;
     }
     currentRevision = result.revision;
-    ruleStatus.textContent = successMessage(result.revision);
+    ruleStatus.textContent = "";
+    ruleSaveStatus.textContent = successMessage(result.revision);
     return true;
   } catch (error) {
     ruleStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
@@ -3214,9 +3221,10 @@ async function saveAccessDecisionMutation() {
       if (result?.conflict) await refreshAccessControl();
       return;
     }
-    accessFormStatus.textContent = "访问决定已保存。";
+    accessFormStatus.textContent = "";
     resetAccessFormState();
     await refreshAccessControl();
+    accessSaveStatus.textContent = "访问决定已保存。";
   } catch (error) {
     accessFormStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
@@ -4063,8 +4071,10 @@ saveSystemSettings.addEventListener("click", async () => {
       systemSettingsStatus.textContent = result.detail || result.error || "保存失败。";
       return;
     }
-    systemSettingsStatus.textContent = `系统设置已发布为 revision ${result.revision}。`;
+    const successMessage = `系统设置已发布为 revision ${result.revision}。`;
+    systemSettingsStatus.textContent = "";
     await refresh();
+    systemSaveStatus.textContent = successMessage;
   } catch (error) {
     systemSettingsStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {

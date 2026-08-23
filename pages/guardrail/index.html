@@ -78,6 +78,7 @@
         </section>
       </div>
       <div class="floating-action-group" aria-label="规则库操作">
+        <p id="rule-save-status" class="floating-save-status" role="status" aria-live="polite"></p>
         <button id="new-rule" type="button" class="button-secondary">新建规则</button>
         <button id="save-rule-library" type="button">保存所有打开规则</button>
       </div>
@@ -195,6 +196,7 @@
           <p id="policy-session-status" class="form-status" aria-live="polite"></p>
         </section>
         <div class="floating-action-group" aria-label="策略操作">
+          <p id="policy-save-status" class="floating-save-status" role="status" aria-live="polite"></p>
           <button id="save-policy" type="button">保存策略</button>
           <button id="save-policy-as" type="button" class="button-secondary">另存为</button>
           <button id="delete-policy" type="button" class="danger-button">删除策略</button>
@@ -287,6 +289,7 @@
           </div>
           <p class="access-form-note">赦免只跳过访问控制，不会跳过输入、请求或输出 Rail。原因只保存固定的脱敏代码。</p>
           <div class="floating-action-group access-form-actions" aria-label="访问控制操作">
+            <p id="access-save-status" class="floating-save-status" role="status" aria-live="polite"></p>
             <button id="save-access-decision" type="button">保存访问决定</button>
             <button id="reset-access-form" type="button" class="button-secondary">新建决定</button>
           </div>
@@ -448,6 +451,7 @@
       <p id="system-settings-status" class="muted" aria-live="polite"></p>
       <div id="system-settings" class="system-settings" aria-live="polite"></div>
       <div class="floating-action-group" aria-label="系统设置操作">
+        <p id="system-save-status" class="floating-save-status" role="status" aria-live="polite"></p>
         <button id="save-system-settings" type="button">保存系统设置</button>
       </div>
     </section>
