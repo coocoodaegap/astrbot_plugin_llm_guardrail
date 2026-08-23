@@ -345,12 +345,16 @@
           </div>
           <p id="rag-experience-detail-status" class="muted" aria-live="polite"></p>
           <div class="floating-action-group rag-experience-actions" aria-label="RAG 经验操作">
-            <button id="delete-rag-experience" type="button" class="button-danger">删除本地记录</button>
+            <button id="delete-rag-experience" type="button" class="danger-button">删除本地记录</button>
             <button id="save-rag-experience" type="button" class="button-secondary">保存编辑</button>
             <button id="upload-rag-experience" type="button">写入原知识库</button>
           </div>
         </section>
       </section>
+      <dialog id="confirm-rag-experience-delete-dialog" class="confirm-rule-delete-dialog" aria-labelledby="confirm-rag-experience-delete-title">
+        <div><p class="eyebrow">DELETE LOCAL EXPERIENCE</p><h3 id="confirm-rag-experience-delete-title">确认删除本地经验记录？</h3><p id="confirm-rag-experience-delete-message" class="danger-notice"></p></div>
+        <div class="dialog-actions"><button id="cancel-rag-experience-delete" type="button" class="button-secondary">取消</button><button id="confirm-rag-experience-delete" type="button" class="danger-button">删除本地记录</button></div>
+      </dialog>
     </section>
     <section class="tab-panel" id="panel-session" role="tabpanel" aria-labelledby="tab-session" data-panel="session"
       hidden>

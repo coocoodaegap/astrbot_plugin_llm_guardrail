@@ -241,6 +241,9 @@ class GuardrailPagesUiTests(unittest.TestCase):
             "upload-rag-experience",
             "delete-rag-experience",
             "back-to-rag-experience-list",
+            "confirm-rag-experience-delete-dialog",
+            "cancel-rag-experience-delete",
+            "confirm-rag-experience-delete",
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn("最高分证据所属的原知识库", html)
@@ -255,8 +258,9 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function refreshRagExperiences", javascript)
         self.assertIn("function setRagExperienceView(showDetail)", javascript)
         self.assertIn("function hasRagExperienceSource", javascript)
+        self.assertIn("function requestRagExperienceDeletion", javascript)
         self.assertIn("请先保存编辑，再写入原知识库", javascript)
-        self.assertIn("不会删除任何 AstrBot 知识库文档", javascript)
+        self.assertIn("任何 AstrBot 知识库文档都不会被删除", javascript)
         stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
         self.assertIn(".session-policy-layout", stylesheet)
         self.assertIn(".session-policy-detail-panel[hidden]", stylesheet)

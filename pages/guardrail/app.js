@@ -159,7 +159,11 @@ const status = $("status"),
   saveRagExperience = $("save-rag-experience"),
   deleteRagExperience = $("delete-rag-experience"),
   uploadRagExperience = $("upload-rag-experience"),
-  backToRagExperienceList = $("back-to-rag-experience-list");
+  backToRagExperienceList = $("back-to-rag-experience-list"),
+  confirmRagExperienceDeleteDialog = $("confirm-rag-experience-delete-dialog"),
+  confirmRagExperienceDeleteMessage = $("confirm-rag-experience-delete-message"),
+  cancelRagExperienceDelete = $("cancel-rag-experience-delete"),
+  confirmRagExperienceDelete = $("confirm-rag-experience-delete");
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
@@ -3803,10 +3807,15 @@ async function uploadCurrentRagExperience() {
     setRagExperienceMutationBusy(false);
   }
 }
+function requestRagExperienceDeletion() {
+  const record = selectedRagExperience;
+  if (!record || ragExperienceMutationInFlight) return;
+  confirmRagExperienceDeleteMessage.textContent = `将删除“${record.title || "未命名经验"}”这条本地记录；任何 AstrBot 知识库文档都不会被删除。`;
+  confirmRagExperienceDeleteDialog.showModal();
+}
 async function deleteCurrentRagExperience() {
   const record = selectedRagExperience;
   if (!bridge || ragExperienceMutationInFlight || !record) return;
-  if (!window.confirm("确定删除这条本地 RAG 经验记录吗？这不会删除任何 AstrBot 知识库文档。")) return;
   setRagExperienceMutationBusy(true);
   try {
     const result = await bridge.apiPost("delete_rag_experience", {
@@ -4104,6 +4113,13 @@ uploadRagExperience.addEventListener("click", () => {
   void uploadCurrentRagExperience();
 });
 deleteRagExperience.addEventListener("click", () => {
+  requestRagExperienceDeletion();
+});
+cancelRagExperienceDelete.addEventListener("click", () => {
+  confirmRagExperienceDeleteDialog.close();
+});
+confirmRagExperienceDelete.addEventListener("click", () => {
+  confirmRagExperienceDeleteDialog.close();
   void deleteCurrentRagExperience();
 });
 resetAccessFormState();

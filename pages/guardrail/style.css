@@ -1801,10 +1801,6 @@ textarea {
     resize: vertical
 }
 
-.rag-experience-actions {
-    min-width: 176px
-}
-
 @media(max-width:760px) {
     .rag-experience-heading,
     .rag-experience-controls,
