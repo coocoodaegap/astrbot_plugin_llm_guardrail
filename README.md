@@ -6,7 +6,7 @@
 
 ### 输入检查
 
-- 在 `on_waiting_llm_request(priority=1000)` 执行，优先检查触发本次 LLM 请求的用户输入。
+- 在 `on_waiting_llm_request` 执行，优先检查触发本次 LLM 请求的用户输入。
 - 支持关键词、正则和逻辑门规则。
 - 支持观察、拦截和净化输入。
 - 输入被拦截时可返回占位提示，也可尽量静默阻断。
@@ -15,7 +15,7 @@
 
 ### 请求模型路由
 
-- 在 `on_waiting_llm_request(priority=-1000)` 执行，晚于输入检查且早于 AstrBot 构造 LLM 请求。
+- 在 `on_waiting_llm_request` 执行，晚于输入检查且早于 AstrBot 构造 LLM 请求。
 - 支持根据前置规则结果切换当前 UMO 的聊天 Provider。
 - 支持 first-hit 路由策略。
 - 响应阶段会尝试恢复切换前的 Provider。
@@ -59,17 +59,18 @@
 ## 当前链路
 
 ```text
-on_waiting_llm_request（priority=1000）：
-  Step 1 输入检查
+on_waiting_llm_request(priority=1_000_000):
+  访问控制
 
-on_waiting_llm_request（priority=-1000）：
+on_waiting_llm_request(priority=-1_000_000):
+  Step 1 输入检查
   Step 2 请求模型路由
 
-on_llm_request：
+on_llm_request(priority=-1_000_000):
   Step 3 最终请求检查
   Step 4 提示词加固
 
-on_llm_response：
+on_llm_response(priority=1_000_000):
   Step 5 输出检查
 ```
 
