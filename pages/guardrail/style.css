@@ -3067,19 +3067,39 @@ textarea,
 }
 
 .umo-tag {
+    min-height: 28px;
+    padding-top: 4px;
+    padding-bottom: 4px;
     color: #c8f4e5;
     background: #15382f;
     border: 1px solid #397866;
     font-family: var(--font-display);
+    line-height: 1.1;
 }
 
 .umo-remove-button {
+    display: grid;
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+    min-height: 18px;
+    flex: 0 0 18px;
+    place-items: center;
+    padding: 0;
     color: #bdebd9;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    box-shadow: none;
+    font-size: 1rem;
+    line-height: 1;
 }
 
 .umo-remove-button:hover {
     color: #071410;
     background: var(--signal);
+    box-shadow: none;
+    transform: none;
 }
 
 .access-layout,

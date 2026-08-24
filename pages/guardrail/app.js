@@ -951,6 +951,7 @@ function buildPolicyGraphModel(policy) {
       enabled: nodeData?.enabled !== false && stepEnabled,
       bindingEnabled: nodeData?.enabled !== false,
       stepEnabled,
+      isComponent: kind === "component",
       isLogicGate: component?.component_type === "logic_gate",
       isDirty: policyGraphState.dirtyNodeIds.has(String(id || "")),
       issues: [],
@@ -1407,8 +1408,8 @@ function drawPolicyGraphArrow(context, source, target, edge) {
   else if (edge.mode === "not_matched") context.setLineDash([7, 5]);
   else if (edge.mode === "executed") context.setLineDash([2, 5]);
   else context.setLineDash([]);
-  const sourceRadius = source.isLogicGate ? 10 : 8;
-  const targetRadius = target.isLogicGate ? 10 : 8;
+  const sourceRadius = source.isComponent ? 10 : 8;
+  const targetRadius = target.isComponent ? 10 : 8;
   const deltaY = target.y - source.y;
   const direction = Math.sign(deltaY) || 1;
   const startX = source.x;
@@ -1602,7 +1603,7 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
   const glow = graphGlowForNode(node);
   context.save();
   context.strokeStyle = color;
-  context.lineWidth = node.isLogicGate ? 2.6 : 2.2;
+  context.lineWidth = node.isComponent ? 2.6 : 2.2;
   if (glow) {
     context.shadowColor = glow;
     context.shadowBlur = node.state === "unavailable"
@@ -1625,7 +1626,7 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
     }
     context.closePath();
     context.stroke();
-  } else if (node.isLogicGate) {
+  } else if (node.isComponent) {
     const radius = 8;
     context.beginPath();
     context.moveTo(node.x, node.y - radius);
@@ -1634,11 +1635,15 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
     context.lineTo(node.x - radius, node.y);
     context.closePath();
     context.stroke();
-    context.shadowBlur = 0;
-    context.fillStyle = color;
-    context.font = "600 9px \"Cascadia Code\", \"JetBrains Mono\", monospace";
-    const symbol = node.component?.config?.gate === "any" ? "∨" : "∧";
-    context.fillText(symbol, node.x - 3, node.y + 3);
+    if (node.isLogicGate) {
+      context.shadowBlur = 0;
+      context.fillStyle = color;
+      context.font = "600 9px \"Cascadia Code\", \"JetBrains Mono\", monospace";
+      const symbol = node.component?.config?.gate === "any" ? "∨" : "∧";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(symbol, node.x, node.y + .5);
+    }
   } else {
     context.beginPath();
     context.arc(node.x, node.y, 7, 0, Math.PI * 2);
@@ -1677,6 +1682,8 @@ function drawPolicyGraphNode(context, node, timestamp, reducedMotion) {
         ? policyGraphPalette.warningLabel
       : policyGraphPalette.label;
   context.font = "500 11px \"Cascadia Code\", \"JetBrains Mono\", monospace";
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
   context.fillText(node.id || "未命名", node.x + 11, node.y + 4);
   context.restore();
 }
