@@ -180,6 +180,7 @@ const systemSettingHintOverrides = {
 const templates = [
     "plain_keywords",
     "regex_pattern",
+    "contains_request_user_id",
     "rag_judge",
     "llm_review",
     "replace_input",
@@ -195,7 +196,7 @@ const templates = [
   ],
   errorActions = ["default", "discard", "record", "retry_generation", "block"];
 const ruleActionDescriptions = {
-  default: "使用系统默认动作（default）",
+  default: "沿用策略默认动作（default）",
   observe: "仅记录命中，不改变请求或输出（observe）",
   block: "阻断本轮请求或输出（block）",
   sanitize: "净化命中内容后继续（sanitize）",
@@ -210,8 +211,7 @@ const templateDescriptions = {
   length_anomaly_detector: "长度异常检测器",
   role_marker_spoofing_detector: "角色标记伪造检测器",
   instruction_override_detector: "指令覆盖检测器",
-  contains_request_user_id: "请求者 ID 包含检测器",
-  contains_at_user_id: "@ 用户 ID 包含检测器",
+  contains_request_user_id: "请求者 ID 匹配规则",
   contains_forward: "转发消息检测器",
   contains_file: "文件消息检测器",
   contains_image: "图片消息检测器",
@@ -226,6 +226,7 @@ const templateDescriptions = {
 const templateCreationDetails = {
   plain_keywords: "按关键词或短语匹配输入、请求或输出内容。",
   regex_pattern: "使用正则表达式匹配结构化或复杂文本模式。",
+  contains_request_user_id: "判断当前请求发送者 ID 是否命中可复用的用户 ID 列表；不替代访问控制。",
   rag_judge: "以知识库检索结果为证据进行风险裁判。",
   llm_review: "调用旁路 LLM 对内容进行结构化审查。",
   replace_input: "将输入中的指定文本替换为安全内容。",
@@ -242,6 +243,9 @@ const templateParameterFields = {
   regex_pattern: [
     { key: "pattern", label: "正则模式", hint: "用于匹配文本的正则表达式；保存后由后端编译校验。", type: "text", fullWidth: true },
     { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用；留空会移除命中片段。", type: "string" },
+  ],
+  contains_request_user_id: [
+    { key: "user_ids", label: "用户 ID 列表", hint: "每行一个请求者 ID；空列表不能保存为可用规则。", type: "list", default: [], fullWidth: true },
   ],
   rag_judge: [
     { key: "knowledge_bases", label: "知识库列表", hint: "每行一个 AstrBot 知识库名称；至少填写一个。", type: "list", default: [], fullWidth: true },
@@ -780,7 +784,7 @@ const policyGraphSteps = [
   { rail: "output_rail", step: 5, label: "Step 5 · 输出检查", color: "#79b9ff", fill: "#132940" },
 ];
 const supportedTemplatesByRail = {
-  input_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
+  input_rail: new Set(["plain_keywords", "regex_pattern", "contains_request_user_id", "rag_judge", "llm_review"]),
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
   prompt_rail: new Set(["replace_input", "strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
@@ -841,26 +845,6 @@ const componentDefinitions = {
       { key: "detect_role_reassignment", label: "检测角色重设", hint: "仅在同时存在覆盖既有约束意图时命中。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, min_evidence: 2, max_token_gap: 12, detect_instruction_replacement: true, detect_hidden_content_request: true, detect_authority_claim: true, detect_role_reassignment: true }),
-  },
-  contains_request_user_id: {
-    label: "请求者 ID 包含检测器",
-    description: "当前消息发送者 ID 位于给定列表时命中；不读取会话历史。",
-    rails: new Set(["input_rail"]),
-    fields: [
-      { key: "user_ids", label: "用户 ID 列表", hint: "每行一个请求者 ID；空列表不能保存为可用元件。", type: "list", default: [], fullWidth: true },
-    ],
-    defaultConfig: () => ({ user_ids: [] }),
-    defaultAction: "observe",
-  },
-  contains_at_user_id: {
-    label: "@ 用户 ID 包含检测器",
-    description: "消息链中任一 @ 段的目标 ID 位于给定列表时命中。",
-    rails: new Set(["input_rail"]),
-    fields: [
-      { key: "user_ids", label: "用户 ID 列表", hint: "每行一个被 @ 的用户 ID；空列表不能保存为可用元件。", type: "list", default: [], fullWidth: true },
-    ],
-    defaultConfig: () => ({ user_ids: [] }),
-    defaultAction: "observe",
   },
   contains_forward: {
     label: "转发消息检测器",
@@ -1771,7 +1755,7 @@ function createPolicyStepControl(type, value, options) {
     const select = document.createElement("select");
     const inherit = document.createElement("option");
     inherit.value = "";
-    inherit.textContent = "沿用系统设置";
+    inherit.textContent = "沿用系统设置（default）";
     select.append(inherit);
     populateRuleActionOptions(select, options || []);
     ensureOption(select, String(value ?? ""));
@@ -1781,7 +1765,7 @@ function createPolicyStepControl(type, value, options) {
   const input = document.createElement("input");
   input.type = type === "number" ? "number" : "text";
   input.value = String(value ?? "");
-  input.placeholder = "沿用系统设置";
+  input.placeholder = "沿用系统设置（default）";
   return input;
 }
 function getPolicyGraphDraft(policy = null) {

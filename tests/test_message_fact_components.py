@@ -16,6 +16,8 @@ from policy_library import (
     PolicyComponent,
     PolicyDefinition,
     PolicyLibrary,
+    PolicyRuleBinding,
+    RuleDefinition,
     compile_policy_to_runtime_config,
 )
 from rails import GuardrailPipeline
@@ -92,12 +94,6 @@ def _all_fact_rules(action_on_hit="default"):
             "user_ids": ["request-user"],
             "action_on_hit": action_on_hit,
         },
-        {
-            "__template_key": "contains_at_user_id",
-            "rule_id": "mentioned",
-            "user_ids": ["at-user"],
-            "action_on_hit": action_on_hit,
-        },
         *[
             {
                 "__template_key": template_key,
@@ -129,7 +125,7 @@ class MessageFactComponentTests(unittest.TestCase):
             ]
         )
 
-    def test_all_seven_components_use_only_safe_message_facts(self):
+    def test_one_rule_and_five_components_use_only_safe_message_facts(self):
         snapshot_result = AstrBotAdapter().get_message_fact_snapshot(self.event)
         snapshot = snapshot_result.metadata["message_fact_snapshot"]
         config = normalize_config({"input_rail": {"rule_list": _all_fact_rules()}})
@@ -141,19 +137,25 @@ class MessageFactComponentTests(unittest.TestCase):
         }
 
         self.assertTrue(all(result.matched for result in results.values()))
-        self.assertTrue(all(result.action_on_hit == "observe" for result in results.values()))
+        self.assertEqual(results["contains_request_user_id"].action_on_hit, "default")
+        self.assertTrue(
+            all(
+                result.action_on_hit == "observe"
+                for template_key, result in results.items()
+                if template_key != "contains_request_user_id"
+            )
+        )
         self.assertEqual(results["contains_image"].metadata["component_indices"], [4])
         self.assertEqual(results["contains_record"].metadata["message_kind"], "record")
         self.assertEqual(results["contains_request_user_id"].metadata["matched_user_ids"], ["***user"])
-        self.assertEqual(results["contains_at_user_id"].metadata["matched_user_ids"], ["***user"])
 
-    def test_empty_user_list_disables_only_the_affected_component(self):
+    def test_empty_user_list_disables_only_the_affected_rule(self):
         config = normalize_config(
             {
                 "input_rail": {
                     "rule_list": [
                         {
-                            "__template_key": "contains_at_user_id",
+                            "__template_key": "contains_request_user_id",
                             "rule_id": "empty_ids",
                             "user_ids": [],
                         },
@@ -170,6 +172,39 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertTrue(image.enabled)
         self.assertTrue(image.valid)
         self.assertEqual(image.config["action_on_hit"], "observe")
+
+    def test_request_user_rule_compiles_with_its_configured_default_action(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition(
+                    "trusted_requester",
+                    "contains_request_user_id",
+                    {"user_ids": ["request-user"]},
+                    default_action_on_hit="block",
+                ),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "requester_observe",
+                    "Requester observe",
+                    bindings=(
+                        PolicyRuleBinding("trusted_requester", "input_rail"),
+                    ),
+                ),
+            ),
+            active_policy_id="requester_observe",
+        )
+
+        raw, validation = compile_policy_to_runtime_config({}, library)
+        context = asyncio.run(
+            GuardrailPipeline(normalize_config(raw)).run_message_input(self.event)
+        )
+
+        self.assertTrue(validation.valid)
+        self.assertTrue(context.results["trusted_requester"].matched)
+        self.assertEqual(context.results["trusted_requester"].action_on_hit, "block")
+        self.assertTrue(context.input_blocked)
 
     def test_missing_message_chain_degrades_to_empty_facts(self):
         class BrokenChainEvent:

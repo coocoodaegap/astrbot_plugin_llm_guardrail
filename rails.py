@@ -38,7 +38,7 @@ try:
         skipped_node_result,
     )
     from .components import (
-        MESSAGE_FACT_COMPONENT_TEMPLATES,
+        MESSAGE_FACT_TEMPLATES,
         evaluate_input_detector,
         evaluate_logic_gate,
         evaluate_message_fact_component,
@@ -80,7 +80,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         skipped_node_result,
     )
     from components import (
-        MESSAGE_FACT_COMPONENT_TEMPLATES,
+        MESSAGE_FACT_TEMPLATES,
         evaluate_input_detector,
         evaluate_logic_gate,
         evaluate_message_fact_component,
@@ -436,7 +436,7 @@ class GuardrailPipeline:
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.original_input, max_chars)
         if message_facts is None and any(
-            rule.enabled and rule.valid and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+            rule.enabled and rule.valid and rule.template_key in MESSAGE_FACT_TEMPLATES
             for rule in rail.rules
         ):
             adapter_result = self.adapter.get_message_fact_snapshot(context.event)
@@ -446,7 +446,7 @@ class GuardrailPipeline:
             message_facts is not None
             and any(
                 rule.enabled and rule.valid
-                and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                and rule.template_key in MESSAGE_FACT_TEMPLATES
                 for rule in rail.rules
             )
             and not message_facts.message_chain_available
@@ -463,7 +463,7 @@ class GuardrailPipeline:
                 "instruction_override_detector",
             }:
                 result = evaluate_input_detector(rule, ctx, context.original_input)
-            elif rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES:
+            elif rule.template_key in MESSAGE_FACT_TEMPLATES:
                 if message_facts is None:
                     raise RuntimeError("message fact snapshot is unavailable")
                 result = evaluate_message_fact_component(rule, message_facts)

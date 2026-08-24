@@ -166,6 +166,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function saveCurrentPolicy", javascript)
         self.assertIn("function createPolicy", javascript)
         self.assertIn("componentDefinitions", javascript)
+        self.assertIn('"contains_request_user_id"', javascript)
+        self.assertNotIn('contains_request_user_id: {\n    label:', javascript)
         self.assertIn("function openPolicyComponentCreation", javascript)
         self.assertIn("function createPolicyComponent", javascript)
         self.assertIn("function updatePolicyComponentConfig", javascript)
@@ -178,7 +180,6 @@ class GuardrailPagesUiTests(unittest.TestCase):
             "detect_log_like_headers",
             "detect_role_reassignment",
             "contains_request_user_id",
-            "contains_at_user_id",
             "contains_forward",
             "contains_file",
             "contains_image",

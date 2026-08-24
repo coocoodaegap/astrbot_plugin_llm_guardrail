@@ -62,15 +62,18 @@ INPUT_DETECTOR_TEMPLATES = {
     "instruction_override_detector",
 }
 
-MESSAGE_FACT_COMPONENT_TEMPLATES = {
+MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
-    "contains_at_user_id",
     "contains_forward",
     "contains_file",
     "contains_image",
     "contains_record",
     "contains_video",
 }
+
+MESSAGE_FACT_COMPONENT_TEMPLATES = (
+    MESSAGE_FACT_TEMPLATES - {"contains_request_user_id"}
+)
 
 _MESSAGE_KIND_BY_TEMPLATE = {
     "contains_forward": "forward",
@@ -107,7 +110,7 @@ def evaluate_input_detector(
 def evaluate_message_fact_component(
     node: NormalizedNode, snapshot: MessageFactSnapshot,
 ):
-    """Evaluate one P2 message fact component from an adapter snapshot only."""
+    """Evaluate one P2 message fact template from an adapter snapshot only."""
 
     payload: dict[str, object] = {
         "component": node.template_key,
@@ -124,24 +127,6 @@ def evaluate_message_fact_component(
                 "matched_user_ids": [_redact_identifier(request_id)] if matched else [],
                 "component_count": 0,
                 "component_indices": [],
-            }
-        )
-    elif node.template_key == "contains_at_user_id":
-        configured = {str(value).strip() for value in node.config.get("user_ids", [])}
-        matches = [
-            component
-            for component in snapshot.components
-            if component.kind == "at" and component.target_id in configured
-        ]
-        matched = bool(matches)
-        payload.update(
-            {
-                "configured_user_count": len(configured),
-                "matched_user_ids": sorted(
-                    {_redact_identifier(component.target_id) for component in matches}
-                ),
-                "component_count": len(matches),
-                "component_indices": [component.index for component in matches],
             }
         )
     else:
