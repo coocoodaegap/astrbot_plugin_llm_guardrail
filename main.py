@@ -112,14 +112,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             len(self.normalized_config.warnings),
         )
 
-    @filter.event_message_type(
-        filter.EventMessageType.ALL,
-        priority=GUARDRAIL_MESSAGE_INPUT_PRIORITY,
-    )
+    @filter.on_waiting_llm_request(priority=GUARDRAIL_MESSAGE_INPUT_PRIORITY)
     async def guardrail_message_input(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """Run user input checks before other ordinary message handlers."""
+        """Run input access control and Step 1 before the LLM request is built."""
         if not self or not getattr(self, "normalized_config", None):
             return
         lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
@@ -144,14 +141,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 await lease.release()
         self._log_context_summary("message_input", rail_context)
 
-    @filter.event_message_type(
-        filter.EventMessageType.ALL,
-        priority=GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
-    )
+    @filter.on_waiting_llm_request(priority=GUARDRAIL_MESSAGE_ROUTE_PRIORITY)
     async def guardrail_message_route(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """Run route policy late in message handling, before AstrBot builds the LLM request."""
+        """Run Step 2 routing before AstrBot builds the LLM request."""
         if not self or not getattr(self, "normalized_config", None):
             return
         lease = self.adapter.get_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, None)

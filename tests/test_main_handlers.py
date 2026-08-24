@@ -24,6 +24,7 @@ def _install_astrbot_stubs():
         EventMessageType=types.SimpleNamespace(ALL="ALL"),
         PermissionType=types.SimpleNamespace(ADMIN="ADMIN"),
         event_message_type=passthrough_decorator,
+        on_waiting_llm_request=passthrough_decorator,
         on_llm_request=passthrough_decorator,
         on_llm_response=passthrough_decorator,
         permission_type=passthrough_decorator,
