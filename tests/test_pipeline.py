@@ -1276,9 +1276,10 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(context.results["source"].matched)
         self.assertTrue(context.results["gate"].matched)
 
-    def test_message_skips_outline_only_non_text_events(self):
+    def test_access_control_blocks_outline_only_non_text_events(self):
         cfg = normalize_config(
             {
+                "access_control": {"blacklist_message": "access blocked"},
                 "input_rail": {
                     "rule_list": [
                         {
@@ -1306,6 +1307,74 @@ class PipelineTests(unittest.TestCase):
             )
             event = FakeEvent("")
             event.message_outline = "[ComponentType.Poke]"
+            context = await GuardrailPipeline(
+                cfg,
+                access_control=service,
+            ).run_message_input(event)
+            return context, event
+
+        ctx, event = asyncio.run(run_case())
+
+        self.assertTrue(ctx.input_blocked)
+        self.assertFalse(ctx.results)
+        self.assertTrue(event.stopped)
+        self.assertEqual(event.result, {"plain": "access blocked"})
+
+    def test_component_outline_enters_input_rail_without_wake_text(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "record_marker",
+                            "keywords": ["[ComponentType.Record]"],
+                            "action_on_hit": "block",
+                        }
+                    ]
+                }
+            }
+        )
+        event = FakeEvent("")
+        event.message_outline = "[ComponentType.Record]"
+        event.is_at_or_wake_command = False
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+
+        self.assertEqual(ctx.original_input, "[ComponentType.Record]")
+        self.assertTrue(ctx.results["record_marker"].matched)
+        self.assertTrue(ctx.input_blocked)
+        self.assertTrue(event.stopped)
+
+    def test_empty_message_skips_access_control_and_input_rail(self):
+        cfg = normalize_config(
+            {
+                "access_control": {"blacklist_message": "access blocked"},
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "never_runs",
+                            "keywords": ["anything"],
+                            "action_on_hit": "block",
+                        }
+                    ]
+                },
+            }
+        )
+
+        async def run_case():
+            service = AccessControlService(
+                MemoryStateStore(),
+                principal_locks=PrincipalLockManager(),
+            )
+            await service.set_manual_decision(
+                make_principal_identity("platform", "sender"),
+                DECISION_BAN,
+                -1,
+                REASON_MANUAL_BAN,
+            )
+            event = FakeEvent("")
             context = await GuardrailPipeline(
                 cfg,
                 access_control=service,

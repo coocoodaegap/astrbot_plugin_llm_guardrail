@@ -145,31 +145,22 @@ class GuardrailPipeline:
     async def run_message_input(self, event: Any) -> RailContext:
         context = self._make_request_context(event, request=None)
         input_rail = self.config.rails["input_rail"]
-        has_input_text = self.adapter.has_input_text(event)
-        has_message_fact_component = any(
-            rule.enabled and rule.valid
-            and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
-            for rule in input_rail.rules
-        )
-        # Preserve the empty/non-text ignore path unless a policy explicitly
-        # opts into a P2 message-fact component.  Media-only messages are
-        # meaningful input to those components even without Plain text.
-        if not has_input_text and not has_message_fact_component:
+        ingress_result = self.adapter.get_message_ingress_profile(event)
+        context.warnings.extend(ingress_result.warnings)
+        ingress = ingress_result.metadata["message_ingress_profile"]
+        context.original_input = ingress.text
+        context.current_input = ingress.text
+        # A truly empty message has no content or component representation and
+        # cannot be meaningfully governed.  Every non-empty input, including
+        # component-only messages, continues to access control and Step 1.
+        if not ingress.has_content:
             self._store_context(event, context)
             return context
-        # Access control is the input gate: it must run before deciding whether
-        # this event is eligible for Rail 1.  Otherwise an adapter-specific
-        # wake-up flag could accidentally create a bypass for a banned person.
+        # Access control is the outermost gate for every non-empty input.
         if not await self._admit_access_control(event, context):
             self._store_context(event, context)
             return context
-        is_candidate = (
-            self.adapter.is_llm_candidate_event(event)
-            if has_input_text
-            else self.adapter.is_message_fact_candidate_event(event)
-        )
-        if not is_candidate:
-            # A permitted non-wakeup message still has no Rail workload.
+        if self.adapter.is_command_event(event):
             self._store_context(event, context)
             return context
         if not await self._admit_session(
@@ -181,11 +172,7 @@ class GuardrailPipeline:
             return context
 
         if input_rail.enabled:
-            await self._run_input_rail(
-                input_rail,
-                context,
-                fact_only=not has_input_text,
-            )
+            await self._run_input_rail(input_rail, context, ingress.message_facts)
 
         self._store_context(event, context)
         return context
@@ -416,29 +403,31 @@ class GuardrailPipeline:
         self,
         rail: NormalizedRail,
         context: RailContext,
-        *,
-        fact_only: bool = False,
+        message_facts: Any | None = None,
     ) -> None:
         await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
         current_text = clip_text(context.original_input, max_chars)
-        message_facts = None
-        if any(
+        if message_facts is None and any(
             rule.enabled and rule.valid and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
             for rule in rail.rules
         ):
             adapter_result = self.adapter.get_message_fact_snapshot(context.event)
             context.warnings.extend(adapter_result.warnings)
             message_facts = adapter_result.metadata.get("message_fact_snapshot")
+        elif (
+            message_facts is not None
+            and any(
+                rule.enabled and rule.valid
+                and rule.template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                for rule in rail.rules
+            )
+            and not message_facts.message_chain_available
+        ):
+            context.warnings.append("message component chain is unavailable")
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
-            if (
-                fact_only
-                and rule.template_key not in MESSAGE_FACT_COMPONENT_TEMPLATES
-                and rule.template_key != "logic_gate"
-            ):
-                return skipped_node_result(rule, "no_text_input")
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key in {

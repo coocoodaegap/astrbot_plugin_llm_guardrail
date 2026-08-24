@@ -212,6 +212,18 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertEqual([component.kind for component in snapshot.components], ["image", "forward"])
         self.assertFalse(result.warnings)
 
+    def test_component_only_chain_gets_safe_rail_input_marker(self):
+        event = _FactEvent([_component("Record")])
+        event.message_str = ""
+        event.message_outline = ""
+
+        result = AstrBotAdapter().get_message_ingress_profile(event)
+        profile = result.metadata["message_ingress_profile"]
+
+        self.assertTrue(profile.has_content)
+        self.assertEqual(profile.source, "component_markers")
+        self.assertEqual(profile.text, "[ComponentType.Record]")
+
     def test_policy_component_compiles_and_observes_in_pipeline(self):
         library = PolicyLibrary(
             policies=(

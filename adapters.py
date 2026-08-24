@@ -39,6 +39,17 @@ class MessageFactSnapshot:
     components: tuple[MessageComponentFact, ...]
     message_chain_available: bool
     outline_available: bool
+    raw_component_count: int = 0
+
+
+@dataclass(frozen=True)
+class MessageIngressProfile:
+    """One safe, immutable representation used to admit an input event."""
+
+    text: str
+    has_content: bool
+    source: str
+    message_facts: MessageFactSnapshot
 
 
 class AstrBotAdapter:
@@ -68,7 +79,9 @@ class AstrBotAdapter:
             return None
         return platform_id, sender_id
 
-    def get_message_fact_snapshot(self, event: Any) -> AdapterResult:
+    def get_message_fact_snapshot(
+        self, event: Any, *, warn_if_unavailable: bool = True
+    ) -> AdapterResult:
         """Return P2 message facts without exposing raw platform objects.
 
         The official message chain is preferred.  A missing or malformed chain
@@ -111,7 +124,7 @@ class AstrBotAdapter:
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 warnings.append("message outline is unavailable")
 
-        if not available:
+        if not available and warn_if_unavailable:
             warnings.append("message component chain is unavailable")
         elif unknown_component_types:
             warnings.append(
@@ -127,8 +140,58 @@ class AstrBotAdapter:
             components=tuple(facts),
             message_chain_available=available,
             outline_available=outline_available,
+            raw_component_count=len(components),
         )
         return AdapterResult(True, warnings, {"message_fact_snapshot": snapshot})
+
+    def get_message_ingress_profile(self, event: Any) -> AdapterResult:
+        """Classify input once without treating an outline as user prose.
+
+        The profile's ``text`` keeps normal text or AstrBot's safe outline when
+        available.  A component-only chain without either gets canonical
+        ``[ComponentType.*]`` markers, so it remains an input to Rail 1 but
+        never exposes attachment paths, URLs, or media content.
+        """
+
+        fact_result = self.get_message_fact_snapshot(
+            event, warn_if_unavailable=False
+        )
+        snapshot = fact_result.metadata["message_fact_snapshot"]
+        text = self.get_event_text(event).strip()
+        if text:
+            profile = MessageIngressProfile(text, True, "event_text", snapshot)
+        else:
+            plain_text = "".join(
+                component.plain_text
+                for component in snapshot.components
+                if component.kind == "plain" and component.plain_text
+            ).strip()
+            if plain_text:
+                profile = MessageIngressProfile(
+                    plain_text, True, "plain_component", snapshot
+                )
+            else:
+                markers = self._safe_component_markers(snapshot)
+                profile = MessageIngressProfile(
+                    markers,
+                    bool(markers),
+                    "component_markers" if markers else "empty",
+                    snapshot,
+                )
+        fact_result.metadata["message_ingress_profile"] = profile
+        return fact_result
+
+    @staticmethod
+    def _safe_component_markers(snapshot: MessageFactSnapshot) -> str:
+        """Represent non-text components without exposing their payloads."""
+
+        markers = [
+            f"[ComponentType.{component.kind.title()}]"
+            for component in snapshot.components[:32]
+        ]
+        if not markers and snapshot.raw_component_count:
+            markers.append("[ComponentType.Unknown]")
+        return " ".join(markers)
 
     @staticmethod
     def _event_message_components(
@@ -187,6 +250,9 @@ class AstrBotAdapter:
             "image": "image",
             "record": "record",
             "video": "video",
+            "poke": "poke",
+            "face": "face",
+            "reply": "reply",
         }
         values = [type(component).__name__]
         if isinstance(component, Mapping):
@@ -363,18 +429,6 @@ class AstrBotAdapter:
         if self.is_command_event(event):
             return False
         if not self.has_input_text(event):
-            return False
-        return self.is_message_fact_candidate_event(event)
-
-    def is_message_fact_candidate_event(self, event: Any) -> bool:
-        """Whether a non-text message may enter Step 1 fact components.
-
-        This retains the normal command and wake-up checks while deliberately
-        not requiring a Plain text component.  It is used only when a policy
-        explicitly contains a message-fact component.
-        """
-
-        if self.is_command_event(event):
             return False
         marker = getattr(event, "is_at_or_wake_command", None)
         if marker is not None:
