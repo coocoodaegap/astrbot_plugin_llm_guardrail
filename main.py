@@ -21,8 +21,10 @@ try:
     from .adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA
     from .config import resolve_session_scope
     from .constants import (
-        GUARDRAIL_MESSAGE_INPUT_PRIORITY,
-        GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
+        GUARDRAIL_ACCESS_GATE_PRIORITY,
+        GUARDRAIL_REQUEST_PRIORITY,
+        GUARDRAIL_RESPONSE_PRIORITY,
+        GUARDRAIL_WAITING_RAILS_PRIORITY,
         INTERNAL_MARKER,
     )
     from .rails import GuardrailPipeline
@@ -37,8 +39,10 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA
     from config import resolve_session_scope
     from constants import (
-        GUARDRAIL_MESSAGE_INPUT_PRIORITY,
-        GUARDRAIL_MESSAGE_ROUTE_PRIORITY,
+        GUARDRAIL_ACCESS_GATE_PRIORITY,
+        GUARDRAIL_REQUEST_PRIORITY,
+        GUARDRAIL_RESPONSE_PRIORITY,
+        GUARDRAIL_WAITING_RAILS_PRIORITY,
         INTERNAL_MARKER,
     )
     from rails import GuardrailPipeline
@@ -52,9 +56,10 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
 PLUGIN_VERSION = "0.2.0"
-MESSAGE_STAGE_LOCK_EXTRA = "_llm_guardrail_message_stage_lock"
 POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
+ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
+ACCESS_GATE_BLOCKED_EXTRA = "_llm_guardrail_access_gate_blocked"
 
 _PHASE_RAILS: dict[str, tuple[str, ...]] = {
     "message_input": ("input_rail",),
@@ -112,65 +117,77 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             len(self.normalized_config.warnings),
         )
 
-    @filter.on_waiting_llm_request(priority=GUARDRAIL_MESSAGE_INPUT_PRIORITY)
-    async def guardrail_message_input(
+    @filter.on_waiting_llm_request(priority=GUARDRAIL_ACCESS_GATE_PRIORITY)
+    async def guardrail_access_gate(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """Run input access control and Step 1 before the LLM request is built."""
+        """Stop banned principals before other waiting-stage plugin work."""
         if not self or not getattr(self, "normalized_config", None):
             return
-        lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
-        lease_result = self.adapter.set_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, lease)
-        keep_message_stage_lock = False
         try:
-            rail_context = await self._pipeline_for_event(event).run_message_input(event)
-            await self._record_session_policy_state(
-                "message_input",
-                event,
-                rail_context,
-            )
-            keep_message_stage_lock = (
-                lease_result.success
-                and self._should_keep_message_stage_lock(rail_context)
-            )
+            async with self.umo_locks.hold(self.adapter.get_umo(event)):
+                rail_context = await self._pipeline_for_event(event).run_access_gate(event)
+                self.adapter.set_event_extra(event, ACCESS_GATE_CHECKED_EXTRA, True)
+                if rail_context.input_blocked:
+                    self.adapter.set_event_extra(event, ACCESS_GATE_BLOCKED_EXTRA, True)
+                    await self._record_session_policy_state(
+                        "message_input",
+                        event,
+                        rail_context,
+                    )
         except Exception as exc:
-            logger.error("[LLMGuardrail] message input pipeline failed: %s", exc, exc_info=True)
+            logger.error("[LLMGuardrail] access gate failed: %s", exc, exc_info=True)
             return
-        finally:
-            if not keep_message_stage_lock:
-                await lease.release()
-        self._log_context_summary("message_input", rail_context)
+        if rail_context.input_blocked:
+            self._log_context_summary("access_gate", rail_context)
 
-    @filter.on_waiting_llm_request(priority=GUARDRAIL_MESSAGE_ROUTE_PRIORITY)
-    async def guardrail_message_route(
+    @filter.on_waiting_llm_request(priority=GUARDRAIL_WAITING_RAILS_PRIORITY)
+    async def guardrail_waiting_rails(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """Run Step 2 routing before AstrBot builds the LLM request."""
+        """Run Rail 1 then Rail 2 in one low-priority waiting-stage critical section."""
         if not self or not getattr(self, "normalized_config", None):
             return
-        lease = self.adapter.get_event_extra(event, MESSAGE_STAGE_LOCK_EXTRA, None)
-        owns_lease = False
-        if lease is None or getattr(lease, "released", False):
-            lease = await self.umo_locks.acquire(self.adapter.get_umo(event))
-            owns_lease = True
-        try:
-            rail_context = await self._pipeline_for_event(event).run_message_route(event)
-            await self._record_session_policy_state(
-                "message_route",
-                event,
-                rail_context,
-            )
-        except Exception as exc:
-            logger.error("[LLMGuardrail] message route pipeline failed: %s", exc, exc_info=True)
+        if self.adapter.get_event_extra(event, ACCESS_GATE_BLOCKED_EXTRA, False):
             return
-        finally:
-            if owns_lease or lease is not None:
-                releaser = getattr(lease, "release", None)
-                if callable(releaser):
-                    await releaser()
-        self._log_context_summary("message_route", rail_context)
+        try:
+            async with self.umo_locks.hold(self.adapter.get_umo(event)):
+                pipeline = self._pipeline_for_event(event)
+                access_already_checked = bool(
+                    self.adapter.get_event_extra(
+                        event,
+                        ACCESS_GATE_CHECKED_EXTRA,
+                        False,
+                    )
+                )
+                input_context = await pipeline.run_message_input(
+                    event,
+                    access_already_checked=access_already_checked,
+                )
+                await self._record_session_policy_state(
+                    "message_input",
+                    event,
+                    input_context,
+                )
+                if input_context.input_blocked:
+                    rail_context = input_context
+                else:
+                    rail_context = await pipeline.run_message_route(
+                        event,
+                        access_already_checked=access_already_checked,
+                        llm_request_confirmed=True,
+                    )
+                    await self._record_session_policy_state(
+                        "message_route",
+                        event,
+                        rail_context,
+                    )
+        except Exception as exc:
+            logger.error("[LLMGuardrail] waiting rails failed: %s", exc, exc_info=True)
+            return
+        self._log_context_summary("waiting_rails", rail_context)
 
-    @filter.on_llm_request()
+    @filter.on_llm_request(priority=GUARDRAIL_REQUEST_PRIORITY)
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest, *_args, **_kwargs
     ) -> None:
@@ -193,7 +210,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return
         self._log_context_summary("request", rail_context)
 
-    @filter.on_llm_response()
+    @filter.on_llm_response(priority=GUARDRAIL_RESPONSE_PRIORITY)
     async def on_llm_response(
         self, event: AstrMessageEvent, resp: LLMResponse, *_args, **_kwargs
     ) -> None:
@@ -586,15 +603,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         system_prompt = str(getattr(req, "system_prompt", "") or "")
         prompt = str(getattr(req, "prompt", "") or "")
         return INTERNAL_MARKER in system_prompt or INTERNAL_MARKER in prompt
-
-    @staticmethod
-    def _should_keep_message_stage_lock(rail_context) -> bool:
-        decision = rail_context.session_scope_decision
-        return (
-            decision is not None
-            and decision.action == "run"
-            and not rail_context.input_blocked
-        )
 
     def _log_context_summary(self, phase: str, rail_context) -> None:
         if not self.normalized_config.debug_settings["logging"]:

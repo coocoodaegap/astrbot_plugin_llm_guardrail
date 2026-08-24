@@ -59,10 +59,10 @@ class MainHandlerSignatureTests(unittest.TestCase):
         plugin = module.LlmGuardrailPlugin(object(), {"enabled": False})
 
         asyncio.run(
-            plugin.guardrail_message_input(object(), object(), object(), object())
+            plugin.guardrail_access_gate(object(), object(), object(), object())
         )
         asyncio.run(
-            plugin.guardrail_message_route(object(), object(), object(), object())
+            plugin.guardrail_waiting_rails(object(), object(), object(), object())
         )
         asyncio.run(
             plugin.on_llm_request(object(), object(), object())
@@ -76,12 +76,12 @@ class MainHandlerSignatureTests(unittest.TestCase):
         module = importlib.import_module("main")
 
         asyncio.run(
-            module.LlmGuardrailPlugin.guardrail_message_input(
+            module.LlmGuardrailPlugin.guardrail_access_gate(
                 None, object(), object(), object(), object()
             )
         )
         asyncio.run(
-            module.LlmGuardrailPlugin.guardrail_message_route(
+            module.LlmGuardrailPlugin.guardrail_waiting_rails(
                 None, object(), object(), object(), object()
             )
         )

@@ -88,10 +88,13 @@ class _Pipeline:
     def __init__(self, contexts):
         self.contexts = contexts
 
-    async def run_message_input(self, _event):
+    async def run_access_gate(self, _event):
         return self.contexts["message_input"]
 
-    async def run_message_route(self, _event):
+    async def run_message_input(self, _event, **_kwargs):
+        return self.contexts["message_input"]
+
+    async def run_message_route(self, _event, **_kwargs):
         return self.contexts["message_route"]
 
     async def run_request(self, _event, _request):
@@ -305,8 +308,8 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
         plugin._pipeline_for_event = lambda _event: pipeline
 
         async def run_case():
-            await plugin.guardrail_message_input(event)
-            await plugin.guardrail_message_route(event)
+            await plugin.guardrail_access_gate(event)
+            await plugin.guardrail_waiting_rails(event)
             await plugin.on_llm_request(event, request)
             await plugin.on_llm_response(event, _Response())
             before_chunk = await plugin.session_policy_state.get_detail(

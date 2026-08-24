@@ -228,7 +228,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(third.stopped)
         self.assertEqual(third.result, {"plain": "access blocked"})
 
-    def test_manual_ban_runs_before_candidate_and_input_rail_checks(self):
+    def test_manual_ban_access_gate_prevents_later_input_rail(self):
         async def run_case():
             config = normalize_config(
                 {
@@ -264,20 +264,26 @@ class PipelineTests(unittest.TestCase):
                 "aiocqhttp",
             )
             event.is_at_or_wake_command = False
-            context = await GuardrailPipeline(
+            pipeline = GuardrailPipeline(
                 config,
                 access_control=service,
-            ).run_message_input(event)
-            return saved, context, event
+            )
+            gate_context = await pipeline.run_access_gate(event)
+            input_context = await pipeline.run_message_input(
+                event,
+                access_already_checked=True,
+            )
+            return saved, gate_context, input_context, event
 
-        saved, context, event = asyncio.run(run_case())
+        saved, gate_context, input_context, event = asyncio.run(run_case())
 
         self.assertTrue(saved.success)
-        self.assertTrue(context.input_blocked)
+        self.assertTrue(gate_context.input_blocked)
+        self.assertTrue(input_context.input_blocked)
         self.assertTrue(event.stopped)
         self.assertEqual(event.result, {"plain": "access blocked"})
-        self.assertNotIn("must_not_run", context.results)
-        self.assertEqual(context.terminal_action["source_kind"], "access_control")
+        self.assertNotIn("must_not_run", input_context.results)
+        self.assertEqual(gate_context.terminal_action["source_kind"], "access_control")
 
     def test_pardon_allows_input_rails_but_prevents_automatic_counting(self):
         cfg = normalize_config(

@@ -137,12 +137,25 @@ class GuardrailPipeline:
         self.scheduler = NodeScheduler(self.graph)
 
     async def run_message(self, event: Any) -> RailContext:
-        context = await self.run_message_input(event)
+        context = await self.run_access_gate(event)
         if context.input_blocked:
             return context
-        return await self.run_message_route(event)
+        context = await self.run_message_input(event, access_already_checked=True)
+        if context.input_blocked:
+            return context
+        return await self.run_message_route(event, access_already_checked=True)
 
-    async def run_message_input(self, event: Any) -> RailContext:
+    async def run_access_gate(self, event: Any) -> RailContext:
+        """Apply principal access control independently of every Rail."""
+
+        context = self._make_request_context(event, request=None)
+        await self._admit_access_control(event, context)
+        self._store_context(event, context)
+        return context
+
+    async def run_message_input(
+        self, event: Any, *, access_already_checked: bool = False
+    ) -> RailContext:
         context = self._make_request_context(event, request=None)
         input_rail = self.config.rails["input_rail"]
         ingress_result = self.adapter.get_message_ingress_profile(event)
@@ -150,14 +163,15 @@ class GuardrailPipeline:
         ingress = ingress_result.metadata["message_ingress_profile"]
         context.original_input = ingress.text
         context.current_input = ingress.text
-        # A truly empty message has no content or component representation and
-        # cannot be meaningfully governed.  Every non-empty input, including
-        # component-only messages, continues to access control and Step 1.
-        if not ingress.has_content:
+        # A framework may continue dispatching lower-priority waiting hooks
+        # after Access Gate has stopped the event.  Never let Rail 1 run in
+        # that case.
+        if context.input_blocked:
             self._store_context(event, context)
             return context
-        # Access control is the outermost gate for every non-empty input.
-        if not await self._admit_access_control(event, context):
+        # A truly empty message has no content or component representation and
+        # cannot be meaningfully governed by Rail 1.
+        if not ingress.has_content:
             self._store_context(event, context)
             return context
         if self.adapter.is_command_event(event):
@@ -166,7 +180,7 @@ class GuardrailPipeline:
         if not await self._admit_session(
             event,
             context,
-            check_access_control=False,
+            check_access_control=not access_already_checked,
         ):
             self._store_context(event, context)
             return context
@@ -177,12 +191,25 @@ class GuardrailPipeline:
         self._store_context(event, context)
         return context
 
-    async def run_message_route(self, event: Any) -> RailContext:
+    async def run_message_route(
+        self,
+        event: Any,
+        *,
+        access_already_checked: bool = False,
+        llm_request_confirmed: bool = False,
+    ) -> RailContext:
         context = self._make_request_context(event, request=None)
-        if not self.adapter.is_llm_candidate_event(event):
+        if context.input_blocked:
             self._store_context(event, context)
             return context
-        if not await self._admit_session(event, context):
+        if not llm_request_confirmed and not self.adapter.is_llm_candidate_event(event):
+            self._store_context(event, context)
+            return context
+        if not await self._admit_session(
+            event,
+            context,
+            check_access_control=not access_already_checked,
+        ):
             self._store_context(event, context)
             return context
         if context.input_blocked:
