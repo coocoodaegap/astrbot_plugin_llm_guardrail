@@ -82,6 +82,13 @@ _MESSAGE_KIND_BY_TEMPLATE = {
     "contains_video": "video",
 }
 _HTTP_LINK_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+", re.IGNORECASE)
+_BARE_DOMAIN_RE = re.compile(
+    r"(?<![\w@./:-])"
+    r"(?P<host>(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"(?:com|net|org|edu|gov|io|co|cn|xyz|app|dev|ai|me|info))"
+    r"(?=$|[^\w-])",
+    re.IGNORECASE,
+)
 
 
 def evaluate_input_detector(
@@ -149,18 +156,12 @@ def evaluate_message_fact_component(
         )
     elif node.template_key == "contains_link":
         links = [
-            (component.index, value)
+            (component.index, hostname)
             for component in snapshot.components
             if component.kind == "plain"
-            for value in _HTTP_LINK_RE.findall(component.plain_text)
+            for hostname in _link_hostnames(component.plain_text)
         ]
-        hosts = sorted(
-            {
-                hostname.casefold()
-                for _, value in links
-                if (hostname := urlsplit(value).hostname)
-            }
-        )
+        hosts = sorted({hostname for _, hostname in links})
         matched = bool(links)
         payload.update(
             {
@@ -174,7 +175,14 @@ def evaluate_message_fact_component(
         if not message_kind:
             raise ValueError(f"unsupported message fact component {node.template_key}")
         matches = [
-            component for component in snapshot.components if component.kind == message_kind
+            component
+            for component in snapshot.components
+            if component.kind == message_kind
+            or (
+                message_kind == "video"
+                and component.kind == "file"
+                and component.media_category == "video"
+            )
         ]
         matched = bool(matches)
         payload.update(
@@ -199,6 +207,21 @@ def _redact_identifier(value: str) -> str:
     if not normalized:
         return ""
     return f"***{normalized[-4:]}" if len(normalized) > 4 else "***"
+
+
+def _link_hostnames(text: str) -> list[str]:
+    """Return safe host summaries for HTTP(S) URLs and common bare domains."""
+
+    hosts = [
+        hostname.casefold()
+        for value in _HTTP_LINK_RE.findall(text or "")
+        if (hostname := urlsplit(value).hostname)
+    ]
+    hosts.extend(
+        match.group("host").casefold()
+        for match in _BARE_DOMAIN_RE.finditer(text or "")
+    )
+    return hosts
 
 
 def _evaluate_length_anomaly(config: dict, text: str) -> tuple[bool, dict]:

@@ -893,14 +893,14 @@ const componentDefinitions = {
   },
   contains_video: {
     label: "视频消息检测器",
-    description: "检测 AstrBot Video 消息段；不下载或分析视频。",
+    description: "检测 AstrBot Video 段，或带视频 MIME／扩展名的 File 段；不下载或分析视频。",
     rails: new Set(["input_rail"]),
     defaultConfig: () => ({}),
     defaultAction: "observe",
   },
   contains_link: {
     label: "链接消息检测器",
-    description: "检测 Plain 段中的 HTTP(S) 链接；不访问 URL。",
+    description: "检测 Plain 段中的 HTTP(S) 链接或常见裸域名；不访问 URL。",
     rails: new Set(["input_rail"]),
     defaultConfig: () => ({}),
     defaultAction: "observe",

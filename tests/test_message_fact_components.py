@@ -212,6 +212,56 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertEqual([component.kind for component in snapshot.components], ["image", "forward"])
         self.assertFalse(result.warnings)
 
+    def test_file_with_video_metadata_matches_file_and_video_components(self):
+        event = _FactEvent([_component("File", name="clip.mp4")])
+        snapshot = AstrBotAdapter().get_message_fact_snapshot(event).metadata[
+            "message_fact_snapshot"
+        ]
+        config = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {"__template_key": "contains_file", "rule_id": "file"},
+                        {"__template_key": "contains_video", "rule_id": "video"},
+                    ]
+                }
+            }
+        )
+
+        results = {
+            node.template_key: evaluate_message_fact_component(node, snapshot)
+            for node in config.rails["input_rail"].nodes
+        }
+
+        self.assertEqual(snapshot.components[0].media_category, "video")
+        self.assertTrue(results["contains_file"].matched)
+        self.assertTrue(results["contains_video"].matched)
+
+    def test_link_component_matches_common_bare_domains_not_email_or_dotted_words(self):
+        config = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {"__template_key": "contains_link", "rule_id": "link"}
+                    ]
+                }
+            }
+        )
+        node = config.rails["input_rail"].nodes[0]
+        linked = AstrBotAdapter().get_message_fact_snapshot(
+            _FactEvent([_component("Plain", text="请访问 baidu.com。")])
+        ).metadata["message_fact_snapshot"]
+        ordinary = AstrBotAdapter().get_message_fact_snapshot(
+            _FactEvent([_component("Plain", text="model.version 或 name@example.com")])
+        ).metadata["message_fact_snapshot"]
+
+        linked_result = evaluate_message_fact_component(node, linked)
+        ordinary_result = evaluate_message_fact_component(node, ordinary)
+
+        self.assertTrue(linked_result.matched)
+        self.assertEqual(linked_result.metadata["host_summaries"], ["baidu.com"])
+        self.assertFalse(ordinary_result.matched)
+
     def test_component_only_chain_gets_safe_rail_input_marker(self):
         event = _FactEvent([_component("Record")])
         event.message_str = ""

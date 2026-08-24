@@ -12,6 +12,9 @@ from typing import Any
 
 ROUTE_TARGET_PROVIDER_EXTRA = "_llm_guardrail_target_provider"
 ROUTE_SELECTED_PROVIDER_EXTRA = "selected_provider"
+VIDEO_FILE_EXTENSIONS = frozenset(
+    {"3gp", "avi", "flv", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "webm", "wmv"}
+)
 
 
 @dataclass
@@ -29,6 +32,7 @@ class MessageComponentFact:
     kind: str
     target_id: str = ""
     plain_text: str = ""
+    media_category: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,18 +104,22 @@ class AstrBotAdapter:
                 continue
             target_id = ""
             plain_text = ""
+            media_category = ""
             if kind == "at":
                 target_id = self._message_component_value(
                     component, ("qq", "user_id", "target")
                 )
             elif kind == "plain":
                 plain_text = self._message_component_value(component, ("text",))
+            elif kind == "file":
+                media_category = self._message_component_media_category(component)
             facts.append(
                 MessageComponentFact(
                     index=index,
                     kind=kind,
                     target_id=target_id,
                     plain_text=plain_text,
+                    media_category=media_category,
                 )
             )
 
@@ -292,6 +300,35 @@ class AstrBotAdapter:
                 if value_text:
                     return value_text
         return ""
+
+    @classmethod
+    def _message_component_media_category(cls, component: Any) -> str:
+        """Classify File metadata without retaining paths, names, or URLs."""
+
+        mime_type = cls._message_component_value(
+            component, ("mime_type", "mime", "content_type")
+        ).casefold()
+        if mime_type.startswith("video/"):
+            return "video"
+        for attribute_name in ("name", "filename", "file_name", "file", "url"):
+            suffix = cls._safe_file_suffix(
+                cls._message_component_value(component, (attribute_name,))
+            )
+            if suffix in VIDEO_FILE_EXTENSIONS:
+                return "video"
+        return ""
+
+    @staticmethod
+    def _safe_file_suffix(value: str) -> str:
+        """Extract a short extension locally, never expose the source value."""
+
+        filename = str(value or "").split("?", 1)[0].split("#", 1)[0]
+        filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+        _stem, dot, suffix = filename.rpartition(".")
+        normalized = suffix.casefold()
+        if not dot or not re.fullmatch(r"[a-z0-9]{1,10}", normalized):
+            return ""
+        return normalized
 
     @classmethod
     def _event_platform_name(cls, event: Any) -> str:
