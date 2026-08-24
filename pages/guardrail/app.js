@@ -800,7 +800,7 @@ const componentDefinitions = {
   length_anomaly_detector: {
     label: "长度异常检测器",
     description: "检测超长、重复、异常分隔符与不可见字符等输入形态；不判断文本语义。",
-    rails: new Set(["input_rail"]),
+    rails: new Set(["input_rail", "request_rail"]),
     fields: [
       { key: "hard_max_chars", label: "硬长度上限", hint: "达到该字符数立即命中。", type: "integer", default: 8000 },
       { key: "scan_limit_chars", label: "扫描字符上限", hint: "形态扫描的最大窗口。", type: "integer", default: 12000 },
@@ -819,7 +819,7 @@ const componentDefinitions = {
   role_marker_spoofing_detector: {
     label: "角色标记伪造检测器",
     description: "检测伪造角色、消息包络、工具调用与保留分隔符的组合结构。",
-    rails: new Set(["input_rail"]),
+    rails: new Set(["input_rail", "request_rail"]),
     fields: [
       { key: "scan_limit_chars", label: "扫描字符上限", hint: "结构扫描的最大窗口。", type: "integer", default: 12000 },
       { key: "min_indicators", label: "最少结构指标", hint: "至少满足多少种独立指标才命中。", type: "integer", default: 2 },
@@ -834,7 +834,7 @@ const componentDefinitions = {
   instruction_override_detector: {
     label: "指令覆盖检测器",
     description: "检测覆盖约束、索取隐藏内容与冒充权限的显性组合意图。",
-    rails: new Set(["input_rail"]),
+    rails: new Set(["input_rail", "request_rail"]),
     fields: [
       { key: "scan_limit_chars", label: "扫描字符上限", hint: "意图结构扫描的最大窗口。", type: "integer", default: 12000 },
       { key: "min_evidence", label: "最少证据", hint: "满足多少类意图证据才命中。", type: "integer", default: 2 },

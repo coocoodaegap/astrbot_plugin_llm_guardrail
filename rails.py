@@ -492,15 +492,21 @@ class GuardrailPipeline:
     async def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
-        current_text = clip_text(
-            self.adapter.get_request_prompt(context.request) or context.current_input,
-            max_chars,
+        request_text = (
+            self.adapter.get_request_prompt(context.request) or context.current_input
         )
+        current_text = clip_text(request_text, max_chars)
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal current_text
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
+            elif rule.template_key in {
+                "length_anomaly_detector",
+                "role_marker_spoofing_detector",
+                "instruction_override_detector",
+            }:
+                result = evaluate_input_detector(rule, ctx, request_text)
             elif rule.template_key == "llm_review":
                 result = await self._execute_llm_review(rail, rule, ctx, current_text)
             elif rule.template_key == "rag_judge":

@@ -57,6 +57,13 @@ COMPONENT_TEMPLATES["input_rail"].update(
         "contains_video",
     }
 )
+COMPONENT_TEMPLATES["request_rail"].update(
+    {
+        "length_anomaly_detector",
+        "role_marker_spoofing_detector",
+        "instruction_override_detector",
+    }
+)
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     rail_name: RULE_TEMPLATES[rail_name] | COMPONENT_TEMPLATES[rail_name]
     for rail_name in RAIL_NAMES
