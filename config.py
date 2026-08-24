@@ -56,7 +56,6 @@ COMPONENT_TEMPLATES["input_rail"].update(
         "contains_image",
         "contains_record",
         "contains_video",
-        "contains_link",
     }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
@@ -693,7 +692,6 @@ MESSAGE_FACT_COMPONENT_TEMPLATES = {
     "contains_image",
     "contains_record",
     "contains_video",
-    "contains_link",
 }
 
 

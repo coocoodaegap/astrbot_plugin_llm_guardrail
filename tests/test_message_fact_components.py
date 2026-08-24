@@ -110,7 +110,6 @@ def _all_fact_rules(action_on_hit="default"):
                 "contains_image",
                 "contains_record",
                 "contains_video",
-                "contains_link",
             )
         ],
     ]
@@ -130,7 +129,7 @@ class MessageFactComponentTests(unittest.TestCase):
             ]
         )
 
-    def test_all_eight_components_use_only_safe_message_facts(self):
+    def test_all_seven_components_use_only_safe_message_facts(self):
         snapshot_result = AstrBotAdapter().get_message_fact_snapshot(self.event)
         snapshot = snapshot_result.metadata["message_fact_snapshot"]
         config = normalize_config({"input_rail": {"rule_list": _all_fact_rules()}})
@@ -145,10 +144,6 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertTrue(all(result.action_on_hit == "observe" for result in results.values()))
         self.assertEqual(results["contains_image"].metadata["component_indices"], [4])
         self.assertEqual(results["contains_record"].metadata["message_kind"], "record")
-        self.assertEqual(results["contains_link"].metadata["host_summaries"], ["example.test"])
-        metadata_text = str(results["contains_link"].metadata)
-        self.assertNotIn("token=secret", metadata_text)
-        self.assertNotIn("https://", metadata_text)
         self.assertEqual(results["contains_request_user_id"].metadata["matched_user_ids"], ["***user"])
         self.assertEqual(results["contains_at_user_id"].metadata["matched_user_ids"], ["***user"])
 
@@ -236,31 +231,6 @@ class MessageFactComponentTests(unittest.TestCase):
         self.assertEqual(snapshot.components[0].media_category, "video")
         self.assertTrue(results["contains_file"].matched)
         self.assertTrue(results["contains_video"].matched)
-
-    def test_link_component_matches_common_bare_domains_not_email_or_dotted_words(self):
-        config = normalize_config(
-            {
-                "input_rail": {
-                    "rule_list": [
-                        {"__template_key": "contains_link", "rule_id": "link"}
-                    ]
-                }
-            }
-        )
-        node = config.rails["input_rail"].nodes[0]
-        linked = AstrBotAdapter().get_message_fact_snapshot(
-            _FactEvent([_component("Plain", text="请访问 baidu.com。")])
-        ).metadata["message_fact_snapshot"]
-        ordinary = AstrBotAdapter().get_message_fact_snapshot(
-            _FactEvent([_component("Plain", text="model.version 或 name@example.com")])
-        ).metadata["message_fact_snapshot"]
-
-        linked_result = evaluate_message_fact_component(node, linked)
-        ordinary_result = evaluate_message_fact_component(node, ordinary)
-
-        self.assertTrue(linked_result.matched)
-        self.assertEqual(linked_result.metadata["host_summaries"], ["baidu.com"])
-        self.assertFalse(ordinary_result.matched)
 
     def test_component_only_chain_gets_safe_rail_input_marker(self):
         event = _FactEvent([_component("Record")])

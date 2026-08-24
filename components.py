@@ -6,7 +6,6 @@ from collections import Counter
 import json
 import re
 import unicodedata
-from urllib.parse import urlsplit
 
 try:
     from .adapters import MessageFactSnapshot
@@ -71,7 +70,6 @@ MESSAGE_FACT_COMPONENT_TEMPLATES = {
     "contains_image",
     "contains_record",
     "contains_video",
-    "contains_link",
 }
 
 _MESSAGE_KIND_BY_TEMPLATE = {
@@ -81,14 +79,6 @@ _MESSAGE_KIND_BY_TEMPLATE = {
     "contains_record": "record",
     "contains_video": "video",
 }
-_HTTP_LINK_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+", re.IGNORECASE)
-_BARE_DOMAIN_RE = re.compile(
-    r"(?<![\w@./:-])"
-    r"(?P<host>(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
-    r"(?:com|net|org|edu|gov|io|co|cn|xyz|app|dev|ai|me|info))"
-    r"(?=$|[^\w-])",
-    re.IGNORECASE,
-)
 
 
 def evaluate_input_detector(
@@ -154,22 +144,6 @@ def evaluate_message_fact_component(
                 "component_indices": [component.index for component in matches],
             }
         )
-    elif node.template_key == "contains_link":
-        links = [
-            (component.index, hostname)
-            for component in snapshot.components
-            if component.kind == "plain"
-            for hostname in _link_hostnames(component.plain_text)
-        ]
-        hosts = sorted({hostname for _, hostname in links})
-        matched = bool(links)
-        payload.update(
-            {
-                "component_count": len(links),
-                "component_indices": sorted({index for index, _ in links}),
-                "host_summaries": hosts,
-            }
-        )
     else:
         message_kind = _MESSAGE_KIND_BY_TEMPLATE.get(node.template_key)
         if not message_kind:
@@ -207,21 +181,6 @@ def _redact_identifier(value: str) -> str:
     if not normalized:
         return ""
     return f"***{normalized[-4:]}" if len(normalized) > 4 else "***"
-
-
-def _link_hostnames(text: str) -> list[str]:
-    """Return safe host summaries for HTTP(S) URLs and common bare domains."""
-
-    hosts = [
-        hostname.casefold()
-        for value in _HTTP_LINK_RE.findall(text or "")
-        if (hostname := urlsplit(value).hostname)
-    ]
-    hosts.extend(
-        match.group("host").casefold()
-        for match in _BARE_DOMAIN_RE.finditer(text or "")
-    )
-    return hosts
 
 
 def _evaluate_length_anomaly(config: dict, text: str) -> tuple[bool, dict]:

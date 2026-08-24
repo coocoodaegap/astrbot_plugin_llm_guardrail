@@ -217,7 +217,6 @@ const templateDescriptions = {
   contains_image: "图片消息检测器",
   contains_record: "语音消息检测器",
   contains_video: "视频消息检测器",
-  contains_link: "链接消息检测器",
   rag_judge: "知识库裁判",
   llm_review: "LLM 审查",
   replace_input: "替换输入",
@@ -894,13 +893,6 @@ const componentDefinitions = {
   contains_video: {
     label: "视频消息检测器",
     description: "检测 AstrBot Video 段，或带视频 MIME／扩展名的 File 段；不下载或分析视频。",
-    rails: new Set(["input_rail"]),
-    defaultConfig: () => ({}),
-    defaultAction: "observe",
-  },
-  contains_link: {
-    label: "链接消息检测器",
-    description: "检测 Plain 段中的 HTTP(S) 链接或常见裸域名；不访问 URL。",
     rails: new Set(["input_rail"]),
     defaultConfig: () => ({}),
     defaultAction: "observe",

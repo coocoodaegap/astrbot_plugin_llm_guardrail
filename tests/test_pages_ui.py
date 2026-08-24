@@ -184,7 +184,6 @@ class GuardrailPagesUiTests(unittest.TestCase):
             "contains_image",
             "contains_record",
             "contains_video",
-            "contains_link",
             "user_ids",
         ):
             self.assertIn(field_name, javascript)
