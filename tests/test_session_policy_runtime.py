@@ -31,6 +31,13 @@ def _install_astrbot_stubs():
 
         return decorate
 
+    def command_group_decorator(*_args, **_kwargs):
+        def decorate(func):
+            func.command = passthrough_decorator
+            return func
+
+        return decorate
+
     event.filter = types.SimpleNamespace(
         EventMessageType=types.SimpleNamespace(ALL="ALL"),
         PermissionType=types.SimpleNamespace(ADMIN="ADMIN"),
@@ -40,6 +47,7 @@ def _install_astrbot_stubs():
         on_llm_response=passthrough_decorator,
         permission_type=passthrough_decorator,
         command=passthrough_decorator,
+        command_group=command_group_decorator,
     )
     provider = types.ModuleType("astrbot.api.provider")
     provider.LLMResponse = object

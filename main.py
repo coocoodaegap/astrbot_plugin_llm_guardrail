@@ -17,7 +17,13 @@ except ImportError:  # pragma: no cover - older SDKs and isolated unit tests.
     StarTools = None
 
 try:
-    from .access_control import AccessControlService
+    from .access_control import (
+        DECISION_BAN,
+        DECISION_PARDON,
+        REASON_MANUAL_COMMAND,
+        AccessControlService,
+        make_principal_identity,
+    )
     from .adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA
     from .config import resolve_session_scope
     from .constants import (
@@ -35,7 +41,13 @@ try:
     from .snapshots import ConfigSnapshotManager
     from .state import AstrBotKvStateStore, MemoryStateStore, StateStore
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from access_control import AccessControlService
+    from access_control import (
+        DECISION_BAN,
+        DECISION_PARDON,
+        REASON_MANUAL_COMMAND,
+        AccessControlService,
+        make_principal_identity,
+    )
     from adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA
     from config import resolve_session_scope
     from constants import (
@@ -60,6 +72,8 @@ POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
 ACCESS_GATE_BLOCKED_EXTRA = "_llm_guardrail_access_gate_blocked"
+ACCESS_COMMAND_DEFAULT_LIMIT = 20
+ACCESS_COMMAND_MAX_LIMIT = 100
 
 _PHASE_RAILS: dict[str, tuple[str, ...]] = {
     "message_input": ("input_rail",),
@@ -121,7 +135,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def guardrail_access_gate(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """Stop banned principals before other waiting-stage plugin work."""
+        """访问闸门：在其他等待阶段插件之前拦截被封禁主体。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         try:
@@ -145,7 +159,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def guardrail_waiting_rails(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """Run Rail 1 then Rail 2 in one low-priority waiting-stage critical section."""
+        """等待请求阶段：在同一低优先级临界区依次执行输入分析和模型路由。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         if self.adapter.get_event_extra(event, ACCESS_GATE_BLOCKED_EXTRA, False):
@@ -191,7 +205,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest, *_args, **_kwargs
     ) -> None:
-        """Run final request checks and prompt mutations before the main model call."""
+        """模型请求阶段：主模型调用前执行最终请求检查与提示词变更。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         if self._is_internal_request(req):
@@ -214,7 +228,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def on_llm_response(
         self, event: AstrMessageEvent, resp: LLMResponse, *_args, **_kwargs
     ) -> None:
-        """Run output rail before the model response is sent."""
+        """模型响应阶段：在模型回复发送前执行输出护栏。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         try:
@@ -234,10 +248,153 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return
         self._log_context_summary("response", rail_context)
 
+    @filter.command_group("guardrail")
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("guardrail")
+    async def guardrail(self, event: AstrMessageEvent):
+        """LLM Guardrail 管理指令组。"""
+
+        # AstrBot 的指令组必须指定子指令；状态查询使用 `/guardrail status`。
+        return
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("status")
     async def guardrail_status(self, event: AstrMessageEvent):
-        """Show the current LLM Guardrail P2 status."""
+        """查看当前 LLM Guardrail P2 状态。"""
+
+        yield event.plain_result(self._guardrail_status_text(event))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("acc")
+    async def guardrail_access_list(
+        self,
+        event: AstrMessageEvent,
+        decision: str = "",
+        limit: str = "",
+    ):
+        """列出当前平台适配器命名空间内有效的封禁或赦免决定。"""
+
+        filter_decision = str(decision or "").strip().lower()
+        raw_limit = str(limit or "").strip()
+        if filter_decision and filter_decision not in {DECISION_BAN, DECISION_PARDON}:
+            if not raw_limit and self._looks_like_integer(filter_decision):
+                raw_limit = filter_decision
+                filter_decision = ""
+            else:
+                yield event.plain_result("用法：/guardrail acc [ban|pardon] [limit]")
+                return
+        parsed_limit, error = self._parse_access_command_limit(raw_limit)
+        if error:
+            yield event.plain_result(error)
+            return
+        command_parts = self.adapter.get_principal_parts(event)
+        if command_parts is None:
+            yield event.plain_result("无法取得当前平台适配器名，未查询访问控制记录。")
+            return
+        result = await self.access_control.list_active_records()
+        if not result.success:
+            yield event.plain_result("访问控制状态暂不可用，请稍后重试。")
+            return
+        records = [
+            record
+            for record in result.records
+            if record.get("platform_id") == command_parts[0]
+            and (not filter_decision or record.get("decision") == filter_decision)
+        ][:parsed_limit]
+        label = {DECISION_BAN: "封禁", DECISION_PARDON: "赦免"}.get(
+            filter_decision,
+            "全部有效决定",
+        )
+        if not records:
+            yield event.plain_result(f"访问控制：{label}（无记录）")
+            return
+        lines = [f"访问控制：{label}（显示 {len(records)} 条）"]
+        lines.extend(self._format_access_record(record) for record in records)
+        yield event.plain_result("\n".join(lines))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("accs")
+    async def guardrail_access_status(self, event: AstrMessageEvent, sender_id: str):
+        """查看指定主体当前有效的访问决定。"""
+
+        principal, error = self._access_command_principal(event, sender_id)
+        if error:
+            yield event.plain_result(error)
+            return
+        record = await self.access_control.get_active_record(principal)
+        if record is None:
+            yield event.plain_result(
+                f"访问控制：{self._mask_access_identifier(principal.sender_id)} 当前没有有效决定。"
+            )
+            return
+        yield event.plain_result("访问控制：\n" + self._format_access_record(record))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("accb")
+    async def guardrail_access_ban(
+        self,
+        event: AstrMessageEvent,
+        sender_id: str,
+        minutes: str = "",
+    ):
+        """在当前平台适配器命名空间中创建或替换手动封禁。"""
+
+        message = await self._set_access_command_decision(
+            event,
+            sender_id,
+            minutes,
+            DECISION_BAN,
+        )
+        yield event.plain_result(message)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("accp")
+    async def guardrail_access_pardon(
+        self,
+        event: AstrMessageEvent,
+        sender_id: str,
+        minutes: str = "",
+    ):
+        """在当前平台适配器命名空间中创建或替换手动赦免。"""
+
+        message = await self._set_access_command_decision(
+            event,
+            sender_id,
+            minutes,
+            DECISION_PARDON,
+        )
+        yield event.plain_result(message)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("accr")
+    async def guardrail_access_release(self, event: AstrMessageEvent, sender_id: str):
+        """在比较并交换保护下清除当前有效的访问决定。"""
+
+        principal, error = self._access_command_principal(event, sender_id)
+        if error:
+            yield event.plain_result(error)
+            return
+        record = await self.access_control.get_active_record(principal)
+        if record is None:
+            yield event.plain_result("该主体当前没有有效封禁或赦免。")
+            return
+        result = await self.access_control.clear_manual_decision(
+            principal,
+            expected_decision=str(record["decision"]),
+            expected_record_revision=int(record["record_revision"]),
+        )
+        if result.conflict:
+            yield event.plain_result("访问决定已被其他管理员修改，请重新查询后再解除。")
+            return
+        if not result.success:
+            yield event.plain_result("解除访问决定失败，请稍后重试。")
+            return
+        decision_label = "封禁" if record["decision"] == DECISION_BAN else "赦免"
+        yield event.plain_result(
+            f"已解除{decision_label}：{self._mask_access_identifier(principal.sender_id)}。"
+        )
+
+    def _guardrail_status_text(self, event: AstrMessageEvent) -> str:
+        """Build the bare ``/guardrail`` status response."""
         cfg = self.snapshot_manager.current.runtime_config
         current_umo = self.adapter.get_umo(event)
         session_decision = resolve_session_scope(
@@ -274,7 +431,124 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         ]
         if cfg.warnings:
             lines.append("- first warning: " + self._clip_text(cfg.warnings[0], 160))
-        yield event.plain_result("\n".join(lines))
+        return "\n".join(lines)
+
+    async def _set_access_command_decision(
+        self,
+        event: AstrMessageEvent,
+        sender_id: str,
+        minutes: str,
+        decision: str,
+    ) -> str:
+        """Write one command-originated decision through AccessControlService."""
+
+        principal, error = self._access_command_principal(event, sender_id)
+        if error:
+            return error
+        duration, error = self._parse_access_command_duration(minutes)
+        if error:
+            return error
+        current = await self.access_control.get_active_record(principal)
+        expected_revision = (
+            int(current["record_revision"]) if current is not None else None
+        )
+        result = await self.access_control.set_manual_decision(
+            principal,
+            decision,
+            duration,
+            REASON_MANUAL_COMMAND,
+            expected_record_revision=expected_revision,
+        )
+        if result.conflict:
+            return "访问决定已被其他管理员修改，请重新执行指令。"
+        if not result.success:
+            return "保存访问决定失败，请稍后重试。"
+        decision_label = "封禁" if decision == DECISION_BAN else "赦免"
+        return (
+            f"已{decision_label}：{self._mask_access_identifier(principal.sender_id)}"
+            f"（{self._format_access_expiry(result.record or {})}）。"
+        )
+
+    def _access_command_principal(
+        self, event: AstrMessageEvent, sender_id: str
+    ) -> tuple[Any | None, str]:
+        """Build an explicit target identity in the command event's adapter scope."""
+
+        parts = self.adapter.get_principal_parts(event)
+        if parts is None:
+            return None, "无法取得当前平台适配器名，未执行访问控制操作。"
+        try:
+            return make_principal_identity(parts[0], sender_id), ""
+        except (TypeError, ValueError):
+            return None, "sender_id 无效。"
+
+    @staticmethod
+    def _looks_like_integer(value: str) -> bool:
+        text = str(value or "").strip()
+        return bool(text) and (text.isdigit() or (text.startswith("-") and text[1:].isdigit()))
+
+    @classmethod
+    def _parse_access_command_limit(cls, raw_limit: str) -> tuple[int, str]:
+        text = str(raw_limit or "").strip()
+        if not text:
+            return ACCESS_COMMAND_DEFAULT_LIMIT, ""
+        if not cls._looks_like_integer(text):
+            return 0, "limit 必须是 1 到 100 的整数。"
+        value = int(text)
+        if value < 1 or value > ACCESS_COMMAND_MAX_LIMIT:
+            return 0, "limit 必须是 1 到 100 的整数。"
+        return value, ""
+
+    @classmethod
+    def _parse_access_command_duration(cls, raw_minutes: str) -> tuple[int, str]:
+        text = str(raw_minutes or "").strip()
+        if not text:
+            return -1, ""
+        if not cls._looks_like_integer(text):
+            return 0, "minutes 必须为 -1 或正整数。"
+        value = int(text)
+        if value == 0 or value < -1:
+            return 0, "minutes 必须为 -1 或正整数。"
+        return value, ""
+
+    @classmethod
+    def _format_access_record(cls, record: dict[str, Any]) -> str:
+        decision = str(record.get("decision", "") or "")
+        decision_label = "封禁" if decision == DECISION_BAN else "赦免"
+        platform_id = cls._mask_access_identifier(record.get("platform_id", ""))
+        sender_id = cls._mask_access_identifier(record.get("sender_id", ""))
+        reason = str(
+            record.get("decision_reason_label", "")
+            or record.get("decision_reason_code", "")
+            or "未注明"
+        )
+        count = int(record.get("violation_count", 0) or 0)
+        return (
+            f"- {decision_label} {platform_id}/{sender_id}"
+            f" | 到期：{cls._format_access_expiry(record)}"
+            f" | 计数：{count} | 原因：{reason}"
+        )
+
+    @staticmethod
+    def _format_access_expiry(record: dict[str, Any]) -> str:
+        try:
+            expires_at = int(record.get("decision_expires_at", 0) or 0)
+        except (TypeError, ValueError):
+            return "未知"
+        if expires_at <= 0:
+            return "永久"
+        return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(expires_at))
+
+    @staticmethod
+    def _mask_access_identifier(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "***"
+        if len(text) == 1:
+            return "*"
+        if len(text) <= 4:
+            return text[0] + "*" * (len(text) - 2) + text[-1]
+        return text[:2] + "…" + text[-2:]
 
     async def terminate(self) -> None:
         """Clean up plugin resources."""
