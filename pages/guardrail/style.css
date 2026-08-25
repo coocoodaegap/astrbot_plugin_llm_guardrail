@@ -1971,7 +1971,7 @@ textarea {
     --danger-dim: #452126;
     --page-max: 1360px;
     --font-body: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", sans-serif;
-    --font-display: "Cascadia Code", "JetBrains Mono", "Sarasa Mono SC", "Noto Sans Mono CJK SC", monospace;
+    --font-display: "Maple Mono SC", "Cascadia Code", "JetBrains Mono", "Sarasa Mono SC", "MiSans", "Noto Sans CJK SC", "Microsoft YaHei UI", sans-serif;
     color: var(--text);
     color-scheme: dark;
     font-family: var(--font-body);
@@ -3665,5 +3665,59 @@ textarea,
         transition-duration: .01ms !important;
         animation-duration: .01ms !important;
         animation-iteration-count: 1 !important;
+    }
+}
+
+/* Shared, unframed page identity for every top-level tab. */
+.page-section-heading {
+    display: grid;
+    gap: 6px;
+    margin: 0 0 22px;
+    padding: 2px 0 19px;
+    border-bottom: 1px solid var(--edge);
+}
+
+.page-section-heading .eyebrow {
+    margin: 0;
+    color: var(--signal);
+}
+
+.page-section-heading h2 {
+    margin: 0;
+    color: #f0fffa;
+    font-family: var(--font-display);
+    font-size: clamp(1.42rem, 2.1vw, 1.72rem);
+    font-weight: 700;
+    letter-spacing: -.045em;
+    line-height: 1.18;
+}
+
+.page-section-heading > p:last-child {
+    max-width: 760px;
+    margin: 0;
+    color: var(--muted);
+    font-size: .93rem;
+    line-height: 1.62;
+}
+
+.page-section-heading.system-heading {
+    min-height: 0;
+    margin-bottom: 22px;
+    padding-bottom: 19px;
+}
+
+@media (max-width: 640px) {
+    .page-section-heading {
+        gap: 5px;
+        margin-bottom: 17px;
+        padding-bottom: 15px;
+    }
+
+    .page-section-heading h2 {
+        font-size: 1.34rem;
+    }
+
+    .page-section-heading > p:last-child {
+        font-size: .86rem;
     }
 }

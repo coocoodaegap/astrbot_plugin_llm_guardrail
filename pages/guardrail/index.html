@@ -46,6 +46,11 @@
   </div>
   <main class="page-shell">
     <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
+      <div class="page-section-heading">
+        <p class="eyebrow">RUNTIME OVERVIEW</p>
+        <h2>总览</h2>
+        <p>查看当前快照、策略防线与需要优先处理的运行诊断。</p>
+      </div>
       <div class="overview-grid">
         <section class="card">
           <h2>配置快照</h2>
@@ -59,12 +64,10 @@
     </section>
     <section class="tab-panel" id="panel-rules" role="tabpanel" aria-labelledby="tab-rules" data-panel="rules" hidden>
       <div id="rule-library-panel">
-      <div class="card-heading rules-heading">
-        <div>
-          <p class="eyebrow">RULE LIBRARY</p>
-          <h2>规则库</h2>
-          <p>规则本体可复用于多个策略；Rail、依赖与命中动作在“策略编排”中配置。</p>
-        </div>
+      <div class="page-section-heading">
+        <p class="eyebrow">RULE LIBRARY</p>
+        <h2>规则库</h2>
+        <p>规则本体可复用于多个策略；Rail、依赖与命中动作在“策略编排”中配置。</p>
       </div>
       <p id="rule-library-status" class="muted" aria-live="polite"></p>
       <div id="rule-workspace" class="rule-workspace">
@@ -114,14 +117,12 @@
     </section>
     <section class="tab-panel" id="panel-policies" role="tabpanel" aria-labelledby="tab-policies" data-panel="policies"
       hidden>
+      <div class="page-section-heading">
+        <p class="eyebrow">POLICY LIBRARY</p>
+        <h2>策略编排</h2>
+        <p>管理策略的规则编排；未命中可用策略时将使用系统 fallback 图。</p>
+      </div>
       <section id="policy-list-panel" class="policy-list-panel" aria-label="策略列表">
-        <div class="rules-heading">
-          <div>
-            <p class="eyebrow">POLICY LIBRARY</p>
-            <h2>策略编排</h2>
-            <p>管理策略的规则编排；未命中可用策略时将使用系统 fallback 图。</p>
-          </div>
-        </div>
         <section class="default-policy-card" aria-labelledby="default-policy-list-heading">
           <div class="list-heading">
             <strong id="default-policy-list-heading">当前默认策略</strong>
@@ -269,12 +270,17 @@
     </section>
     <section class="tab-panel" id="panel-access" role="tabpanel" aria-labelledby="tab-access" data-panel="access"
       hidden>
+      <div class="page-section-heading">
+        <p class="eyebrow">ACCESS CONTROL</p>
+        <h2>访问控制</h2>
+        <p>管理平台主体的封禁与赦免决定；赦免不会绕过内容防线。</p>
+      </div>
       <div class="access-layout">
         <section class="card access-decision-card">
           <div class="card-heading">
             <div>
-              <p class="eyebrow">INPUT ACCESS CONTROL</p>
-              <h2>封禁与赦免</h2>
+              <p class="eyebrow">ACCESS DECISION</p>
+              <h3>封禁与赦免</h3>
               <p>主体由平台适配器名与发送者 ID 组成；同一平台用户跨群聊和私聊共享访问状态。</p>
             </div>
           </div>
@@ -297,8 +303,8 @@
         <section class="card access-records-card">
           <div class="card-heading access-records-heading">
             <div>
-              <p class="eyebrow">ACTIVE PRINCIPALS</p>
-              <h2>当前访问决定 <span id="access-record-count" class="count-badge">0</span></h2>
+              <p class="eyebrow">ACTIVE DECISIONS</p>
+              <h3>当前访问决定 <span id="access-record-count" class="count-badge">0</span></h3>
               <p>仅显示仍有效的封禁与赦免；临时决定到期后会自动失效。</p>
             </div>
             <div class="access-record-controls">
@@ -313,12 +319,17 @@
     </section>
     <section class="tab-panel" id="panel-knowledge" role="tabpanel" aria-labelledby="tab-knowledge"
       data-panel="knowledge" hidden>
+      <div class="page-section-heading">
+        <p class="eyebrow">LOCAL EXPERIENCE</p>
+        <h2>知识库经验</h2>
+        <p>查看 RAG 裁判留下的本地经验，并将确认后的内容写回原知识库。</p>
+      </div>
       <section id="rag-experience-list-panel" class="rag-experience-layout" aria-label="RAG 经验列表">
         <section class="card rag-experience-list-card">
           <div class="card-heading rag-experience-heading">
             <div>
-              <p class="eyebrow">P2 · LOCAL EXPERIENCE</p>
-              <h2>知识库经验 <span id="rag-experience-count" class="count-badge">0</span></h2>
+              <p class="eyebrow">EXPERIENCE QUEUE</p>
+              <h3>本地经验 <span id="rag-experience-count" class="count-badge">0</span></h3>
               <p>每次 RAG 裁判命中会留下本地经验记录；可编辑后写入该次最高分证据所属的原知识库。</p>
             </div>
             <div class="rag-experience-controls">
@@ -338,8 +349,8 @@
       <section id="rag-experience-detail-panel" class="rag-experience-detail-panel" aria-label="RAG 经验详情" hidden>
         <div class="card-heading rag-experience-heading">
           <div>
-            <p class="eyebrow">RAG EXPERIENCE</p>
-            <h2 id="rag-experience-detail-heading">经验详情</h2>
+            <p class="eyebrow">EXPERIENCE DETAILS</p>
+            <h3 id="rag-experience-detail-heading">经验详情</h3>
             <p id="rag-experience-detail-meta" class="muted"></p>
           </div>
           <button id="back-to-rag-experience-list" type="button" class="button-secondary">返回经验列表</button>
@@ -371,12 +382,17 @@
     </section>
     <section class="tab-panel" id="panel-session" role="tabpanel" aria-labelledby="tab-session" data-panel="session"
       hidden>
+      <div class="page-section-heading">
+        <p class="eyebrow">SESSION POLICY OBSERVATORY</p>
+        <h2>会话策略监控</h2>
+        <p>查看 Guardrail 已观测到的 UMO 状态与历史路由解释；该页面不参与下一次请求。</p>
+      </div>
       <section id="session-policy-list-panel" class="session-policy-layout" aria-label="UMO 状态列表">
         <section class="card session-policy-list-card">
           <div class="card-heading session-policy-heading">
             <div>
-              <p class="eyebrow">P2-A · OBSERVE ONLY</p>
-              <h2>会话策略监控 <span id="session-policy-state-count" class="count-badge">0</span></h2>
+              <p class="eyebrow">OBSERVED UMO STATES</p>
+              <h3>会话状态 <span id="session-policy-state-count" class="count-badge">0</span></h3>
               <p>查看 Guardrail 已观测的 UMO 状态。路由候选仅用于解释历史，不参与下一次请求。</p>
             </div>
             <div class="session-policy-controls">
@@ -397,7 +413,7 @@
         <div class="card-heading session-policy-heading">
           <div>
             <p class="eyebrow">UMO POLICY STATE</p>
-            <h2 id="session-policy-detail-umo">会话策略状态</h2>
+            <h3 id="session-policy-detail-umo">会话策略状态</h3>
             <p id="session-policy-detail-meta" class="muted"></p>
           </div>
           <button id="back-to-session-policy-list" type="button" class="button-secondary">返回会话列表</button>
@@ -433,20 +449,23 @@
       </section>
     </section>
     <section class="tab-panel" id="panel-token" role="tabpanel" aria-labelledby="tab-token" data-panel="token" hidden>
-      <div class="placeholder">
-        <p class="eyebrow">P3</p>
+      <div class="page-section-heading">
+        <p class="eyebrow">TOKEN OBSERVATORY</p>
         <h2>Token 监控</h2>
-        <p>旁路 LLM/RAG 调用的次数、耗时、失败和估算成本将在后续版本提供。</p>
+        <p>面向旁路 LLM 与 RAG 调用的用量、延迟、失败和成本观测将在后续版本提供。</p>
+      </div>
+      <div class="placeholder">
+        <p class="eyebrow">P3 · PLANNED</p>
+        <h3>监控能力尚未启用</h3>
+        <p>当前版本不会采集或展示旁路调用的次数、耗时、失败和估算成本。</p>
       </div>
     </section>
     <section class="tab-panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" data-panel="system"
       hidden>
-      <div class="card-heading system-heading">
-        <div>
-          <p class="eyebrow">ASTRBOT CONFIGURATION</p>
-          <h2>系统设置</h2>
-          <p>保存会直接更新 AstrBot 插件配置；新请求立即使用新快照，进行中的请求保持旧快照。</p>
-        </div>
+      <div class="page-section-heading system-heading">
+        <p class="eyebrow">ASTRBOT CONFIGURATION</p>
+        <h2>系统设置</h2>
+        <p>保存会直接更新 AstrBot 插件配置；新请求立即使用新快照，进行中的请求保持旧快照。</p>
       </div>
       <p id="system-settings-status" class="muted" aria-live="polite"></p>
       <div id="system-settings" class="system-settings" aria-live="polite"></div>
