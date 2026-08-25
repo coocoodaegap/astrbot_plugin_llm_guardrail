@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">LLM Guardrail orchestration mark</title>
+  <desc id="desc">Multiple policy paths converge into one controlled, guarded output.</desc>
+  <defs>
+    <linearGradient id="flow" x1="15" y1="48" x2="76" y2="48" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#64DCB6" stop-opacity=".62"/>
+      <stop offset=".48" stop-color="#B9FFEA"/>
+      <stop offset="1" stop-color="#64DCB6"/>
+    </linearGradient>
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="2.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Guardrail: deliberately quieter than the orchestration graph. -->
+  <path d="M73 20V31M81 20V76M73 65V76" stroke="#64DCB6" stroke-width="4" stroke-linecap="round" opacity=".42"/>
+
+  <!-- Three independently selectable paths converge at the policy router. -->
+  <g stroke="url(#flow)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M23 26H34L46 43"/>
+    <path d="M23 48H43"/>
+    <path d="M23 70H34L46 53"/>
+    <path d="M53 48H72"/>
+  </g>
+
+  <g fill="#10241F" stroke="#64DCB6" stroke-width="3">
+    <circle cx="19" cy="26" r="5"/>
+    <circle cx="19" cy="48" r="5"/>
+    <circle cx="19" cy="70" r="5"/>
+    <circle cx="76" cy="48" r="5"/>
+  </g>
+
+  <!-- The central diamond is the active orchestrator, not a warning sign. -->
+  <path d="M48 37L59 48L48 59L37 48L48 37Z" fill="#173D34" stroke="#B9FFEA" stroke-width="3" stroke-linejoin="round" filter="url(#glow)"/>
+  <circle cx="48" cy="48" r="3" fill="#64DCB6"/>
+</svg>
