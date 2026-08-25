@@ -414,10 +414,12 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         record = await self.access_control.get_active_record(principal)
         if record is None:
             yield event.plain_result(
-                f"访问控制：{self._mask_access_identifier(principal.user_id)} 当前没有有效决定。"
+                f"访问控制：{principal.user_id} 当前没有有效决定。"
             )
             return
-        yield event.plain_result("访问控制：\n" + self._format_access_record(record))
+        yield event.plain_result(
+            "访问控制：\n" + self._format_access_record(record, mask_user_id=False)
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("accb")
@@ -481,7 +483,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return
         decision_label = "封禁" if record["decision"] == DECISION_BAN else "赦免"
         yield event.plain_result(
-            f"已解除{decision_label}：{self._mask_access_identifier(principal.user_id)}。"
+            f"已解除{decision_label}：{principal.user_id}。"
         )
 
     def _guardrail_status_text(self, event: AstrMessageEvent) -> str:
@@ -556,7 +558,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return "保存访问决定失败，请稍后重试。"
         decision_label = "封禁" if decision == DECISION_BAN else "赦免"
         return (
-            f"已{decision_label}：{self._mask_access_identifier(principal.user_id)}"
+            f"已{decision_label}：{principal.user_id}"
             f"（{self._format_access_expiry(result.record or {})}）。"
         )
 
@@ -615,11 +617,16 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         return value, ""
 
     @classmethod
-    def _format_access_record(cls, record: dict[str, Any]) -> str:
+    def _format_access_record(
+        cls, record: dict[str, Any], *, mask_user_id: bool = True
+    ) -> str:
         decision = str(record.get("decision", "") or "")
         decision_label = "封禁" if decision == DECISION_BAN else "赦免"
         platform_id = cls._mask_access_identifier(record.get("platform_id", ""))
-        user_id = cls._mask_access_identifier(record.get("user_id", ""))
+        raw_user_id = str(record.get("user_id", ""))
+        user_id = (
+            cls._mask_access_identifier(raw_user_id) if mask_user_id else raw_user_id
+        )
         reason = str(
             record.get("decision_reason_label", "")
             or record.get("decision_reason_code", "")

@@ -163,12 +163,16 @@ class MainHandlerSignatureTests(unittest.TestCase):
 
         self.assertIn("LLM Guardrail", overall_status[0]["plain"])
         self.assertIn("已封禁", ban[0]["plain"])
+        self.assertIn("123456", ban[0]["plain"])
         self.assertEqual(ban_record["decision_reason_code"], "manual_command")
         self.assertIn("指令操作", status[0]["plain"])
+        self.assertIn("123456", status[0]["plain"])
         self.assertIn("ai…tp/12…56", listing[0]["plain"])
         self.assertIn("已赦免", pardon[0]["plain"])
+        self.assertIn("123456", pardon[0]["plain"])
         self.assertIn("永久", pardon[0]["plain"])
         self.assertIn("已解除赦免", release[0]["plain"])
+        self.assertIn("123456", release[0]["plain"])
         self.assertIn("没有有效决定", missing[0]["plain"])
 
     def test_access_control_command_rejects_invalid_duration_and_limit(self):
