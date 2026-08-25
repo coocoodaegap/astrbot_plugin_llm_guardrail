@@ -416,7 +416,10 @@
             <h3 id="session-policy-detail-umo">会话策略状态</h3>
             <p id="session-policy-detail-meta" class="muted"></p>
           </div>
-          <button id="back-to-session-policy-list" type="button" class="button-secondary">返回会话列表</button>
+          <div class="session-policy-detail-actions">
+            <button id="clear-session-policy-state" type="button" class="button-danger">清除全部会话状态</button>
+            <button id="back-to-session-policy-list" type="button" class="button-secondary">返回会话列表</button>
+          </div>
         </div>
         <section class="card session-policy-selection-card" aria-labelledby="session-policy-selection-heading">
           <div class="card-heading">
@@ -461,6 +464,10 @@
           <div id="session-policy-activity-list" class="session-policy-activity-list" aria-live="polite"></div>
         </section>
       </section>
+      <dialog id="confirm-session-policy-state-delete-dialog" class="confirm-rule-delete-dialog" aria-labelledby="confirm-session-policy-state-delete-title">
+        <div><p class="eyebrow">CLEAR UMO STATE</p><h3 id="confirm-session-policy-state-delete-title">清除全部会话状态？</h3><p id="confirm-session-policy-state-delete-message" class="danger-notice"></p></div>
+        <div class="dialog-actions"><button id="cancel-session-policy-state-delete" type="button" class="button-secondary">取消</button><button id="confirm-session-policy-state-delete" type="button" class="danger-button">清除全部状态</button></div>
+      </dialog>
     </section>
     <section class="tab-panel" id="panel-token" role="tabpanel" aria-labelledby="tab-token" data-panel="token" hidden>
       <div class="page-section-heading">

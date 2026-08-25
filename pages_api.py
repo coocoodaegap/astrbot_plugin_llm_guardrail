@@ -55,6 +55,7 @@ class GuardrailPagesApiMixin:
             ("clear_access_control_decision", self._pages_clear_access_control_decision, ["POST"], "Clear an input access-control decision"),
             ("get_session_policy_states", self._pages_get_session_policy_states, ["GET"], "List observed UMO policy states"),
             ("get_session_policy_state", self._pages_get_session_policy_state, ["GET"], "Get one observed UMO policy state"),
+            ("delete_session_policy_state", self._pages_delete_session_policy_state, ["POST"], "Delete all observed state for one UMO"),
             ("set_umo_policy_selection", self._pages_set_umo_policy_selection, ["POST"], "Set or clear one UMO explicit policy selection"),
             ("get_rag_experiences", self._pages_get_rag_experiences, ["GET"], "List RAG experience records"),
             ("get_rag_experience", self._pages_get_rag_experience, ["GET"], "Get one RAG experience record"),
@@ -387,6 +388,40 @@ class GuardrailPagesApiMixin:
 
     def _pages_session_policy_state_service(self):
         return getattr(self, "session_policy_state", None)
+
+    async def _pages_delete_session_policy_state(self):
+        """Delete all monitor partitions for one UMO, never its policy selection."""
+
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        umo = payload.get("umo")
+        expected_revision = payload.get("expected_record_revision")
+        if not isinstance(umo, str) or not umo.strip():
+            return self._pages_error("umo must be a non-empty string")
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            return self._pages_error("expected_record_revision must be an integer")
+        service = self._pages_session_policy_state_service()
+        if service is None:
+            return self._pages_error("Session-policy monitor service is unavailable", 503)
+        config = self.snapshot_manager.current.runtime_config
+        result = await service.delete_record(
+            umo,
+            expected_record_revision=expected_revision,
+            settings=config.session_policy_state,
+        )
+        if result.conflict:
+            return jsonify(
+                {
+                    "success": False,
+                    "conflict": True,
+                    "error": result.warning,
+                    "record": result.record,
+                }
+            ), 409
+        if not result.success:
+            return self._pages_error(result.warning or "Session-policy state was not deleted.")
+        return jsonify({"success": True, "found": result.found})
 
     def _pages_umo_policy_selection_payload(self, umo: str) -> dict[str, Any]:
         """Describe persisted selection and current effective resolution for Pages."""

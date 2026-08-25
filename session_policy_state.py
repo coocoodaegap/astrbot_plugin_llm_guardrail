@@ -102,6 +102,17 @@ class SessionPolicyStateDetailResult:
     warning: str = ""
 
 
+@dataclass(frozen=True)
+class SessionPolicyStateDeleteResult:
+    """Outcome for an all-partitions UMO monitor-state deletion."""
+
+    success: bool
+    found: bool = False
+    conflict: bool = False
+    record: dict[str, Any] | None = None
+    warning: str = ""
+
+
 def clean_umo(value: Any) -> str:
     """Return the UMO identity used by runtime and Pages alike."""
 
@@ -338,6 +349,70 @@ class SessionPolicyStateService:
         """
 
         return _public_record(_empty_record(clean_umo(umo)))
+
+    async def delete_record(
+        self,
+        umo: Any,
+        *,
+        expected_record_revision: Any,
+        settings: Mapping[str, Any] | None,
+    ) -> SessionPolicyStateDeleteResult:
+        """Delete every observed-state partition for one UMO.
+
+        Explicit policy selection is intentionally outside this service and
+        survives this operation.  The displayed record revision provides a
+        compare-and-set guard, so a stale page cannot erase a newer run.
+        """
+
+        try:
+            normalized_umo = clean_umo(umo)
+            if (
+                isinstance(expected_record_revision, bool)
+                or not isinstance(expected_record_revision, int)
+                or expected_record_revision < 0
+            ):
+                raise ValueError(
+                    "expected_record_revision must be a non-negative integer"
+                )
+        except (TypeError, ValueError) as exc:
+            return SessionPolicyStateDeleteResult(False, warning=str(exc))
+
+        key = umo_storage_key(normalized_umo)
+        try:
+            async with self._session_locks.hold(key):
+                async with _shared_table_lock():
+                    table = await self._load_table_locked()
+                    now = _now(self._clock)
+                    changed = _prune_expired_records(
+                        table, now, _state_ttl_seconds(settings)
+                    )
+                    raw_record = table["records"].get(key)
+                    if not isinstance(raw_record, dict):
+                        if changed:
+                            table["table_revision"] += 1
+                            await self._save_table_locked(table)
+                        return SessionPolicyStateDeleteResult(True, found=False)
+                    record = _normalized_record(raw_record, normalized_umo)
+                    if record["record_revision"] != expected_record_revision:
+                        if changed:
+                            table["table_revision"] += 1
+                            await self._save_table_locked(table)
+                        return SessionPolicyStateDeleteResult(
+                            False,
+                            found=True,
+                            conflict=True,
+                            record=_public_record(record),
+                            warning="the session-policy state changed; refresh and try again",
+                        )
+                    table["records"].pop(key, None)
+                    table["table_revision"] += 1
+                    await self._save_table_locked(table)
+                    return SessionPolicyStateDeleteResult(True, found=True)
+        except Exception as exc:  # State maintenance must degrade safely.
+            self._log_storage_failure("delete session-policy state", exc)
+            return SessionPolicyStateDeleteResult(
+                False, warning="session-policy state could not be deleted"
+            )
 
     async def get_detail(
         self,

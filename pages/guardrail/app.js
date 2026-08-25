@@ -137,6 +137,11 @@ const status = $("status"),
   sessionPolicyStateNextPage = $("session-policy-state-next-page"),
   sessionPolicyDetailUmo = $("session-policy-detail-umo"),
   sessionPolicyDetailMeta = $("session-policy-detail-meta"),
+  clearSessionPolicyState = $("clear-session-policy-state"),
+  confirmSessionPolicyStateDeleteDialog = $("confirm-session-policy-state-delete-dialog"),
+  confirmSessionPolicyStateDeleteMessage = $("confirm-session-policy-state-delete-message"),
+  cancelSessionPolicyStateDelete = $("cancel-session-policy-state-delete"),
+  confirmSessionPolicyStateDelete = $("confirm-session-policy-state-delete"),
   sessionPolicySelection = $("session-policy-selection"),
   saveSessionPolicySelection = $("save-session-policy-selection"),
   sessionPolicySelectionStatus = $("session-policy-selection-status"),
@@ -339,7 +344,9 @@ let sessionPolicyStateItems = [],
   sessionPolicyMonitoringEnabled = false,
   sessionPolicyStateRefreshEpoch = 0,
   sessionPolicyStateDetailEpoch = 0,
-  sessionPolicySelectionInFlight = false;
+  sessionPolicySelectionInFlight = false,
+  sessionPolicyStateDeleteInFlight = false,
+  selectedSessionPolicyRecordRevision = null;
 let ragExperienceItems = [],
   selectedRagExperience = null,
   ragExperienceCurrentPage = 1,
@@ -3479,6 +3486,9 @@ function renderSessionPolicySelection(selection) {
 }
 function renderSessionPolicyStateDetail(record, policySelection = null) {
   const result = record?.last_policy_result || null;
+  selectedSessionPolicyRecordRevision = Number.isInteger(record?.record_revision)
+    && record.record_revision > 0 ? record.record_revision : null;
+  clearSessionPolicyState.disabled = selectedSessionPolicyRecordRevision === null;
   sessionPolicyDetailUmo.textContent = record?.umo || "会话策略状态";
   sessionPolicyDetailMeta.textContent = record
     ? `记录版本 ${record.record_revision ?? 0} · 最近活动 ${formatStateTime(record.updated_at)}`
@@ -3605,6 +3615,37 @@ async function saveCurrentSessionPolicySelection() {
     sessionPolicySelectionInFlight = false;
     sessionPolicySelection.disabled = false;
     saveSessionPolicySelection.disabled = false;
+  }
+}
+function requestSessionPolicyStateDeletion() {
+  if (!selectedSessionPolicyUmo || !Number.isInteger(selectedSessionPolicyRecordRevision)
+    || sessionPolicyStateDeleteInFlight) return;
+  confirmSessionPolicyStateDeleteMessage.textContent = `将删除 UMO “${selectedSessionPolicyUmo}”的最近策略结果、路由候选、请求观察和活动记录；明确策略指定不会被删除。`;
+  confirmSessionPolicyStateDeleteDialog.showModal();
+}
+async function clearCurrentSessionPolicyState() {
+  if (!bridge || !selectedSessionPolicyUmo || !Number.isInteger(selectedSessionPolicyRecordRevision)
+    || sessionPolicyStateDeleteInFlight) return;
+  sessionPolicyStateDeleteInFlight = true;
+  clearSessionPolicyState.disabled = true;
+  try {
+    const result = await bridge.apiPost("delete_session_policy_state", {
+      umo: selectedSessionPolicyUmo,
+      expected_record_revision: selectedSessionPolicyRecordRevision,
+    });
+    if (!result?.success) {
+      sessionPolicyDetailMeta.textContent = result?.error || "清除会话状态失败。";
+      if (result?.conflict) await showSessionPolicyStateDetail(selectedSessionPolicyUmo);
+      return;
+    }
+    await refreshSessionPolicyStates();
+    await showSessionPolicyStateDetail(selectedSessionPolicyUmo);
+    sessionPolicyDetailMeta.textContent += " · 已清除全部运行状态；明确策略指定未受影响。";
+  } catch (error) {
+    sessionPolicyDetailMeta.textContent = `清除失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    sessionPolicyStateDeleteInFlight = false;
+    clearSessionPolicyState.disabled = selectedSessionPolicyRecordRevision === null;
   }
 }
 async function refreshSessionPolicyStates(resetPage = false) {
@@ -4177,6 +4218,16 @@ refreshAccessRecords.addEventListener("click", refreshAccessControl);
 saveAccessDecision.addEventListener("click", saveAccessDecisionMutation);
 resetAccessForm.addEventListener("click", resetAccessFormState);
 backToSessionPolicyList.addEventListener("click", showSessionPolicyStateList);
+clearSessionPolicyState.addEventListener("click", () => {
+  requestSessionPolicyStateDeletion();
+});
+cancelSessionPolicyStateDelete.addEventListener("click", () => {
+  confirmSessionPolicyStateDeleteDialog.close();
+});
+confirmSessionPolicyStateDelete.addEventListener("click", () => {
+  confirmSessionPolicyStateDeleteDialog.close();
+  void clearCurrentSessionPolicyState();
+});
 saveSessionPolicySelection.addEventListener("click", () => {
   void saveCurrentSessionPolicySelection();
 });

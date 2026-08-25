@@ -139,6 +139,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/clear_access_control_decision",
             "/astrbot_plugin_llm_guardrail/get_session_policy_states",
             "/astrbot_plugin_llm_guardrail/get_session_policy_state",
+            "/astrbot_plugin_llm_guardrail/delete_session_policy_state",
             "/astrbot_plugin_llm_guardrail/set_umo_policy_selection",
             "/astrbot_plugin_llm_guardrail/get_rag_experiences",
             "/astrbot_plugin_llm_guardrail/get_rag_experience",
@@ -153,6 +154,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_rule_library"][2], ["GET"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/save_policy_library"][2], ["POST"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_session_policy_states"][2], ["GET"])
+        self.assertEqual(routes["/astrbot_plugin_llm_guardrail/delete_session_policy_state"][2], ["POST"])
 
     def test_rag_experience_pages_edit_delete_and_upload_to_saved_source(self):
         plugin = _Plugin()
@@ -478,6 +480,33 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(detail["record"]["activity_count"] if "activity_count" in detail["record"] else 0, 0)
         self.assertIsNone(detail["record"]["last_policy_result"])
         self.assertEqual(detail["policy_selection"]["explicit_policy_id"], "manual")
+
+    def test_pages_deletes_complete_umo_monitor_state(self):
+        plugin = _Plugin()
+
+        async def seed():
+            return await plugin.session_policy_state.record_phase(
+                "qq:group:1", run_id="run-a", policy_id="safe",
+                snapshot_revision=1, started_at=1, phase="message_input",
+                outcome="allowed", terminal_action=None, rail_outcomes={}, signals=[],
+                settings=plugin.snapshot_manager.current.runtime_config.session_policy_state,
+            )
+
+        written = asyncio.run(seed())
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request({
+                "umo": "qq:group:1",
+                "expected_record_revision": written.record["record_revision"],
+            })):
+                deleted = asyncio.run(plugin._pages_delete_session_policy_state())
+
+        self.assertTrue(deleted["success"])
+        self.assertTrue(deleted["found"])
+        detail = asyncio.run(plugin.session_policy_state.get_detail(
+            "qq:group:1",
+            settings=plugin.snapshot_manager.current.runtime_config.session_policy_state,
+        ))
+        self.assertFalse(detail.found)
 
     def test_pages_can_set_and_clear_an_explicit_umo_policy_selection(self):
         plugin = _Plugin()

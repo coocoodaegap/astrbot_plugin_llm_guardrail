@@ -117,6 +117,31 @@ class SessionPolicyStateServiceTests(unittest.TestCase):
         self.assertIsNone(placeholder["last_policy_result"])
         self.assertEqual(placeholder["activities"]["items"], [])
 
+    def test_full_umo_deletion_removes_every_monitor_partition_with_cas(self):
+        async def run_case():
+            service = self._service(_Clock(100))
+            written = await service.record_phase(
+                "qq:group:1", run_id="run-a", policy_id="safe-chat",
+                snapshot_revision=1, started_at=90, phase="message_route",
+                outcome="allowed", terminal_action=None,
+                rail_outcomes={"routing_rail": {"outcome": "completed"}},
+                signals=[_signal()], settings=_settings(),
+                route_candidate={"provider_id": "provider-a", "model_id": "model-a", "source_route_node_id": "route-a"},
+                request_target_observation={"provider_id": "provider-a", "model_id": "model-a", "source": "provider_request"},
+            )
+            stale = await service.delete_record("qq:group:1", expected_record_revision=0, settings=_settings())
+            deleted = await service.delete_record("qq:group:1", expected_record_revision=written.record["record_revision"], settings=_settings())
+            detail = await service.get_detail("qq:group:1", settings=_settings())
+            return stale, deleted, detail
+
+        stale, deleted, detail = asyncio.run(run_case())
+
+        self.assertTrue(stale.conflict)
+        self.assertTrue(stale.record["route_candidate"])
+        self.assertTrue(deleted.success)
+        self.assertTrue(deleted.found)
+        self.assertFalse(detail.found)
+
     def test_route_candidate_and_request_observation_are_independent(self):
         async def run_case():
             service = self._service(_Clock(200))
