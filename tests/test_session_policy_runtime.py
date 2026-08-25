@@ -203,7 +203,7 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
         self.assertEqual(detail.record["route_candidate"]["provider_id"], "provider-a")
         self.assertEqual(detail.record["route_candidate"]["mode"], "observe_only")
 
-    def test_request_target_observation_only_reads_direct_provider_request_fields(self):
+    def test_request_target_observation_prefers_direct_fields_then_explicit_selection(self):
         _install_astrbot_stubs()
         module = importlib.import_module("main")
         context = types.SimpleNamespace(
@@ -213,12 +213,19 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
         event = _Event()
         event.set_extra("selected_provider", "policy-selected-provider")
         direct = asyncio.run(plugin._request_target_observation(event, _DirectRequest()))
+        selected = asyncio.run(plugin._request_target_observation(event, object()))
+        event.set_extra("selected_provider", "")
         unavailable = asyncio.run(plugin._request_target_observation(event, object()))
 
         self.assertEqual(direct, {
             "provider_id": "provider-b",
             "model_id": "model-b",
             "source": "provider_request",
+        })
+        self.assertEqual(selected, {
+            "provider_id": "policy-selected-provider",
+            "model_id": "",
+            "source": "event_selected_provider",
         })
         self.assertEqual(unavailable, {
             "provider_id": "",

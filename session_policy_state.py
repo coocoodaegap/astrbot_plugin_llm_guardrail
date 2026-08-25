@@ -48,7 +48,7 @@ VALID_PHASES = frozenset(
 )
 VALID_OUTCOMES = frozenset(("allowed", "blocked", "skipped"))
 VALID_REQUEST_TARGET_SOURCES = frozenset(
-    ("provider_request", "context_current_chat_provider_id", "unavailable")
+    ("provider_request", "event_selected_provider", "unavailable")
 )
 
 
@@ -514,13 +514,18 @@ def _normalized_request_observation(raw: Any) -> dict[str, Any] | None:
     source = str(raw.get("source", "unavailable") or "").strip()
     if source not in VALID_REQUEST_TARGET_SOURCES:
         source = "unavailable"
+    provider_id = _safe_identifier(raw.get("provider_id"))
+    model_id = _safe_identifier(raw.get("model_id"))
+    if source == "unavailable":
+        provider_id = ""
+        model_id = ""
     return {
         "observation_revision": _non_negative_int(
             raw.get("observation_revision"), 0
         ),
         "run_id": run_id,
-        "provider_id": _safe_identifier(raw.get("provider_id")),
-        "model_id": _safe_identifier(raw.get("model_id")),
+        "provider_id": provider_id,
+        "model_id": model_id,
         "source": source,
         "observed_at": _non_negative_int(raw.get("observed_at"), 0),
     }
@@ -602,9 +607,14 @@ def _normalize_request_observation_input(
     source = str(raw.get("source", "unavailable") or "").strip()
     if source not in VALID_REQUEST_TARGET_SOURCES:
         source = "unavailable"
+    provider_id = _safe_identifier(raw.get("provider_id"))
+    model_id = _safe_identifier(raw.get("model_id"))
+    if source == "unavailable":
+        provider_id = ""
+        model_id = ""
     return {
-        "provider_id": _safe_identifier(raw.get("provider_id")),
-        "model_id": _safe_identifier(raw.get("model_id")),
+        "provider_id": provider_id,
+        "model_id": model_id,
         "source": source,
     }
 

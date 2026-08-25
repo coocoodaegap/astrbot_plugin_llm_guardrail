@@ -531,9 +531,9 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         """Capture a request target without assuming undocumented SDK fields.
 
         Newer/third-party ProviderRequest implementations may expose direct
-        ``provider_id`` and ``model`` attributes.  When they do not, the
-        monitor records an unavailable observation instead of substituting the
-        UMO's session-default Provider, which is not request-scoped evidence.
+        ``provider_id`` and ``model`` attributes. When they do not, record the
+        event's explicit ``selected_provider`` request selection, if present.
+        The monitor never falls back to a UMO's session-default Provider.
         """
 
         provider_id = self._request_string_field(request, "provider_id")
@@ -545,6 +545,13 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 "provider_id": provider_id,
                 "model_id": model_id,
                 "source": "provider_request",
+            }
+        selected_provider = self.adapter.get_selected_request_provider_id(event)
+        if selected_provider:
+            return {
+                "provider_id": selected_provider,
+                "model_id": "",
+                "source": "event_selected_provider",
             }
         return {
             "provider_id": "",

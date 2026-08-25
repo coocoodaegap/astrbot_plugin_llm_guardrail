@@ -133,7 +133,7 @@ class SessionPolicyStateServiceTests(unittest.TestCase):
                 request_target_observation={
                     "provider_id": "provider-b",
                     "model_id": "model-b",
-                    "source": "provider_request",
+                    "source": "event_selected_provider",
                 },
                 **common,
             )
@@ -148,7 +148,38 @@ class SessionPolicyStateServiceTests(unittest.TestCase):
         self.assertEqual(candidate["run_id"], "run-a")
         self.assertEqual(observed["provider_id"], "provider-b")
         self.assertEqual(observed["model_id"], "model-b")
+        self.assertEqual(observed["source"], "event_selected_provider")
         self.assertEqual(observed["run_id"], "run-a")
+
+    def test_session_default_request_observation_is_suppressed(self):
+        async def run_case():
+            service = self._service(_Clock(225))
+            await service.record_phase(
+                "qq:group:1",
+                run_id="run-a",
+                policy_id="safe-chat",
+                snapshot_revision=9,
+                started_at=220,
+                phase="request",
+                outcome="allowed",
+                terminal_action=None,
+                rail_outcomes={"request_rail": {"outcome": "completed"}},
+                signals=[],
+                settings=_settings(),
+                request_target_observation={
+                    "provider_id": "session-default-provider",
+                    "model_id": "session-default-model",
+                    "source": "context_current_chat_provider_id",
+                },
+            )
+            return await service.get_detail("qq:group:1", settings=_settings())
+
+        detail = asyncio.run(run_case())
+
+        observed = detail.record["last_request_target_observation"]
+        self.assertEqual(observed["source"], "unavailable")
+        self.assertEqual(observed["provider_id"], "")
+        self.assertEqual(observed["model_id"], "")
 
     def test_late_foreign_phase_preserves_newer_result_but_keeps_independent_observations(self):
         async def run_case():

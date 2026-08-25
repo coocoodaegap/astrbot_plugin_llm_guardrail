@@ -3263,7 +3263,9 @@ function formatObservedTarget(target) {
 function requestTargetSourceLabel(source) {
   return source === "provider_request"
     ? "ProviderRequest 字段"
-    : "当前 ProviderRequest 未提供目标字段";
+    : source === "event_selected_provider"
+      ? "Step 3 显式请求选择"
+      : "当前请求未提供可观察目标";
 }
 function sessionPolicyOutcomeLabel(outcome) {
   return outcome === "blocked" ? "已阻断" : outcome === "allowed" ? "已放行" : "已跳过";
@@ -3284,7 +3286,7 @@ function sessionPolicyActivityLabel(kind) {
     policy_stage_completed: "策略阶段完成",
     late_policy_stage_observed: "迟到策略阶段（未覆盖较新结果）",
     route_candidate_recorded: "记录路由候选",
-    request_target_observed: "记录请求目标",
+    request_target_observed: "记录请求选择目标",
   }[kind] || String(kind || "活动");
 }
 function updateSessionPolicyPagination() {
@@ -3317,7 +3319,7 @@ function renderSessionPolicyStateList() {
     summary.textContent = result.policy_id
       ? `${result.policy_id} · ${sessionPolicyOutcomeLabel(result.outcome)}`
       : "尚未形成策略结果";
-    targets.textContent = `策略候选：${formatObservedTarget(item.route_candidate)} · 请求观察：${formatObservedTarget(item.last_request_target_observation)}`;
+    targets.textContent = `策略候选：${formatObservedTarget(item.route_candidate)} · 请求选择：${formatObservedTarget(item.last_request_target_observation)}`;
     metadata.textContent = `观察模式，未参与执行 · 最近活动 ${formatStateTime(item.updated_at)}`;
     button.append(title, summary, targets, metadata);
     button.addEventListener("click", () => {
@@ -3355,7 +3357,7 @@ function renderSessionPolicyTarget(container, target, kind) {
   if (!target) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = kind === "candidate" ? "未形成可记录的路由候选。" : "尚未观察到请求阶段目标。";
+    empty.textContent = kind === "candidate" ? "未形成可记录的路由候选。" : "尚未记录请求选择目标。";
     container.append(empty);
     return;
   }
@@ -3451,7 +3453,7 @@ function renderSessionPolicyStateDetail(record) {
   if (!candidate || !requestTarget) {
     sessionPolicyTargetComparison.textContent = "缺少其中一侧目标，暂不能比较。";
   } else if (requestTarget.source === "unavailable" || !String(requestTarget.provider_id || "").trim()) {
-    sessionPolicyTargetComparison.textContent = "请求阶段未获得可比较的目标字段；不会据此判断策略候选是否生效。";
+    sessionPolicyTargetComparison.textContent = "请求选择阶段未获得可比较的目标；不会据此判断策略候选是否生效。";
   } else if (candidate.run_id !== requestTarget.run_id) {
     sessionPolicyTargetComparison.textContent = "两个目标来自不同 run_id，未将它们作为同一次执行进行比较。";
   } else {
@@ -3460,10 +3462,10 @@ function renderSessionPolicyStateDetail(record) {
     const sameModel = !candidateModel || candidateModel === String(requestTarget.model_id || "").trim();
     if (sameProvider && sameModel) {
       sessionPolicyTargetComparison.textContent = candidateModel
-        ? "同一次执行中，策略路由候选与请求阶段观察目标一致。"
+        ? "同一次执行中，策略路由候选与请求选择目标一致。"
         : "同一次执行中，Provider 目标一致；策略未显式约束模型，因此未比较模型。";
     } else {
-      sessionPolicyTargetComparison.textContent = "同一次执行中，策略路由候选与请求阶段观察目标不同；这是一条观察事实，不会触发自动改写。";
+      sessionPolicyTargetComparison.textContent = "同一次执行中，策略路由候选与请求选择目标不同；这是一条观察事实，不会触发自动改写。";
     }
   }
   renderSessionPolicyActivities(record?.activities?.items || []);

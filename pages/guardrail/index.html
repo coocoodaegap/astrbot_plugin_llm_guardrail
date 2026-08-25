@@ -407,7 +407,7 @@
           <div id="session-policy-result-summary" class="session-policy-result-grid"></div>
           <div id="session-policy-signal-list" class="session-policy-signal-list" aria-live="polite"></div>
         </section>
-        <section class="session-target-grid" aria-label="路由候选与请求观察">
+        <section class="session-target-grid" aria-label="路由候选与请求选择">
           <article class="card session-target-card">
             <p class="eyebrow">ROUTE CANDIDATE</p>
             <h3>策略路由候选</h3>
@@ -415,9 +415,9 @@
             <div id="session-policy-route-candidate" class="session-target-details"></div>
           </article>
           <article class="card session-target-card">
-            <p class="eyebrow">REQUEST STAGE</p>
-            <h3>请求阶段观察目标</h3>
-            <p class="muted">仅代表 Guardrail 在该阶段可见的信息，不代表生成已成功。</p>
+            <p class="eyebrow">REQUEST SELECTION</p>
+            <h3>请求选择目标</h3>
+            <p class="muted">记录请求对象字段或 Step 3 的显式选择；不读取会话默认 Provider，不代表生成已成功。</p>
             <div id="session-policy-request-observation" class="session-target-details"></div>
           </article>
         </section>
