@@ -108,6 +108,68 @@ class AccessControlServiceTests(unittest.TestCase):
         self.assertTrue(admission.allowed)
         self.assertIsNone(record)
 
+    def test_ban_notice_interval_is_atomic_and_supports_zero_and_silent(self):
+        async def run_case():
+            clock = _Clock()
+            service = self._service(clock)
+            principal = make_principal_identity("qq", "1001")
+            saved = await service.set_manual_decision(
+                principal,
+                DECISION_BAN,
+                -1,
+                REASON_MANUAL_BAN,
+            )
+            concurrent = await asyncio.gather(
+                *(
+                    service.admit(
+                        principal,
+                        blacklist_message_interval_minutes=5,
+                    )
+                    for _ in range(8)
+                )
+            )
+            clock.value += 299
+            before_interval = await service.admit(
+                principal,
+                blacklist_message_interval_minutes=5,
+            )
+            clock.value += 1
+            after_interval = await service.admit(
+                principal,
+                blacklist_message_interval_minutes=5,
+            )
+            always_one = await service.admit(
+                principal,
+                blacklist_message_interval_minutes=0,
+            )
+            always_two = await service.admit(
+                principal,
+                blacklist_message_interval_minutes=0,
+            )
+            silent = await service.admit(
+                principal,
+                blacklist_message_interval_minutes=-1,
+            )
+            return saved, concurrent, before_interval, after_interval, always_one, always_two, silent
+
+        (
+            saved,
+            concurrent,
+            before_interval,
+            after_interval,
+            always_one,
+            always_two,
+            silent,
+        ) = asyncio.run(run_case())
+
+        self.assertTrue(saved.success)
+        self.assertEqual(sum(admission.notify for admission in concurrent), 1)
+        self.assertFalse(before_interval.notify)
+        self.assertTrue(after_interval.notify)
+        self.assertTrue(always_one.notify)
+        self.assertTrue(always_two.notify)
+        self.assertFalse(silent.notify)
+
     def test_concurrent_cross_umo_violations_are_not_lost(self):
         async def run_case():
             service = self._service()

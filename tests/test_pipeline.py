@@ -190,7 +190,7 @@ class PipelineTests(unittest.TestCase):
                     "auto_blacklist_enabled": True,
                     "blacklist_duration_minutes": -1,
                     "blacklist_max_violations": 2,
-                    "blacklist_message": "access blocked",
+                    "blacklist_message": "",
                 },
                 "input_rail": {
                     "rule_list": [
@@ -226,13 +226,19 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(record["violation_count"], 2)
         self.assertTrue(third_context.input_blocked)
         self.assertTrue(third.stopped)
-        self.assertEqual(third.result, {"plain": "access blocked"})
+        self.assertEqual(
+            third.result,
+            {"plain": "用户 same-user 已因多次触发风险规则被临时限制使用，请稍后再试。"},
+        )
 
     def test_manual_ban_access_gate_prevents_later_input_rail(self):
         async def run_case():
             config = normalize_config(
                 {
-                    "access_control": {"blacklist_message": "access blocked"},
+                    "access_control": {
+                        "blacklist_message": "access blocked ${user_id}",
+                        "blacklist_message_interval_minutes": 0,
+                    },
                     "input_rail": {
                         "rule_list": [
                             {
@@ -281,7 +287,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(gate_context.input_blocked)
         self.assertTrue(input_context.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "access blocked"})
+        self.assertEqual(event.result, {"plain": "access blocked 10001"})
         self.assertNotIn("must_not_run", input_context.results)
         self.assertEqual(gate_context.terminal_action["source_kind"], "access_control")
 
@@ -559,7 +565,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 3 被阻断。"})
         self.assertNotIn("should_not_wrap", ctx.results)
         self.assertNotIn("<untrusted_user_input>", request.prompt)
 
@@ -649,7 +655,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
 
     def test_output_sanitize_replaces_response_span(self):
         cfg = normalize_config(
@@ -698,7 +704,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 1 被阻断。"})
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
         self.assertIn("RuntimeError: simulated", ctx.results["boom"].metadata["error"])
         self.assertEqual(ctx.terminal_action["source_kind"], "error")
@@ -757,7 +763,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
-        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 1 被阻断。"})
         self.assertTrue(ctx.results["review"].matched)
         self.assertEqual(ctx.results["review"].signal.payload["reason"], "prompt leak")
         self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "safe-provider")
@@ -859,7 +865,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
-        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 1 被阻断。"})
         self.assertTrue(ctx.results["rag"].matched)
         self.assertEqual(ctx.results["rag"].signal.payload["evidence_count"], 1)
         self.assertIn("Policy says hello", ctx.results["rag"].signal.payload["matched_text"])
@@ -963,7 +969,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
         self.assertEqual(ctx.results["rag"].metadata["error_action"], "block")
         self.assertIn("knowledge base manager is unavailable", " ".join(ctx.warnings))
 
@@ -990,7 +996,7 @@ class PipelineTests(unittest.TestCase):
             ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
 
     def test_output_llm_review_parse_error_uses_error_action_block(self):
@@ -1018,7 +1024,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "Response blocked by LLM Guardrail.")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
         self.assertEqual(ctx.results["review"].metadata["error_action"], "block")
         self.assertIn("ValueError", ctx.results["review"].metadata["error"])
 
@@ -1569,7 +1575,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求被会话控制阻断。"})
         self.assertNotIn("risk", ctx.results)
         self.assertEqual(ctx.session_scope_decision.action, "block")
         self.assertEqual(ctx.terminal_action["source_kind"], "session_control")
@@ -1599,7 +1605,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "Request blocked by LLM Guardrail."})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求被会话控制阻断。"})
         self.assertNotIn("risk", ctx.results)
         self.assertEqual(ctx.session_scope_decision.action, "block")
         self.assertEqual(ctx.session_scope_decision.reason, "group_all_block")

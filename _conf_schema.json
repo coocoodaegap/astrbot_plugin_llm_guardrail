@@ -51,9 +51,9 @@
       },
       "block_message": {
         "type": "string",
-        "description": "默认阻断提示",
-        "hint": "输入被阻断时返回给用户的提示。留空则使用插件内置提示。此设置为所有自定义策略提供默认值。",
-        "default": ""
+        "description": "请求阻断提示",
+        "hint": "请求被 Rail 阻断时返回给用户的提示。支持 ${user_id} 和 ${rail_number}；留空则使用内置默认提示。此设置为所有自定义策略提供默认值。",
+        "default": "用户 ${user_id} 的请求在 Rail ${rail_number} 被阻断。"
       },
       "enable_encoded_payload_detector": {
         "invisible": true,
@@ -223,7 +223,14 @@
       "blacklist_message": {
         "type": "text",
         "description": "黑名单提示文本",
-        "default": "你已因多次触发风险规则被临时限制使用，请稍后再试。"
+        "hint": "支持 ${user_id}。留空仍使用内置默认提示；静默请将提示间隔设为 -1。",
+        "default": "用户 ${user_id} 已因多次触发风险规则被临时限制使用，请稍后再试。"
+      },
+      "blacklist_message_interval_minutes": {
+        "type": "int",
+        "description": "提示间隔（分钟）",
+        "hint": "同一已封禁用户在此间隔内只提示一次。0 表示每次都提示；-1 表示静默；其他负数无效。",
+        "default": 5
       }
     }
   },
@@ -320,9 +327,9 @@
       },
       "block_message": {
         "type": "string",
-        "description": "默认阻断提示",
-        "hint": "输入被阻断时返回给用户的提示。留空则使用插件内置默认值。",
-        "default": ""
+        "description": "请求阻断提示",
+        "hint": "输入被阻断时返回给用户的提示。支持 ${user_id} 和 ${rail_number}；留空则使用插件内置默认值。",
+        "default": "用户 ${user_id} 的请求在 Rail ${rail_number} 被阻断。"
       },
       "rule_list": {
         "type": "template_list",

@@ -77,6 +77,7 @@ class ConfigNormalizerTests(unittest.TestCase):
                 "auto_blacklist_enabled": True,
                 "blacklist_duration_minutes": -1,
                 "blacklist_max_violations": 4,
+                "blacklist_message_interval_minutes": 5,
                 "blacklist_message": "blocked by access control",
             },
         )
@@ -87,14 +88,20 @@ class ConfigNormalizerTests(unittest.TestCase):
                 "access_control": {
                     "blacklist_duration_minutes": 0,
                     "blacklist_max_violations": 0,
+                    "blacklist_message_interval_minutes": -2,
                 }
             }
         )
 
         self.assertEqual(cfg.access_control["blacklist_duration_minutes"], 60)
         self.assertEqual(cfg.access_control["blacklist_max_violations"], 3)
+        self.assertEqual(cfg.access_control["blacklist_message_interval_minutes"], 5)
         self.assertIn(
             "access_control.blacklist_duration_minutes must be -1 or positive",
+            " ".join(cfg.warnings),
+        )
+        self.assertIn(
+            "access_control.blacklist_message_interval_minutes must be -1, 0, or positive",
             " ".join(cfg.warnings),
         )
 

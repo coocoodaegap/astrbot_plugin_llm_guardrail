@@ -125,6 +125,7 @@ class AccessAdmission:
     allowed: bool
     decision: str = DECISION_NONE
     principal_id: str = ""
+    notify: bool = False
     warning: str = ""
 
 
@@ -200,7 +201,12 @@ class AccessControlService:
         self._principal_locks = principal_locks or get_global_principal_lock_manager()
         self._clock = clock or time.time
 
-    async def admit(self, principal: PrincipalIdentity) -> AccessAdmission:
+    async def admit(
+        self,
+        principal: PrincipalIdentity,
+        *,
+        blacklist_message_interval_minutes: int = 5,
+    ) -> AccessAdmission:
         """Read the active decision, expiring a temporary decision if needed.
 
         Storage failures deliberately fail open.  The warning is returned to
@@ -208,9 +214,14 @@ class AccessControlService:
         """
 
         try:
+            interval = _notice_interval_minutes(blacklist_message_interval_minutes)
             admission, _record = await self._mutate_principal(
                 principal,
-                self._admit_mutation,
+                lambda record, now: self._admit_mutation(
+                    record,
+                    now,
+                    blacklist_message_interval_minutes=interval,
+                ),
             )
             return admission
         except Exception as exc:  # External KV backends may raise backend-specific errors.
@@ -457,13 +468,30 @@ class AccessControlService:
         }
 
     @staticmethod
-    def _admit_mutation(record: dict[str, Any], now: int) -> AccessAdmission:
+    def _admit_mutation(
+        record: dict[str, Any],
+        now: int,
+        *,
+        blacklist_message_interval_minutes: int,
+    ) -> AccessAdmission:
         _expire_if_needed(record, now)
         decision = record["decision"]
+        notify = False
+        if decision == DECISION_BAN and blacklist_message_interval_minutes >= 0:
+            last_notice_at = record["last_blacklist_notice_at"]
+            if (
+                blacklist_message_interval_minutes == 0
+                or last_notice_at == 0
+                or now - last_notice_at
+                >= blacklist_message_interval_minutes * 60
+            ):
+                notify = True
+                record["last_blacklist_notice_at"] = now
         return AccessAdmission(
             allowed=decision != DECISION_BAN,
             decision=decision,
             principal_id=record["principal_id"],
+            notify=notify,
         )
 
     @staticmethod
@@ -592,6 +620,7 @@ def _empty_record(principal: PrincipalIdentity) -> dict[str, Any]:
         "violation_count": 0,
         "last_violation_at": 0,
         "last_violation_reason_code": "",
+        "last_blacklist_notice_at": 0,
         "updated_at": 0,
         "record_revision": 0,
     }
@@ -646,6 +675,9 @@ def _normalized_record(raw: Any, principal: PrincipalIdentity) -> dict[str, Any]
             "last_violation_at": _non_negative_int(raw.get("last_violation_at"), 0),
             "last_violation_reason_code": _known_reason_code(
                 raw.get("last_violation_reason_code")
+            ),
+            "last_blacklist_notice_at": _non_negative_int(
+                raw.get("last_blacklist_notice_at"), 0
             ),
             "updated_at": _non_negative_int(raw.get("updated_at"), 0),
             "record_revision": _non_negative_int(raw.get("record_revision"), 0),
@@ -710,6 +742,7 @@ def _set_decision(
     record["decision_expires_at"] = expires_at
     record["decision_source"] = source
     record["decision_reason_code"] = reason_code
+    record["last_blacklist_notice_at"] = 0
 
 
 def _clear_decision(record: dict[str, Any]) -> None:
@@ -717,6 +750,7 @@ def _clear_decision(record: dict[str, Any]) -> None:
     record["decision_expires_at"] = None
     record["decision_source"] = ""
     record["decision_reason_code"] = ""
+    record["last_blacklist_notice_at"] = 0
 
 
 def _reset_violation_count(record: dict[str, Any]) -> None:
@@ -729,6 +763,18 @@ def _expires_at(now: int, duration_minutes: int) -> int:
     if duration_minutes == -1:
         return 0
     return now + duration_minutes * 60
+
+
+def _notice_interval_minutes(value: Any) -> int:
+    """Defensively normalize the configured per-principal notice interval."""
+
+    if isinstance(value, bool):
+        return 5
+    try:
+        interval = int(value)
+    except (TypeError, ValueError):
+        return 5
+    return interval if interval >= -1 else 5
 
 
 def _duration_minutes(value: Any, default: int | None) -> int:

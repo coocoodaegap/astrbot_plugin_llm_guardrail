@@ -20,6 +20,8 @@ try:
     )
     from .adapters import AstrBotAdapter
     from .config import (
+        DEFAULT_BLACKLIST_MESSAGE,
+        DEFAULT_REQUEST_BLOCK_MESSAGE,
         NormalizedConfig,
         NormalizedRail,
         NormalizedNode,
@@ -62,6 +64,8 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     )
     from adapters import AstrBotAdapter
     from config import (
+        DEFAULT_BLACKLIST_MESSAGE,
+        DEFAULT_REQUEST_BLOCK_MESSAGE,
         NormalizedConfig,
         NormalizedRail,
         NormalizedNode,
@@ -101,8 +105,9 @@ WARNINGS_EXTRA_KEY = "_llm_guardrail_warnings"
 STATE_EXTRA_KEY = "_llm_guardrail_state"
 INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
 
-DEFAULT_INPUT_BLOCK_MESSAGE = "Request blocked by LLM Guardrail."
+DEFAULT_INPUT_BLOCK_MESSAGE = DEFAULT_REQUEST_BLOCK_MESSAGE
 DEFAULT_OUTPUT_BLOCK_MESSAGE = "Response blocked by LLM Guardrail."
+DEFAULT_SESSION_CONTROL_BLOCK_MESSAGE = "用户 ${user_id} 的请求被会话控制阻断。"
 LLM_REVIEW_STRUCTURE_INSTRUCTION = (
     "Return JSON only. Do not return Markdown or extra commentary.\n"
     'The JSON object must be: {"matched": boolean, "payload": object}.\n'
@@ -356,20 +361,45 @@ class GuardrailPipeline:
                 f"access control identity is invalid; fail open ({type(exc).__name__})"
             )
             return True
-        admission = await self.access_control.admit(principal)
+        admission = await self.access_control.admit(
+            principal,
+            blacklist_message_interval_minutes=self.config.access_control[
+                "blacklist_message_interval_minutes"
+            ],
+        )
         if admission.warning:
             context.warnings.append(admission.warning)
         if admission.allowed:
             return True
-        self._apply_access_control_block(context)
+        self._apply_access_control_block(context, principal, notify=admission.notify)
         return False
 
     def _bypass_admin_command(self, event: Any) -> bool:
         return self.adapter.is_admin(event) and self.adapter.is_command_event(event)
 
+    def _render_block_message(
+        self,
+        template: str,
+        context: RailContext,
+        *,
+        rail: str = "",
+        user_id: str | None = None,
+    ) -> str:
+        """Expand the small, documented block-message placeholder set."""
+
+        if user_id is None:
+            parts = self.adapter.get_principal_parts(context.event)
+            user_id = parts[1] if parts is not None else ""
+        return str(template).replace("${user_id}", str(user_id)).replace(
+            "${rail_number}", str(RAIL_STEPS.get(rail, ""))
+        )
+
     def _apply_session_control_block(self, context: RailContext) -> None:
         context.input_blocked = True
-        message = DEFAULT_INPUT_BLOCK_MESSAGE
+        message = self._render_block_message(
+            DEFAULT_SESSION_CONTROL_BLOCK_MESSAGE,
+            context,
+        )
         if context.response is not None:
             context.output_blocked = True
             if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
@@ -391,18 +421,32 @@ class GuardrailPipeline:
             adapter_success=adapter_result.success,
         )
 
-    def _apply_access_control_block(self, context: RailContext) -> None:
-        """Block a banned principal using only the configured AC message."""
+    def _apply_access_control_block(
+        self,
+        context: RailContext,
+        principal: Any,
+        *,
+        notify: bool,
+    ) -> None:
+        """Block a banned principal, reserving a notice slot atomically."""
 
         context.input_blocked = True
-        message = str(self.config.access_control.get("blacklist_message", "")).strip()
-        if not message:
+        if not notify:
             adapter_result = self.adapter.stop_event(context.event)
-        elif context.response is not None:
-            context.output_blocked = True
-            adapter_result = self.adapter.set_response_text(context.response, message)
         else:
-            adapter_result = self.adapter.set_block_result(context.event, message)
+            template = str(
+                self.config.access_control.get("blacklist_message", "")
+            ).strip() or DEFAULT_BLACKLIST_MESSAGE
+            message = self._render_block_message(
+                template,
+                context,
+                user_id=principal.user_id,
+            )
+            if context.response is not None:
+                context.output_blocked = True
+                adapter_result = self.adapter.set_response_text(context.response, message)
+            else:
+                adapter_result = self.adapter.set_block_result(context.event, message)
         context.warnings.extend(adapter_result.warnings)
         self._set_terminal_action(
             context,
@@ -564,6 +608,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_INPUT_BLOCK_MESSAGE
+            message = self._render_block_message(message, context, rail=rail.rail)
             if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_block_result(context.event, message)
             else:
@@ -781,6 +826,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_OUTPUT_BLOCK_MESSAGE
+            message = self._render_block_message(message, context, rail=rail.rail)
             if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_response_text(context.response, message)
             else:
@@ -1049,6 +1095,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_INPUT_BLOCK_MESSAGE
+            message = self._render_block_message(message, context, rail=rail.rail)
             if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_block_result(context.event, message)
             else:
@@ -1068,6 +1115,7 @@ class GuardrailPipeline:
             message = str(rail.settings.get("block_message", "")).strip()
             if not message:
                 message = DEFAULT_OUTPUT_BLOCK_MESSAGE
+            message = self._render_block_message(message, context, rail=rail.rail)
             if self.config.fallback_policy_settings["reply_placeholder_on_block"]:
                 adapter_result = self.adapter.set_response_text(context.response, message)
             else:

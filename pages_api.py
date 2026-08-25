@@ -903,6 +903,14 @@ def _validate_system_settings_payload(
                 or value < 1
             ):
                 diagnostics.append(f"{label} must be a positive integer")
+            if label == "access_control.blacklist_message_interval_minutes" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < -1
+            ):
+                diagnostics.append(
+                    f"{label} must be -1, 0, or a positive integer"
+                )
             if label == "session_policy_state.state_ttl_seconds" and (
                 not isinstance(value, int)
                 or isinstance(value, bool)

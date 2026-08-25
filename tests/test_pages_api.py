@@ -346,6 +346,10 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
         self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
+        self.assertEqual(
+            result["settings"]["access_control"]["blacklist_message_interval_minutes"],
+            5,
+        )
         self.assertTrue(result["settings"]["session_policy_state"]["enabled"])
         self.assertEqual(result["settings"]["session_policy_state"]["state_ttl_seconds"], 604800)
         self.assertFalse(result["settings"]["debug_settings"]["logging"])
@@ -364,6 +368,20 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertEqual(result[1], 400)
         self.assertIn("must be -1 or a positive integer", result[0]["detail"])
+
+    def test_system_settings_rejects_invalid_blacklist_message_interval(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
+            settings["access_control"]["blacklist_message_interval_minutes"] = -2
+            with patch(
+                "pages_api.request",
+                _Request({"expected_revision": 0, "settings": settings}),
+            ):
+                result = asyncio.run(plugin._pages_save_system_settings())
+
+        self.assertEqual(result[1], 400)
+        self.assertIn("must be -1, 0, or a positive integer", result[0]["detail"])
 
     def test_system_settings_rejects_invalid_session_policy_state_retention(self):
         plugin = _Plugin()

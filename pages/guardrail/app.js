@@ -183,7 +183,8 @@ const systemSettingHintOverrides = {
   private_chat_mode: "决定哪些私聊会进入 Guardrail 流程。",
   blacklist_duration_minutes: "-1 表示永久；这里选择“永久”时会保存为 -1。正整数表示封禁分钟数。",
   blacklist_max_violations: "只有成功提交的 Step 1 终止性拦截才会计入此阈值。",
-  blacklist_message: "留空时静默拦截已封禁主体。",
+  blacklist_message: "命中封禁时的提示文本；支持 ${user_id}。留空仍会使用内置默认提示。",
+  blacklist_message_interval_minutes: "同一已封禁用户的提示间隔。0 表示每次提示；-1 表示静默；其他负数无效。",
 };
 const templates = [
     "plain_keywords",
@@ -741,20 +742,20 @@ const policyStepDefinitions = [
   { rail: "input_rail", title: "Step 1 · 输入分析", fields: [
     ["enabled", "启用 Step 1", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
-    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "默认阻断提示", "text"],
+    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "阻断提示", "text"],
   ] },
   { rail: "routing_rail", title: "Step 2 · 模型路由", fields: [["enabled", "启用 Step 2", "boolean"]] },
   { rail: "request_rail", title: "Step 3 · 请求审查", fields: [
     ["enabled", "启用 Step 3", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
-    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "默认阻断提示", "text"],
+    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "阻断提示", "text"],
   ] },
   { rail: "prompt_rail", title: "Step 4 · 提示词强化", fields: [["enabled", "启用 Step 4", "boolean"]] },
   { rail: "output_rail", title: "Step 5 · 输出检查", fields: [
     ["enabled", "启用 Step 5", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["max_retries", "最大重试次数", "number"],
     ["default_action_on_hit", "默认命中动作", "select", ["block"]], ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]],
-    ["block_message", "默认阻断提示", "text"],
+    ["block_message", "阻断提示", "text"],
   ] },
 ];
 const policyStepSettingHints = {
@@ -764,7 +765,7 @@ const policyStepSettingHints = {
   max_retries: "仅 Step 5 使用；限制 retry_generation 的最大重试次数。",
   default_action_on_hit: "该 Step 未覆写命中动作时采用的默认处理方式。",
   default_action_on_error: "该 Step 未覆写错误动作时采用的默认处理方式。",
-  block_message: "该 Step 阻断请求或输出时使用的默认提示；留空沿用系统设置。",
+  block_message: "该 Step 阻断请求或输出时使用的提示；支持 ${user_id} 和 ${rail_number}；留空沿用系统设置。",
 };
 // Canvas does not inherit CSS custom properties. Keep its palette explicit and
 // six-digit so lane color alpha suffixes (for grid and selection overlays) stay valid.

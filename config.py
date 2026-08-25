@@ -85,6 +85,10 @@ OUTPUT_ACTIONS = {
 }
 ERROR_ACTIONS = {"default", "discard", "record", "retry_generation", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
+DEFAULT_REQUEST_BLOCK_MESSAGE = "用户 ${user_id} 的请求在 Rail ${rail_number} 被阻断。"
+DEFAULT_BLACKLIST_MESSAGE = (
+    "用户 ${user_id} 已因多次触发风险规则被临时限制使用，请稍后再试。"
+)
 LOGIC_GATES = {"all", "any"}
 INSERTION_TARGETS = {
     "system_prefix",
@@ -328,16 +332,26 @@ def _normalize_access_control(
         )
         threshold = 3
 
+    notice_interval = _as_int(
+        raw_settings.get("blacklist_message_interval_minutes"), 5
+    )
+    if notice_interval < -1:
+        warnings.append(
+            "access_control.blacklist_message_interval_minutes must be -1, 0, or positive; fallback to 5"
+        )
+        notice_interval = 5
+
     return {
         "auto_blacklist_enabled": _as_bool(
             raw_settings.get("auto_blacklist_enabled"), False
         ),
         "blacklist_duration_minutes": duration,
         "blacklist_max_violations": threshold,
+        "blacklist_message_interval_minutes": notice_interval,
         "blacklist_message": _as_str(
             raw_settings.get(
                 "blacklist_message",
-                "你已因多次触发风险规则被临时限制使用，请稍后再试。",
+                DEFAULT_BLACKLIST_MESSAGE,
             )
         ),
     }
@@ -884,7 +898,9 @@ def _normalize_fallback_policy_settings(
         "reply_placeholder_on_block": _as_bool(
             raw_settings.get("reply_placeholder_on_block"), True
         ),
-        "block_message": _as_str(raw_settings.get("block_message", "")),
+        "block_message": _as_str(
+            raw_settings.get("block_message", DEFAULT_REQUEST_BLOCK_MESSAGE)
+        ),
     }
 
 
