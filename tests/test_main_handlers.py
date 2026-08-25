@@ -6,9 +6,16 @@ import unittest
 
 
 class _CommandEvent:
-    def __init__(self, *, platform_name="aiocqhttp", sender_id="admin"):
+    def __init__(
+        self,
+        *,
+        platform_name="aiocqhttp",
+        sender_id="admin",
+        umo="aiocqhttp:group:100",
+    ):
         self.platform_name = platform_name
         self.sender_id = sender_id
+        self.unified_msg_origin = umo
 
     def get_platform_name(self):
         return self.platform_name
@@ -181,6 +188,50 @@ class MainHandlerSignatureTests(unittest.TestCase):
 
         self.assertEqual(duration[0]["plain"], "minutes 必须为 -1 或正整数。")
         self.assertEqual(limit[0]["plain"], "limit 必须是 1 到 100 的整数。")
+
+    def test_policy_commands_can_target_a_private_umo_from_an_admin_group(self):
+        _install_astrbot_stubs()
+        module = importlib.import_module("main")
+        from policy_library import PolicyDefinition, PolicyLibrary
+
+        plugin = module.LlmGuardrailPlugin(object(), {"enabled": False})
+        event = _CommandEvent(umo="aiocqhttp:group:100")
+        target_umo = "aiocqhttp:private:200"
+
+        async def run_case():
+            first = await plugin.snapshot_manager.publish_policy_library(
+                PolicyLibrary(
+                    policies=(
+                        PolicyDefinition("auto", "Policy named auto"),
+                        PolicyDefinition("matched", "Matched", umo_list=(target_umo,)),
+                    ),
+                    active_policy_id="matched",
+                ),
+                expected_revision=0,
+            )
+            listed = await _collect_results(plugin.guardrail_policies(event, "1"))
+            selected = await _collect_results(
+                plugin.guardrail_policy(event, "auto", target_umo)
+            )
+            explicit_policy_id = plugin.snapshot_manager.current.policy_library.explicit_policy_id_for_umo(
+                target_umo
+            )
+            restored = await _collect_results(
+                plugin.guardrail_policy(event, "--auto", target_umo)
+            )
+            automatic_policy_id = plugin.snapshot_manager.current.policy_library.explicit_policy_id_for_umo(
+                target_umo
+            )
+            return first, listed, selected, explicit_policy_id, restored, automatic_policy_id
+
+        first, listed, selected, explicit_policy_id, restored, automatic_policy_id = asyncio.run(run_case())
+
+        self.assertTrue(first.success)
+        self.assertIn("策略列表", listed[0]["plain"])
+        self.assertIn("auto", selected[0]["plain"])
+        self.assertEqual(explicit_policy_id, "auto")
+        self.assertIn("恢复自动选路", restored[0]["plain"])
+        self.assertEqual(automatic_policy_id, "")
 
 
 if __name__ == "__main__":

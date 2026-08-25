@@ -263,8 +263,15 @@ class SessionPolicyStateService:
         query: Any = "",
         page: Any = 1,
         page_size: Any = 30,
+        placeholder_umos: tuple[str, ...] | list[str] = (),
     ) -> SessionPolicyStateListResult:
-        """Return summary records, with lazy retention cleanup."""
+        """Return summary records, with lazy retention cleanup.
+
+        ``placeholder_umos`` lets a caller expose an external control-plane
+        reference (currently an explicit policy selection) before that UMO
+        has any runtime observation.  Placeholders are returned only in
+        memory: they never create, renew, or otherwise mutate monitor state.
+        """
 
         try:
             normalized_page = _positive_int(page, 1)
@@ -293,6 +300,15 @@ class SessionPolicyStateService:
             )
 
         summaries = [_summary_record(record) for record in records]
+        known_umos = {item["umo"] for item in summaries}
+        for raw_umo in placeholder_umos:
+            try:
+                placeholder_umo = clean_umo(raw_umo)
+            except (TypeError, ValueError):
+                continue
+            if placeholder_umo not in known_umos:
+                summaries.append(_summary_record(_empty_record(placeholder_umo)))
+                known_umos.add(placeholder_umo)
         if query_text:
             summaries = [
                 item
@@ -313,6 +329,15 @@ class SessionPolicyStateService:
             page=normalized_page,
             page_size=normalized_page_size,
         )
+
+    def empty_record(self, umo: Any) -> dict[str, Any]:
+        """Build an unpersisted detail record for a known control-plane UMO.
+
+        This is intentionally separate from ``get_detail`` so an arbitrary
+        Pages lookup cannot make a nonexistent UMO appear to be monitored.
+        """
+
+        return _public_record(_empty_record(clean_umo(umo)))
 
     async def get_detail(
         self,

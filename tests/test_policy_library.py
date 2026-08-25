@@ -168,6 +168,45 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(library.select_usable_policy_for_umo("umo:shared").policy_id, "first")
         self.assertEqual(library.select_usable_policy_for_umo("umo:other").policy_id, "fallback")
 
+    def test_explicit_umo_selection_overrides_membership_and_round_trips(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition("matched", "Matched", umo_list=("umo:one",)),
+                PolicyDefinition("manual", "Manual"),
+            ),
+            active_policy_id="matched",
+            umo_policy_selections=(("umo:one", "manual"),),
+        )
+
+        resolution = library.resolve_usable_policy_for_umo("umo:one")
+        restored = PolicyLibrary.from_dict(library.to_dict())
+
+        self.assertEqual(resolution.policy.policy_id, "manual")
+        self.assertEqual(resolution.source, "explicit")
+        self.assertEqual(restored.explicit_policy_id_for_umo("umo:one"), "manual")
+
+    def test_unusable_explicit_selection_only_falls_back_to_matching_umo_policy(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition("matched", "Matched", umo_list=("umo:one",)),
+                PolicyDefinition("global", "Global"),
+            ),
+            active_policy_id="global",
+            umo_policy_selections=(
+                ("umo:one", "deleted_policy"),
+                ("umo:two", "deleted_policy"),
+            ),
+        )
+
+        matching = library.resolve_usable_policy_for_umo("umo:one")
+        no_match = library.resolve_usable_policy_for_umo("umo:two")
+
+        self.assertEqual(matching.policy.policy_id, "matched")
+        self.assertEqual(matching.source, "explicit_fallback_umo_list")
+        self.assertIsNone(no_match.policy)
+        self.assertEqual(no_match.source, "explicit_fallback_system")
+        self.assertEqual(no_match.explicit_policy_id, "deleted_policy")
+
     def test_missing_rule_binding_is_fatal(self):
         library = PolicyLibrary(
             policies=(

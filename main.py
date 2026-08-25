@@ -74,6 +74,8 @@ ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
 ACCESS_GATE_BLOCKED_EXTRA = "_llm_guardrail_access_gate_blocked"
 ACCESS_COMMAND_DEFAULT_LIMIT = 20
 ACCESS_COMMAND_MAX_LIMIT = 100
+POLICY_COMMAND_DEFAULT_LIMIT = 20
+POLICY_COMMAND_MAX_LIMIT = 100
 
 _PHASE_RAILS: dict[str, tuple[str, ...]] = {
     "message_input": ("input_rail",),
@@ -262,6 +264,95 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         """查看当前 LLM Guardrail P2 状态。"""
 
         yield event.plain_result(self._guardrail_status_text(event))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("policies")
+    async def guardrail_policies(
+        self,
+        event: AstrMessageEvent,
+        limit: str = "",
+    ):
+        """List currently usable policies for the command event's UMO."""
+
+        parsed_limit, error = self._parse_policy_command_limit(limit)
+        if error:
+            yield event.plain_result(error)
+            return
+        umo = self.adapter.get_umo(event).strip()
+        snapshot = self.snapshot_manager.current
+        library = snapshot.policy_library
+        usable_policies = library.usable_policies()
+        policies = usable_policies[:parsed_limit]
+        if not policies:
+            yield event.plain_result("策略列表：当前没有可用策略。")
+            return
+        resolution = library.resolve_usable_policy_for_umo(umo)
+        lines = [
+            f"策略列表：显示 {len(policies)} 条可用策略",
+            f"- 当前 UMO: {umo or '(不可用)'}",
+        ]
+        for policy in policies:
+            labels: list[str] = []
+            if policy.policy_id == resolution.explicit_policy_id:
+                labels.append("已明确指定")
+            if umo and umo in policy.umo_list:
+                labels.append("匹配当前 UMO")
+            if policy.policy_id == library.active_policy_id:
+                labels.append("全局默认")
+            label = f"（{'、'.join(labels)}）" if labels else ""
+            lines.append(
+                f"- {policy.policy_id}: {policy.name or policy.policy_id}{label}"
+            )
+        if len(usable_policies) > len(policies):
+            lines.append("- 其余策略未显示；可用 /guardrail policies [limit] 调整数量。")
+        yield event.plain_result("\n".join(lines))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("policy")
+    async def guardrail_policy(
+        self,
+        event: AstrMessageEvent,
+        policy_id: str = "",
+        umo: str = "",
+    ):
+        """Select a policy for the current or explicitly named UMO."""
+
+        target = str(policy_id or "").strip()
+        if not target:
+            yield event.plain_result(
+                "用法：/guardrail policy <policy_id> [umo]；使用 /guardrail policy --auto [umo] 恢复自动选路。"
+            )
+            return
+        target_umo = str(umo or "").strip() or self.adapter.get_umo(event).strip()
+        if not target_umo:
+            yield event.plain_result("未提供目标 UMO，且无法取得当前 UMO，未修改策略指定。")
+            return
+        snapshot = self.snapshot_manager.current
+        if target != "--auto" and not snapshot.policy_library.is_policy_usable(target):
+            yield event.plain_result(
+                f"策略“{target}”不存在或当前不可用，未修改当前 UMO 的策略指定。"
+            )
+            return
+        result = await self.snapshot_manager.publish_umo_policy_selection(
+            target_umo,
+            None if target == "--auto" else target,
+            expected_revision=snapshot.revision,
+        )
+        if result.conflict:
+            yield event.plain_result("策略库已被其他操作更新，请重新执行该指令。")
+            return
+        if not result.success:
+            detail = result.diagnostics[0] if result.diagnostics else "未知错误"
+            yield event.plain_result(f"保存当前 UMO 的策略指定失败：{detail}")
+            return
+        if target == "--auto":
+            yield event.plain_result(
+                f"已取消 UMO “{target_umo}”的明确策略指定，后续请求恢复自动选路。"
+            )
+            return
+        yield event.plain_result(
+            f"已为 UMO “{target_umo}”明确指定策略“{target}”；后续请求将优先使用它。"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("acc")
@@ -496,6 +587,18 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return 0, "limit 必须是 1 到 100 的整数。"
         value = int(text)
         if value < 1 or value > ACCESS_COMMAND_MAX_LIMIT:
+            return 0, "limit 必须是 1 到 100 的整数。"
+        return value, ""
+
+    @classmethod
+    def _parse_policy_command_limit(cls, raw_limit: str) -> tuple[int, str]:
+        text = str(raw_limit or "").strip()
+        if not text:
+            return POLICY_COMMAND_DEFAULT_LIMIT, ""
+        if not cls._looks_like_integer(text):
+            return 0, "limit 必须是 1 到 100 的整数。"
+        value = int(text)
+        if value < 1 or value > POLICY_COMMAND_MAX_LIMIT:
             return 0, "limit 必须是 1 到 100 的整数。"
         return value, ""
 

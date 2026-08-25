@@ -245,6 +245,28 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(restarted.current.runtime_config.fallback_policy_settings["max_text_chars"], 3)
         self.assertTrue(path.with_suffix(".json.bak").exists() is False)
 
+    def test_explicit_umo_policy_selection_persists_with_the_policy_library(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config_snapshot.json"
+            manager = ConfigSnapshotManager({}, path)
+            library = PolicyLibrary(
+                policies=(PolicyDefinition("auto", "Policy named auto"),),
+                active_policy_id="auto",
+            )
+            published = asyncio.run(manager.publish_policy_library(library, 0))
+            selected = asyncio.run(
+                manager.publish_umo_policy_selection(
+                    "qq:group:1", "auto", published.snapshot.revision
+                )
+            )
+            restarted = ConfigSnapshotManager({}, path)
+
+        self.assertTrue(selected.success)
+        self.assertEqual(
+            restarted.current.policy_library.explicit_policy_id_for_umo("qq:group:1"),
+            "auto",
+        )
+
     def test_overview_has_no_raw_config(self):
         manager = ConfigSnapshotManager(
             {
@@ -420,6 +442,43 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
                 "__fallback_input_enforcement",
             ],
         )
+
+    def test_explicit_umo_selection_publishes_by_revision_and_clears_to_auto(self):
+        manager = ConfigSnapshotManager({})
+        library = PolicyLibrary(
+            rules=(RuleDefinition("risk", "plain_keywords", {"keywords": ["secret"]}),),
+            policies=(
+                PolicyDefinition(
+                    "matched",
+                    "Matched",
+                    bindings=(PolicyRuleBinding("risk", "input_rail"),),
+                    umo_list=("umo:one",),
+                ),
+                PolicyDefinition("manual", "Manual"),
+            ),
+            active_policy_id="manual",
+        )
+        first = asyncio.run(manager.publish_policy_library(library, 0))
+        selected = asyncio.run(
+            manager.publish_umo_policy_selection(
+                "umo:one", "manual", first.snapshot.revision
+            )
+        )
+
+        selected_id, selected_config = selected.snapshot.runtime_config_for_umo("umo:one")
+        cleared = asyncio.run(
+            manager.publish_umo_policy_selection(
+                "umo:one", None, selected.snapshot.revision
+            )
+        )
+        automatic_id, automatic_config = cleared.snapshot.runtime_config_for_umo("umo:one")
+
+        self.assertTrue(selected.success)
+        self.assertEqual(selected_id, "manual")
+        self.assertEqual(selected_config.rails["input_rail"].rules, [])
+        self.assertTrue(cleared.success)
+        self.assertEqual(automatic_id, "matched")
+        self.assertEqual(automatic_config.rails["input_rail"].rules[0].rule_id, "risk")
 
     def test_missing_usable_policy_graph_selects_system_fallback(self):
         manager = ConfigSnapshotManager({})

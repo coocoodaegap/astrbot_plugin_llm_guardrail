@@ -96,6 +96,27 @@ class SessionPolicyStateServiceTests(unittest.TestCase):
         self.assertEqual(result["signals"][0]["signal"], _signal()["signal"])
         self.assertEqual(detail.record["activities"]["items"][0]["kind"], "policy_stage_completed")
 
+    def test_selection_placeholder_is_listed_without_persisting_monitor_state(self):
+        async def run_case():
+            service = self._service(_Clock(100))
+            listed = await service.list_summaries(
+                settings=_settings(),
+                placeholder_umos=("qq:group:never-spoke",),
+            )
+            detail = await service.get_detail(
+                "qq:group:never-spoke", settings=_settings()
+            )
+            return listed, detail, service.empty_record("qq:group:never-spoke")
+
+        listed, detail, placeholder = asyncio.run(run_case())
+
+        self.assertEqual(listed.total, 1)
+        self.assertEqual(listed.items[0]["umo"], "qq:group:never-spoke")
+        self.assertEqual(listed.items[0]["activity_count"], 0)
+        self.assertFalse(detail.found)
+        self.assertIsNone(placeholder["last_policy_result"])
+        self.assertEqual(placeholder["activities"]["items"], [])
+
     def test_route_candidate_and_request_observation_are_independent(self):
         async def run_case():
             service = self._service(_Clock(200))

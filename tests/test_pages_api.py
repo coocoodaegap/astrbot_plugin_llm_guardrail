@@ -9,7 +9,7 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from pages_api import GuardrailPagesApiMixin
-from policy_library import PolicyLibrary
+from policy_library import PolicyDefinition, PolicyLibrary
 from access_control import AccessControlService
 from rag_experience import RagExperienceService
 from session_lock import PrincipalLockManager, UmoLockManager
@@ -139,6 +139,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/clear_access_control_decision",
             "/astrbot_plugin_llm_guardrail/get_session_policy_states",
             "/astrbot_plugin_llm_guardrail/get_session_policy_state",
+            "/astrbot_plugin_llm_guardrail/set_umo_policy_selection",
             "/astrbot_plugin_llm_guardrail/get_rag_experiences",
             "/astrbot_plugin_llm_guardrail/get_rag_experience",
             "/astrbot_plugin_llm_guardrail/save_rag_experience",
@@ -445,6 +446,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertNotIn("signals", listed["items"][0]["last_policy_result"])
         self.assertTrue(detail["success"])
         self.assertEqual(detail["record"]["last_policy_result"]["signals"][0]["node_id"], "risk")
+        self.assertEqual(detail["policy_selection"]["source"], "system_fallback")
 
     def test_session_policy_state_pages_api_returns_not_found_for_unknown_umo(self):
         plugin = _Plugin()
@@ -453,6 +455,78 @@ class GuardrailPagesApiTests(unittest.TestCase):
                 missing = asyncio.run(plugin._pages_get_session_policy_state())
 
         self.assertEqual(missing[1], 404)
+
+    def test_pages_lists_selection_only_umo_and_returns_a_reversible_detail(self):
+        plugin = _Plugin()
+        library = PolicyLibrary(
+            policies=(PolicyDefinition("manual", "Manual"),),
+            active_policy_id="manual",
+            umo_policy_selections=(("qq:private:never-spoke", "manual"),),
+        )
+        asyncio.run(plugin.snapshot_manager.publish_policy_library(library, 0))
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request(args={})):
+                listed = asyncio.run(plugin._pages_get_session_policy_states())
+            with patch(
+                "pages_api.request", _Request(args={"umo": "qq:private:never-spoke"})
+            ):
+                detail = asyncio.run(plugin._pages_get_session_policy_state())
+
+        self.assertEqual(listed["pagination"]["total"], 1)
+        self.assertEqual(listed["items"][0]["umo"], "qq:private:never-spoke")
+        self.assertEqual(detail["record"]["activity_count"] if "activity_count" in detail["record"] else 0, 0)
+        self.assertIsNone(detail["record"]["last_policy_result"])
+        self.assertEqual(detail["policy_selection"]["explicit_policy_id"], "manual")
+
+    def test_pages_can_set_and_clear_an_explicit_umo_policy_selection(self):
+        plugin = _Plugin()
+        library = PolicyLibrary(
+            policies=(PolicyDefinition("auto", "Automatic"),),
+            active_policy_id="auto",
+        )
+        published = asyncio.run(
+            plugin.snapshot_manager.publish_policy_library(library, 0)
+        )
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "umo": "qq:group:1",
+                        "policy_id": "auto",
+                        "expected_revision": published.snapshot.revision,
+                    }
+                ),
+            ):
+                selected = asyncio.run(plugin._pages_set_umo_policy_selection())
+            selected_policy_id = (
+                plugin.snapshot_manager.current.policy_library.explicit_policy_id_for_umo(
+                    "qq:group:1"
+                )
+            )
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "umo": "qq:group:1",
+                        "policy_id": None,
+                        "expected_revision": selected["revision"],
+                    }
+                ),
+            ):
+                cleared = asyncio.run(plugin._pages_set_umo_policy_selection())
+
+        self.assertTrue(selected["success"])
+        self.assertEqual(selected_policy_id, "auto")
+        self.assertTrue(cleared["success"])
+        self.assertEqual(
+            plugin.snapshot_manager.current.policy_library.explicit_policy_id_for_umo(
+                "qq:group:1"
+            ),
+            "",
+        )
 
     def test_rule_and_policy_libraries_are_returned_without_each_other(self):
         plugin = _Plugin()
@@ -463,7 +537,10 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertEqual(rules["revision"], 0)
         self.assertEqual(set(rules["rule_library"]), {"rules"})
-        self.assertEqual(set(policies["policy_library"]), {"policies", "active_policy_id"})
+        self.assertEqual(
+            set(policies["policy_library"]),
+            {"policies", "active_policy_id", "umo_policy_selections"},
+        )
 
     def test_rule_and_policy_edits_save_independently_as_new_snapshots(self):
         plugin = _Plugin()

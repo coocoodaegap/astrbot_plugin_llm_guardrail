@@ -55,6 +55,7 @@ class GuardrailPagesApiMixin:
             ("clear_access_control_decision", self._pages_clear_access_control_decision, ["POST"], "Clear an input access-control decision"),
             ("get_session_policy_states", self._pages_get_session_policy_states, ["GET"], "List observed UMO policy states"),
             ("get_session_policy_state", self._pages_get_session_policy_state, ["GET"], "Get one observed UMO policy state"),
+            ("set_umo_policy_selection", self._pages_set_umo_policy_selection, ["POST"], "Set or clear one UMO explicit policy selection"),
             ("get_rag_experiences", self._pages_get_rag_experiences, ["GET"], "List RAG experience records"),
             ("get_rag_experience", self._pages_get_rag_experience, ["GET"], "Get one RAG experience record"),
             ("save_rag_experience", self._pages_save_rag_experience, ["POST"], "Save one RAG experience record"),
@@ -324,11 +325,18 @@ class GuardrailPagesApiMixin:
         if service is None:
             return self._pages_error("Session-policy monitor service is unavailable", 503)
         config = self.snapshot_manager.current.runtime_config
+        library = self.snapshot_manager.current.policy_library
         result = await service.list_summaries(
             settings=config.session_policy_state,
             query=self._pages_query_value("query", ""),
             page=self._pages_query_value("page", 1),
             page_size=self._pages_query_value("page_size", 30),
+            # An explicit selection is control-plane data, not an observed
+            # runtime state.  It still needs a discoverable UMO detail page so
+            # an administrator can revoke it before the first conversation.
+            placeholder_umos=tuple(
+                umo for umo, _policy_id in library.umo_policy_selections
+            ),
         )
         if not result.success:
             return self._pages_error(
@@ -358,24 +366,75 @@ class GuardrailPagesApiMixin:
         if not str(umo or "").strip():
             return self._pages_error("umo is required", 400)
         config = self.snapshot_manager.current.runtime_config
+        selection = self._pages_umo_policy_selection_payload(umo)
         result = await service.get_detail(umo, settings=config.session_policy_state)
         if not result.success:
             return self._pages_error(
                 result.warning or "Session-policy state is unavailable",
                 503,
             )
-        if not result.found:
+        if not result.found and not selection["explicit_policy_id"]:
             return self._pages_error("Session-policy state was not found", 404)
+        record = result.record if result.found else service.empty_record(umo)
         return jsonify(
             {
                 "success": True,
                 "monitoring_enabled": bool(config.session_policy_state.get("enabled", False)),
-                "record": result.record,
+                "record": record,
+                "policy_selection": selection,
             }
         )
 
     def _pages_session_policy_state_service(self):
         return getattr(self, "session_policy_state", None)
+
+    def _pages_umo_policy_selection_payload(self, umo: str) -> dict[str, Any]:
+        """Describe persisted selection and current effective resolution for Pages."""
+
+        library = self.snapshot_manager.current.policy_library
+        resolution = library.resolve_usable_policy_for_umo(umo)
+        normalized_umo = str(umo or "").strip()
+        return {
+            "explicit_policy_id": resolution.explicit_policy_id,
+            "effective_policy_id": (
+                resolution.policy.policy_id if resolution.policy is not None else ""
+            ),
+            "source": resolution.source,
+            "available_policies": [
+                {
+                    "policy_id": policy.policy_id,
+                    "name": policy.name,
+                    "umo_matched": bool(
+                        normalized_umo and normalized_umo in policy.umo_list
+                    ),
+                }
+                for policy in library.usable_policies()
+            ],
+        }
+
+    async def _pages_set_umo_policy_selection(self):
+        """Set one explicit policy selection, or clear it with JSON null."""
+
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        umo = payload.get("umo")
+        policy_id = payload.get("policy_id")
+        expected_revision = payload.get("expected_revision")
+        if not isinstance(umo, str) or not umo.strip():
+            return self._pages_error("umo must be a non-empty string")
+        if policy_id is not None and not isinstance(policy_id, str):
+            return self._pages_error("policy_id must be a string or null")
+        if isinstance(policy_id, str) and not policy_id.strip():
+            return self._pages_error("policy_id must not be empty; use null for auto")
+        if not isinstance(expected_revision, int):
+            return self._pages_error("expected_revision must be an integer")
+        result = await self.snapshot_manager.publish_umo_policy_selection(
+            umo,
+            policy_id,
+            expected_revision,
+        )
+        return self._pages_publish_response(result, "UMO policy selection")
 
     async def _pages_get_rag_experiences(self):
         """List only concise RAG experience summaries for the Page."""
@@ -596,6 +655,9 @@ class GuardrailPagesApiMixin:
                 "policy_library": {
                     "policies": [policy.to_dict() for policy in snapshot.policy_library.policies],
                     "active_policy_id": snapshot.policy_library.active_policy_id,
+                    "umo_policy_selections": dict(
+                        snapshot.policy_library.umo_policy_selections
+                    ),
                 },
                 "validation": {
                     "valid": validation.valid,

@@ -1559,6 +1559,7 @@ textarea {
 
 .session-policy-heading,
 .session-policy-controls,
+.session-policy-selection-controls,
 .session-policy-pagination,
 .session-policy-activity>div {
     display: flex;
@@ -1571,8 +1572,21 @@ textarea {
     align-items: end
 }
 
+.session-policy-selection-controls {
+    align-items: end;
+    justify-content: flex-start
+}
+
 .session-policy-controls label {
     display: grid;
+    gap: 5px;
+    color: #64748b;
+    font-size: .82rem
+}
+
+.session-policy-selection-controls label {
+    display: grid;
+    min-width: min(420px, 100%);
     gap: 5px;
     color: #64748b;
     font-size: .82rem
@@ -2923,6 +2937,7 @@ label,
 .access-form-grid label,
 .access-record-controls label,
 .session-policy-controls label,
+.session-policy-selection-controls label,
 .rag-experience-controls label,
 .rag-experience-editor-grid label {
     color: var(--text-soft);
@@ -3612,6 +3627,7 @@ textarea,
     .access-record-controls,
     .session-policy-heading,
     .session-policy-controls,
+    .session-policy-selection-controls,
     .session-policy-pagination,
     .rag-experience-heading,
     .rag-experience-controls,
@@ -3622,8 +3638,10 @@ textarea,
 
     .access-record-controls,
     .session-policy-controls,
+    .session-policy-selection-controls,
     .rag-experience-controls,
     .session-policy-controls input,
+    .session-policy-selection-controls label,
     .rag-experience-controls input {
         width: 100%;
     }

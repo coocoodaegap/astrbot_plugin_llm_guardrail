@@ -137,6 +137,9 @@ const status = $("status"),
   sessionPolicyStateNextPage = $("session-policy-state-next-page"),
   sessionPolicyDetailUmo = $("session-policy-detail-umo"),
   sessionPolicyDetailMeta = $("session-policy-detail-meta"),
+  sessionPolicySelection = $("session-policy-selection"),
+  saveSessionPolicySelection = $("save-session-policy-selection"),
+  sessionPolicySelectionStatus = $("session-policy-selection-status"),
   sessionPolicyResultSummary = $("session-policy-result-summary"),
   sessionPolicySignalList = $("session-policy-signal-list"),
   sessionPolicyRouteCandidate = $("session-policy-route-candidate"),
@@ -296,7 +299,7 @@ const systemOptionDescriptions = {
 };
 let currentRevision = null,
   ruleLibrary = { rules: [] },
-  policyLibrary = { policies: [], active_policy_id: "" },
+  policyLibrary = { policies: [], active_policy_id: "", umo_policy_selections: {} },
   openRuleIds = [],
   selectedPolicyId = null,
   pendingPolicyDeletionId = null,
@@ -335,7 +338,8 @@ let sessionPolicyStateItems = [],
   sessionPolicyStatePageSize = 30,
   sessionPolicyMonitoringEnabled = false,
   sessionPolicyStateRefreshEpoch = 0,
-  sessionPolicyStateDetailEpoch = 0;
+  sessionPolicyStateDetailEpoch = 0,
+  sessionPolicySelectionInFlight = false;
 let ragExperienceItems = [],
   selectedRagExperience = null,
   ragExperienceCurrentPage = 1,
@@ -3413,12 +3417,73 @@ function renderSessionPolicyActivities(items) {
     sessionPolicyActivityList.append(activity);
   }
 }
-function renderSessionPolicyStateDetail(record) {
+function sessionPolicySelectionSourceLabel(source) {
+  return {
+    explicit: "明确指定",
+    explicit_fallback_umo_list: "明确指定暂不可用，已按 UMO 匹配回退",
+    explicit_fallback_system: "明确指定暂不可用，当前使用系统 fallback",
+    umo_list: "自动选路：UMO 匹配",
+    global_default: "自动选路：全局默认",
+    system_fallback: "自动选路：系统 fallback",
+  }[source] || "当前选路来源未知";
+}
+function renderSessionPolicySelection(selection) {
+  sessionPolicySelection.replaceChildren();
+  sessionPolicySelectionStatus.textContent = "";
+  if (!selection || typeof selection !== "object") {
+    const option = document.createElement("option");
+    option.textContent = "正在加载策略指定…";
+    option.value = "";
+    sessionPolicySelection.append(option);
+    sessionPolicySelection.disabled = true;
+    saveSessionPolicySelection.disabled = true;
+    return;
+  }
+  const explicitPolicyId = String(selection.explicit_policy_id || "").trim();
+  const availablePolicies = Array.isArray(selection.available_policies)
+    ? selection.available_policies
+    : [];
+  const automatic = document.createElement("option");
+  automatic.value = "";
+  automatic.textContent = "自动选路（取消明确指定）";
+  sessionPolicySelection.append(automatic);
+  let hasExplicitOption = !explicitPolicyId;
+  for (const policy of availablePolicies) {
+    const option = document.createElement("option");
+    option.value = String(policy.policy_id || "");
+    option.textContent = `${policy.name || option.value} · ${option.value}${policy.umo_matched ? "（匹配当前 UMO）" : ""}`;
+    if (option.value === explicitPolicyId) hasExplicitOption = true;
+    sessionPolicySelection.append(option);
+  }
+  if (explicitPolicyId && !hasExplicitOption) {
+    const unavailable = document.createElement("option");
+    unavailable.value = explicitPolicyId;
+    unavailable.textContent = `当前明确指定：${explicitPolicyId}（已不可用）`;
+    unavailable.disabled = true;
+    sessionPolicySelection.append(unavailable);
+  }
+  sessionPolicySelection.value = hasExplicitOption ? explicitPolicyId : "";
+  sessionPolicySelection.disabled = false;
+  saveSessionPolicySelection.disabled = false;
+  saveSessionPolicySelection.textContent = explicitPolicyId
+    ? "更新指定"
+    : "保存指定";
+  const effectivePolicyId = String(selection.effective_policy_id || "").trim();
+  const requested = explicitPolicyId
+    ? `明确指定：${explicitPolicyId}`
+    : "当前未明确指定策略";
+  const effective = effectivePolicyId
+    ? `实际解析：${effectivePolicyId}`
+    : "实际解析：系统 fallback";
+  sessionPolicySelectionStatus.textContent = `${requested} · ${effective} · ${sessionPolicySelectionSourceLabel(selection.source)}`;
+}
+function renderSessionPolicyStateDetail(record, policySelection = null) {
   const result = record?.last_policy_result || null;
   sessionPolicyDetailUmo.textContent = record?.umo || "会话策略状态";
   sessionPolicyDetailMeta.textContent = record
     ? `记录版本 ${record.record_revision ?? 0} · 最近活动 ${formatStateTime(record.updated_at)}`
     : "未找到该 UMO 状态。";
+  renderSessionPolicySelection(policySelection);
   sessionPolicyResultSummary.replaceChildren();
   if (!result) {
     const empty = document.createElement("p");
@@ -3488,6 +3553,7 @@ async function showSessionPolicyStateDetail(umo) {
   setSessionPolicyStateView(true);
   sessionPolicyDetailUmo.textContent = selectedSessionPolicyUmo;
   sessionPolicyDetailMeta.textContent = "正在加载 UMO 状态…";
+  renderSessionPolicySelection(null);
   try {
     const payload = await bridge.apiGet("get_session_policy_state", { umo: selectedSessionPolicyUmo });
     if (epoch !== sessionPolicyStateDetailEpoch) return;
@@ -3496,7 +3562,7 @@ async function showSessionPolicyStateDetail(umo) {
       renderSessionPolicyStateDetail(null);
       return;
     }
-    renderSessionPolicyStateDetail(payload.record);
+    renderSessionPolicyStateDetail(payload.record, payload.policy_selection);
     if (!payload.monitoring_enabled) {
       sessionPolicyDetailMeta.textContent += " · 监控当前已关闭，已有记录仅供查看。";
     }
@@ -3505,6 +3571,40 @@ async function showSessionPolicyStateDetail(umo) {
       sessionPolicyDetailMeta.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
       renderSessionPolicyStateDetail(null);
     }
+  }
+}
+async function saveCurrentSessionPolicySelection() {
+  if (!bridge || !selectedSessionPolicyUmo || sessionPolicySelectionInFlight) return;
+  const policyId = sessionPolicySelection.value.trim();
+  if (!Number.isInteger(currentRevision)) {
+    sessionPolicySelectionStatus.textContent = "尚未加载当前配置，无法保存指定。";
+    return;
+  }
+  sessionPolicySelectionInFlight = true;
+  sessionPolicySelection.disabled = true;
+  saveSessionPolicySelection.disabled = true;
+  sessionPolicySelectionStatus.textContent = "正在保存策略指定…";
+  try {
+    const result = await bridge.apiPost("set_umo_policy_selection", {
+      umo: selectedSessionPolicyUmo,
+      policy_id: policyId || null,
+      expected_revision: currentRevision,
+    });
+    if (!result?.success) {
+      sessionPolicySelectionStatus.textContent = result?.detail || result?.error || "保存策略指定失败。";
+      return;
+    }
+    currentRevision = result.revision;
+    await showSessionPolicyStateDetail(selectedSessionPolicyUmo);
+    sessionPolicySelectionStatus.textContent = policyId
+      ? `已为该 UMO 明确指定 ${policyId}。`
+      : "已取消明确指定，后续请求恢复自动选路。";
+  } catch (error) {
+    sessionPolicySelectionStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    sessionPolicySelectionInFlight = false;
+    sessionPolicySelection.disabled = false;
+    saveSessionPolicySelection.disabled = false;
   }
 }
 async function refreshSessionPolicyStates(resetPage = false) {
@@ -3881,6 +3981,10 @@ async function refresh() {
       ? policyResult.policy_library.policies
       : [],
     active_policy_id: String(policyResult.policy_library?.active_policy_id || ""),
+    umo_policy_selections: policyResult.policy_library?.umo_policy_selections
+      && typeof policyResult.policy_library.umo_policy_selections === "object"
+      ? policyResult.policy_library.umo_policy_selections
+      : {},
   };
   openRuleEditors.replaceChildren();
   openRuleIds = [];
@@ -4073,6 +4177,9 @@ refreshAccessRecords.addEventListener("click", refreshAccessControl);
 saveAccessDecision.addEventListener("click", saveAccessDecisionMutation);
 resetAccessForm.addEventListener("click", resetAccessFormState);
 backToSessionPolicyList.addEventListener("click", showSessionPolicyStateList);
+saveSessionPolicySelection.addEventListener("click", () => {
+  void saveCurrentSessionPolicySelection();
+});
 refreshSessionPolicyStatesButton.addEventListener("click", () => {
   void refreshSessionPolicyStates(true);
 });

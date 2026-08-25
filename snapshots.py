@@ -203,6 +203,7 @@ class ConfigSnapshotManager:
             rules=tuple(rules),
             policies=current_library.policies,
             active_policy_id=current_library.active_policy_id,
+            umo_policy_selections=current_library.umo_policy_selections,
         )
         return await self.publish_policy_library(library, expected_revision)
 
@@ -219,6 +220,43 @@ class ConfigSnapshotManager:
             rules=current_library.rules,
             policies=tuple(policies),
             active_policy_id=active_policy_id,
+            umo_policy_selections=current_library.umo_policy_selections,
+        )
+        return await self.publish_policy_library(library, expected_revision)
+
+    async def publish_umo_policy_selection(
+        self,
+        umo: str,
+        policy_id: str | None,
+        expected_revision: int | None,
+    ) -> SnapshotPublishResult:
+        """Persist one UMO's explicit policy selection through snapshot CAS.
+
+        A non-empty policy ID must be usable at the moment it is selected.
+        Existing stale selections are still retained by policy-library edits so
+        they can resume automatically after the referenced policy is repaired.
+        """
+
+        normalized_umo = str(umo or "").strip()
+        normalized_policy_id = str(policy_id or "").strip()
+        if not normalized_umo:
+            return SnapshotPublishResult(
+                success=False,
+                diagnostics=("umo is required",),
+            )
+        current_library = self._current.policy_library
+        if normalized_policy_id and not current_library.is_policy_usable(
+            normalized_policy_id
+        ):
+            return SnapshotPublishResult(
+                success=False,
+                diagnostics=(
+                    f"policy is unavailable or does not exist: {normalized_policy_id}",
+                ),
+            )
+        library = current_library.with_umo_policy_selection(
+            normalized_umo,
+            normalized_policy_id or None,
         )
         return await self.publish_policy_library(library, expected_revision)
 

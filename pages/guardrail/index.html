@@ -385,7 +385,7 @@
       <div class="page-section-heading">
         <p class="eyebrow">SESSION POLICY OBSERVATORY</p>
         <h2>会话策略监控</h2>
-        <p>查看 Guardrail 已观测到的 UMO 状态与历史路由解释；该页面不参与下一次请求。</p>
+        <p>查看 Guardrail 已观测到的 UMO 状态与历史路由解释，并可为选中的 UMO 明确指定后续策略。</p>
       </div>
       <section id="session-policy-list-panel" class="session-policy-layout" aria-label="UMO 状态列表">
         <section class="card session-policy-list-card">
@@ -418,6 +418,20 @@
           </div>
           <button id="back-to-session-policy-list" type="button" class="button-secondary">返回会话列表</button>
         </div>
+        <section class="card session-policy-selection-card" aria-labelledby="session-policy-selection-heading">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">EXPLICIT POLICY SELECTION</p>
+              <h3 id="session-policy-selection-heading">后续请求策略</h3>
+              <p class="muted">明确指定优先于自动选路；若它之后失效，只会回退到包含该 UMO 的可用策略。</p>
+            </div>
+          </div>
+          <div class="session-policy-selection-controls">
+            <label>策略<select id="session-policy-selection" aria-label="为当前 UMO 指定策略"></select></label>
+            <button id="save-session-policy-selection" type="button">保存指定</button>
+          </div>
+          <p id="session-policy-selection-status" class="muted" aria-live="polite"></p>
+        </section>
         <section class="card session-policy-result-card" aria-labelledby="session-policy-result-heading">
           <div class="card-heading"><div><p class="eyebrow">LAST POLICY RESULT</p><h3 id="session-policy-result-heading">最近策略结果</h3></div></div>
           <div id="session-policy-result-summary" class="session-policy-result-grid"></div>

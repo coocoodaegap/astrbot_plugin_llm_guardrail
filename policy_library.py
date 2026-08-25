@@ -226,12 +226,28 @@ class LibraryValidation:
 
 
 @dataclass(frozen=True)
+class UmoPolicyResolution:
+    """The effective policy chosen for one UMO and why it was chosen.
+
+    An explicit selection is deliberately kept even when the referenced policy
+    is no longer usable.  That preserves the operator's intent while the
+    resolver safely falls back to a UMO-compatible policy (or the system
+    fallback) until the selected policy is repaired or recreated.
+    """
+
+    policy: PolicyDefinition | None
+    source: str
+    explicit_policy_id: str = ""
+
+
+@dataclass(frozen=True)
 class PolicyLibrary:
     """Serializable P1 rule/policy storage model."""
 
     rules: tuple[RuleDefinition, ...] = ()
     policies: tuple[PolicyDefinition, ...] = ()
     active_policy_id: str = ""
+    umo_policy_selections: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def empty(cls) -> "PolicyLibrary":
@@ -251,12 +267,14 @@ class PolicyLibrary:
             rules=self.rules,
             policies=policies,
             active_policy_id=active_policy_id,
+            umo_policy_selections=self.umo_policy_selections,
         )
         if active_policy_id not in library._usable_policy_ids():
             return PolicyLibrary(
                 rules=library.rules,
                 policies=library.policies,
                 active_policy_id="",
+                umo_policy_selections=library.umo_policy_selections,
             )
         return library
 
@@ -265,6 +283,7 @@ class PolicyLibrary:
             "rules": [rule.to_dict() for rule in self.rules],
             "policies": [policy.to_dict() for policy in self.policies],
             "active_policy_id": self.active_policy_id,
+            "umo_policy_selections": dict(self.umo_policy_selections),
         }
 
     @classmethod
@@ -282,10 +301,19 @@ class PolicyLibrary:
             if isinstance(item, Mapping)
         ] if isinstance(policies, list) else []
         active_policy_id = str(value.get("active_policy_id") or "").strip()
+        raw_selections = value.get("umo_policy_selections")
+        selections: list[tuple[str, str]] = []
+        if isinstance(raw_selections, Mapping):
+            for raw_umo, raw_policy_id in raw_selections.items():
+                umo = str(raw_umo or "").strip()
+                policy_id = str(raw_policy_id or "").strip()
+                if umo and policy_id:
+                    selections.append((umo, policy_id))
         return cls(
             rules=tuple(parsed_rules),
             policies=tuple(parsed_policies),
             active_policy_id=active_policy_id,
+            umo_policy_selections=tuple(selections),
         )
 
     def get_policy(self, policy_id: str | None = None) -> PolicyDefinition | None:
@@ -293,20 +321,110 @@ class PolicyLibrary:
         return next((policy for policy in self.policies if policy.policy_id == target), None)
 
     def select_usable_policy_for_umo(self, umo: str) -> PolicyDefinition | None:
-        """Select a usable UMO override or configured default, if one exists."""
+        """Select a usable effective policy for one UMO, if one exists."""
+
+        return self.resolve_usable_policy_for_umo(umo).policy
+
+    def resolve_usable_policy_for_umo(self, umo: str) -> UmoPolicyResolution:
+        """Resolve explicit selection, normal UMO routing, then global default.
+
+        When an operator-selected policy becomes unavailable, only a usable
+        policy whose ``umo_list`` contains this UMO may be used as a temporary
+        replacement.  In particular, the unrelated global default is not an
+        acceptable fallback for an explicit selection.
+        """
 
         usable_ids = self._usable_policy_ids()
         normalized_umo = str(umo or "").strip()
-        if normalized_umo:
-            for policy in self.policies:
-                if (
-                    normalized_umo in policy.umo_list
-                    and policy.policy_id in usable_ids
-                ):
-                    return policy
+        explicit_policy_id = self.explicit_policy_id_for_umo(normalized_umo)
+        if explicit_policy_id:
+            explicit_policy = self.get_policy(explicit_policy_id)
+            if (
+                explicit_policy is not None
+                and explicit_policy.policy_id in usable_ids
+            ):
+                return UmoPolicyResolution(
+                    policy=explicit_policy,
+                    source="explicit",
+                    explicit_policy_id=explicit_policy_id,
+                )
+            fallback = self._first_usable_umo_policy(normalized_umo, usable_ids)
+            return UmoPolicyResolution(
+                policy=fallback,
+                source=(
+                    "explicit_fallback_umo_list"
+                    if fallback is not None
+                    else "explicit_fallback_system"
+                ),
+                explicit_policy_id=explicit_policy_id,
+            )
+
+        umo_policy = self._first_usable_umo_policy(normalized_umo, usable_ids)
+        if umo_policy is not None:
+            return UmoPolicyResolution(policy=umo_policy, source="umo_list")
         default_policy = self.get_policy()
         if default_policy is not None and default_policy.policy_id in usable_ids:
-            return default_policy
+            return UmoPolicyResolution(policy=default_policy, source="global_default")
+        return UmoPolicyResolution(policy=None, source="system_fallback")
+
+    def explicit_policy_id_for_umo(self, umo: str) -> str:
+        """Return the stored explicit policy ID for this UMO, if any."""
+
+        normalized_umo = str(umo or "").strip()
+        if not normalized_umo:
+            return ""
+        return dict(self.umo_policy_selections).get(normalized_umo, "")
+
+    def usable_policies(self) -> tuple[PolicyDefinition, ...]:
+        """Return all currently compilable policies in library order."""
+
+        usable_ids = self._usable_policy_ids()
+        return tuple(
+            policy for policy in self.policies if policy.policy_id in usable_ids
+        )
+
+    def is_policy_usable(self, policy_id: str) -> bool:
+        return str(policy_id or "").strip() in self._usable_policy_ids()
+
+    def with_umo_policy_selection(
+        self,
+        umo: str,
+        policy_id: str | None,
+    ) -> "PolicyLibrary":
+        """Return this library with one UMO's explicit selection changed.
+
+        ``None`` removes the explicit selection and restores regular automatic
+        policy resolution.  This method intentionally does not require the
+        referenced policy to exist: callers that create a new selection enforce
+        current usability, while persisted stale selections must survive edits.
+        """
+
+        normalized_umo = str(umo or "").strip()
+        if not normalized_umo:
+            raise ValueError("umo is required")
+        normalized_policy_id = str(policy_id or "").strip()
+        selections = dict(self.umo_policy_selections)
+        if normalized_policy_id:
+            selections[normalized_umo] = normalized_policy_id
+        else:
+            selections.pop(normalized_umo, None)
+        return PolicyLibrary(
+            rules=self.rules,
+            policies=self.policies,
+            active_policy_id=self.active_policy_id,
+            umo_policy_selections=tuple(selections.items()),
+        )
+
+    def _first_usable_umo_policy(
+        self,
+        normalized_umo: str,
+        usable_ids: set[str],
+    ) -> PolicyDefinition | None:
+        if not normalized_umo:
+            return None
+        for policy in self.policies:
+            if normalized_umo in policy.umo_list and policy.policy_id in usable_ids:
+                return policy
         return None
 
     def _usable_policy_ids(self) -> set[str]:
@@ -316,6 +434,7 @@ class PolicyLibrary:
                 rules=self.rules,
                 policies=(policy,),
                 active_policy_id=policy.policy_id,
+                umo_policy_selections=self.umo_policy_selections,
             )
             if candidate.validate().valid:
                 usable.add(policy.policy_id)

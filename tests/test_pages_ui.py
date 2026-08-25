@@ -206,6 +206,9 @@ class GuardrailPagesUiTests(unittest.TestCase):
             "session-policy-state-query",
             "refresh-session-policy-states",
             "session-policy-state-list",
+            "session-policy-selection",
+            "save-session-policy-selection",
+            "session-policy-selection-status",
             "session-policy-result-summary",
             "session-policy-signal-list",
             "session-policy-route-candidate",
@@ -218,6 +221,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('apiGet("get_session_policy_states"', javascript)
         self.assertIn('apiGet("get_session_policy_state"', javascript)
         self.assertIn("function renderSessionPolicyStateDetail", javascript)
+        self.assertIn("function renderSessionPolicySelection", javascript)
+        self.assertIn("function saveCurrentSessionPolicySelection", javascript)
         self.assertIn("function renderSessionPolicySignals", javascript)
         self.assertIn("function sessionPolicyRailOutcomeLabel", javascript)
         self.assertIn("function showSessionPolicyStateDetail", javascript)
@@ -225,6 +230,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('requestTarget.source === "unavailable"', javascript)
         self.assertIn('return "未观察到目标"', javascript)
         self.assertIn('source === "event_selected_provider"', javascript)
+        self.assertIn('apiPost("set_umo_policy_selection"', javascript)
+        self.assertIn("policy_id: policyId || null", javascript)
         self.assertNotIn("context_current_chat_provider_id", javascript)
         self.assertIn("策略未显式约束模型，因此未比较模型", javascript)
         self.assertIn("观察模式，未参与执行", html)
