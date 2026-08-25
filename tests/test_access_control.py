@@ -9,6 +9,8 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from access_control import (
+    ACCESS_CONTROL_NAMESPACE,
+    ACCESS_CONTROL_TABLE_KEY,
     DECISION_BAN,
     DECISION_NONE,
     DECISION_PARDON,
@@ -77,6 +79,35 @@ class AccessControlServiceTests(unittest.TestCase):
         self.assertEqual(record["decision_expires_at"], 1_700_000_900)
         self.assertFalse(admission.allowed)
 
+    def test_legacy_sender_id_record_is_not_read_as_a_user_id_record(self):
+        async def run_case():
+            store = MemoryStateStore()
+            principal = make_principal_identity("qq", "1001")
+            await store.set(
+                ACCESS_CONTROL_NAMESPACE,
+                ACCESS_CONTROL_TABLE_KEY,
+                {
+                    "schema_version": 1,
+                    "table_revision": 1,
+                    "records": {
+                        principal.storage_key: {
+                            "principal_id": "qq:1001",
+                            "platform_id": "qq",
+                            "sender_id": "1001",
+                            "decision": DECISION_BAN,
+                            "decision_expires_at": 0,
+                        }
+                    },
+                },
+            )
+            service = AccessControlService(store, principal_locks=PrincipalLockManager())
+            return await service.admit(principal), await service.get_active_record(principal)
+
+        admission, record = asyncio.run(run_case())
+
+        self.assertTrue(admission.allowed)
+        self.assertIsNone(record)
+
     def test_concurrent_cross_umo_violations_are_not_lost(self):
         async def run_case():
             service = self._service()
@@ -132,7 +163,7 @@ class AccessControlServiceTests(unittest.TestCase):
 
         self.assertTrue(records.success)
         self.assertEqual(
-            {(record["platform_id"], record["sender_id"]) for record in records.records},
+            {(record["platform_id"], record["user_id"]) for record in records.records},
             {("qq", "first-user"), ("qq", "second-user")},
         )
 

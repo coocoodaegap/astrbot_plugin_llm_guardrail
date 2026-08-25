@@ -385,7 +385,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
                 _Request(
                     {
                         "platform_id": "qq",
-                        "sender_id": "42",
+                        "user_id": "42",
                         "decision": "ban",
                         "duration_minutes": -1,
                         "reason_code": "manual_ban",
@@ -399,7 +399,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
                 _Request(
                     {
                         "platform_id": "qq",
-                        "sender_id": "42",
+                        "user_id": "42",
                         "expected_decision": "ban",
                         "expected_record_revision": ban["record"]["record_revision"],
                     }

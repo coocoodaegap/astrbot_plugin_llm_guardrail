@@ -272,7 +272,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         event: AstrMessageEvent,
         limit: str = "",
     ):
-        """List currently usable policies for the command event's UMO."""
+        """列出当前命令会话可用的策略。"""
 
         parsed_limit, error = self._parse_policy_command_limit(limit)
         if error:
@@ -315,7 +315,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         policy_id: str = "",
         umo: str = "",
     ):
-        """Select a policy for the current or explicitly named UMO."""
+        """为当前或指定 UMO 选择策略。"""
 
         target = str(policy_id or "").strip()
         if not target:
@@ -355,7 +355,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @guardrail.command("acc")
+    @guardrail.command("access")
     async def guardrail_access_list(
         self,
         event: AstrMessageEvent,
@@ -371,7 +371,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 raw_limit = filter_decision
                 filter_decision = ""
             else:
-                yield event.plain_result("用法：/guardrail acc [ban|pardon] [limit]")
+                yield event.plain_result("用法：/guardrail access [ban|pardon] [limit]")
                 return
         parsed_limit, error = self._parse_access_command_limit(raw_limit)
         if error:
@@ -404,17 +404,17 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("accs")
-    async def guardrail_access_status(self, event: AstrMessageEvent, sender_id: str):
+    async def guardrail_access_status(self, event: AstrMessageEvent, user_id: str):
         """查看指定主体当前有效的访问决定。"""
 
-        principal, error = self._access_command_principal(event, sender_id)
+        principal, error = self._access_command_principal(event, user_id)
         if error:
             yield event.plain_result(error)
             return
         record = await self.access_control.get_active_record(principal)
         if record is None:
             yield event.plain_result(
-                f"访问控制：{self._mask_access_identifier(principal.sender_id)} 当前没有有效决定。"
+                f"访问控制：{self._mask_access_identifier(principal.user_id)} 当前没有有效决定。"
             )
             return
         yield event.plain_result("访问控制：\n" + self._format_access_record(record))
@@ -424,14 +424,14 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def guardrail_access_ban(
         self,
         event: AstrMessageEvent,
-        sender_id: str,
+        user_id: str,
         minutes: str = "",
     ):
         """在当前平台适配器命名空间中创建或替换手动封禁。"""
 
         message = await self._set_access_command_decision(
             event,
-            sender_id,
+            user_id,
             minutes,
             DECISION_BAN,
         )
@@ -442,14 +442,14 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def guardrail_access_pardon(
         self,
         event: AstrMessageEvent,
-        sender_id: str,
+        user_id: str,
         minutes: str = "",
     ):
         """在当前平台适配器命名空间中创建或替换手动赦免。"""
 
         message = await self._set_access_command_decision(
             event,
-            sender_id,
+            user_id,
             minutes,
             DECISION_PARDON,
         )
@@ -457,10 +457,10 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("accr")
-    async def guardrail_access_release(self, event: AstrMessageEvent, sender_id: str):
+    async def guardrail_access_release(self, event: AstrMessageEvent, user_id: str):
         """在比较并交换保护下清除当前有效的访问决定。"""
 
-        principal, error = self._access_command_principal(event, sender_id)
+        principal, error = self._access_command_principal(event, user_id)
         if error:
             yield event.plain_result(error)
             return
@@ -481,11 +481,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return
         decision_label = "封禁" if record["decision"] == DECISION_BAN else "赦免"
         yield event.plain_result(
-            f"已解除{decision_label}：{self._mask_access_identifier(principal.sender_id)}。"
+            f"已解除{decision_label}：{self._mask_access_identifier(principal.user_id)}。"
         )
 
     def _guardrail_status_text(self, event: AstrMessageEvent) -> str:
-        """Build the bare ``/guardrail`` status response."""
+        """构建 ``/guardrail status`` 的状态响应。"""
         cfg = self.snapshot_manager.current.runtime_config
         current_umo = self.adapter.get_umo(event)
         session_decision = resolve_session_scope(
@@ -527,13 +527,13 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def _set_access_command_decision(
         self,
         event: AstrMessageEvent,
-        sender_id: str,
+        user_id: str,
         minutes: str,
         decision: str,
     ) -> str:
         """Write one command-originated decision through AccessControlService."""
 
-        principal, error = self._access_command_principal(event, sender_id)
+        principal, error = self._access_command_principal(event, user_id)
         if error:
             return error
         duration, error = self._parse_access_command_duration(minutes)
@@ -556,12 +556,12 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return "保存访问决定失败，请稍后重试。"
         decision_label = "封禁" if decision == DECISION_BAN else "赦免"
         return (
-            f"已{decision_label}：{self._mask_access_identifier(principal.sender_id)}"
+            f"已{decision_label}：{self._mask_access_identifier(principal.user_id)}"
             f"（{self._format_access_expiry(result.record or {})}）。"
         )
 
     def _access_command_principal(
-        self, event: AstrMessageEvent, sender_id: str
+        self, event: AstrMessageEvent, user_id: str
     ) -> tuple[Any | None, str]:
         """Build an explicit target identity in the command event's adapter scope."""
 
@@ -569,9 +569,9 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         if parts is None:
             return None, "无法取得当前平台适配器名，未执行访问控制操作。"
         try:
-            return make_principal_identity(parts[0], sender_id), ""
+            return make_principal_identity(parts[0], user_id), ""
         except (TypeError, ValueError):
-            return None, "sender_id 无效。"
+            return None, "user_id 无效。"
 
     @staticmethod
     def _looks_like_integer(value: str) -> bool:
@@ -619,7 +619,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         decision = str(record.get("decision", "") or "")
         decision_label = "封禁" if decision == DECISION_BAN else "赦免"
         platform_id = cls._mask_access_identifier(record.get("platform_id", ""))
-        sender_id = cls._mask_access_identifier(record.get("sender_id", ""))
+        user_id = cls._mask_access_identifier(record.get("user_id", ""))
         reason = str(
             record.get("decision_reason_label", "")
             or record.get("decision_reason_code", "")
@@ -627,7 +627,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         )
         count = int(record.get("violation_count", 0) or 0)
         return (
-            f"- {decision_label} {platform_id}/{sender_id}"
+            f"- {decision_label} {platform_id}/{user_id}"
             f" | 到期：{cls._format_access_expiry(record)}"
             f" | 计数：{count} | 原因：{reason}"
         )

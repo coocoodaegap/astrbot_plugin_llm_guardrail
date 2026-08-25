@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 ACCESS_CONTROL_NAMESPACE = "access_control"
 ACCESS_CONTROL_TABLE_KEY = "principal_records"
-ACCESS_CONTROL_SCHEMA_VERSION = 1
+ACCESS_CONTROL_SCHEMA_VERSION = 2
 
 DECISION_NONE = "none"
 DECISION_BAN = "ban"
@@ -101,18 +101,18 @@ class PrincipalIdentity:
     """A platform-scoped user identity, independent of a conversation UMO."""
 
     platform_id: str
-    sender_id: str
+    user_id: str
 
     @property
     def principal_id(self) -> str:
-        return f"{self.platform_id}:{self.sender_id}"
+        return f"{self.platform_id}:{self.user_id}"
 
     @property
     def storage_key(self) -> str:
         """Return a collision-free key even if an adapter ID contains ``:``."""
 
         return json.dumps(
-            [self.platform_id, self.sender_id],
+            [self.platform_id, self.user_id],
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -158,7 +158,7 @@ class AccessListResult:
     warning: str = ""
 
 
-def make_principal_identity(platform_id: Any, sender_id: Any) -> PrincipalIdentity:
+def make_principal_identity(platform_id: Any, user_id: Any) -> PrincipalIdentity:
     """Validate and normalize an explicit platform/user identity.
 
     The runtime adapter calls this only after it has read AstrBot's public
@@ -167,8 +167,8 @@ def make_principal_identity(platform_id: Any, sender_id: Any) -> PrincipalIdenti
     """
 
     platform = _clean_principal_part(platform_id, "platform_id")
-    sender = _clean_principal_part(sender_id, "sender_id")
-    return PrincipalIdentity(platform_id=platform, sender_id=sender)
+    user = _clean_principal_part(user_id, "user_id")
+    return PrincipalIdentity(platform_id=platform, user_id=user)
 
 
 def _clean_principal_part(value: Any, field_name: str) -> str:
@@ -388,7 +388,7 @@ class AccessControlService:
             key=lambda record: (
                 record["decision"],
                 record["platform_id"],
-                record["sender_id"],
+                record["user_id"],
             )
         )
         return AccessListResult(True, records=tuple(records))
@@ -584,7 +584,7 @@ def _empty_record(principal: PrincipalIdentity) -> dict[str, Any]:
     return {
         "principal_id": principal.principal_id,
         "platform_id": principal.platform_id,
-        "sender_id": principal.sender_id,
+        "user_id": principal.user_id,
         "decision": DECISION_NONE,
         "decision_expires_at": None,
         "decision_source": "",
@@ -600,6 +600,11 @@ def _empty_record(principal: PrincipalIdentity) -> dict[str, Any]:
 def _normalized_record(raw: Any, principal: PrincipalIdentity) -> dict[str, Any]:
     record = _empty_record(principal)
     if not isinstance(raw, dict):
+        return record
+    # Schema v1 used ``sender_id``.  Do not silently migrate or honor that
+    # state: an old storage key can collide with the v2 key for the same text.
+    # Only a record that explicitly identifies this v2 principal is readable.
+    if _identity_from_record(raw) != principal:
         return record
 
     decision = str(raw.get("decision", DECISION_NONE) or "").strip().lower()
@@ -653,7 +658,7 @@ def _identity_from_record(raw: Any) -> PrincipalIdentity | None:
     if not isinstance(raw, dict):
         return None
     try:
-        return make_principal_identity(raw.get("platform_id"), raw.get("sender_id"))
+        return make_principal_identity(raw.get("platform_id"), raw.get("user_id"))
     except (TypeError, ValueError):
         return None
 
@@ -664,7 +669,7 @@ def _public_record(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "principal_id": record["principal_id"],
         "platform_id": record["platform_id"],
-        "sender_id": record["sender_id"],
+        "user_id": record["user_id"],
         "decision": record["decision"],
         "decision_expires_at": record["decision_expires_at"],
         "decision_source": record["decision_source"],

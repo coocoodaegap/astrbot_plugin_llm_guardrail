@@ -74,14 +74,14 @@ class AstrBotAdapter:
         """
 
         platform_id = self._event_platform_name(event)
-        sender_id = self._event_identity_value(
+        user_id = self._event_identity_value(
             event,
             method_name="get_sender_id",
             attribute_name="sender_id",
         )
-        if not platform_id or not sender_id:
+        if not platform_id or not user_id:
             return None
-        return platform_id, sender_id
+        return platform_id, user_id
 
     def get_message_fact_snapshot(
         self, event: Any, *, warn_if_unavailable: bool = True

@@ -110,7 +110,7 @@ const status = $("status"),
   newRuleDescription = $("new-rule-description"),
   ruleCreationStatus = $("rule-creation-status"),
   accessPlatformId = $("access-platform-id"),
-  accessSenderId = $("access-sender-id"),
+  accessUserId = $("access-user-id"),
   accessDecision = $("access-decision"),
   accessDurationMode = $("access-duration-mode"),
   accessDurationRow = $("access-duration-row"),
@@ -3037,9 +3037,9 @@ function syncAccessDurationControl() {
 }
 function resetAccessFormState() {
   accessPlatformId.value = "";
-  accessSenderId.value = "";
+  accessUserId.value = "";
   accessPlatformId.disabled = false;
-  accessSenderId.disabled = false;
+  accessUserId.disabled = false;
   accessDecision.value = "ban";
   accessDurationMode.value = "temporary";
   accessDurationMinutes.value = "60";
@@ -3067,11 +3067,11 @@ function appendAccessMeta(container, label, value) {
 }
 function editAccessRecord(record) {
   accessPlatformId.value = String(record.platform_id || "");
-  accessSenderId.value = String(record.sender_id || "");
+  accessUserId.value = String(record.user_id || "");
   // A record revision belongs to this exact principal key.  Replacing its
   // decision must never accidentally turn into a write against another key.
   accessPlatformId.disabled = true;
-  accessSenderId.disabled = true;
+  accessUserId.disabled = true;
   accessDecision.value = record.decision === "pardon" ? "pardon" : "ban";
   const expiration = Number(record.decision_expires_at);
   if (expiration === 0) {
@@ -3179,8 +3179,8 @@ async function refreshAccessControl() {
 async function saveAccessDecisionMutation() {
   if (!bridge || accessMutationInFlight) return;
   const platformId = accessPlatformId.value.trim();
-  const senderId = accessSenderId.value.trim();
-  if (!platformId || !senderId) {
+  const userId = accessUserId.value.trim();
+  if (!platformId || !userId) {
     accessFormStatus.textContent = "平台适配器名和发送者 ID 都不能为空。";
     return;
   }
@@ -3192,7 +3192,7 @@ async function saveAccessDecisionMutation() {
   }
   const payload = {
     platform_id: platformId,
-    sender_id: senderId,
+    user_id: userId,
     decision: accessDecision.value,
     duration_minutes: durationMinutes,
     reason_code: accessReasonCode.value,
@@ -3225,7 +3225,7 @@ async function clearAccessDecision(record) {
   try {
     const result = await bridge.apiPost("clear_access_control_decision", {
       platform_id: record.platform_id,
-      sender_id: record.sender_id,
+      user_id: record.user_id,
       expected_decision: record.decision,
       expected_record_revision: record.record_revision,
     });

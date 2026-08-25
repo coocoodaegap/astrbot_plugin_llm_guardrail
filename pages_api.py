@@ -241,10 +241,10 @@ class GuardrailPagesApiMixin:
         try:
             principal = make_principal_identity(
                 payload.get("platform_id"),
-                payload.get("sender_id"),
+                payload.get("user_id"),
             )
         except (TypeError, ValueError) as exc:
-            return self._pages_error("platform_id and sender_id are required", 400, str(exc))
+            return self._pages_error("platform_id and user_id are required", 400, str(exc))
 
         duration_minutes = payload.get("duration_minutes")
         if isinstance(duration_minutes, bool) or not isinstance(duration_minutes, int):
@@ -286,10 +286,10 @@ class GuardrailPagesApiMixin:
         try:
             principal = make_principal_identity(
                 payload.get("platform_id"),
-                payload.get("sender_id"),
+                payload.get("user_id"),
             )
         except (TypeError, ValueError) as exc:
-            return self._pages_error("platform_id and sender_id are required", 400, str(exc))
+            return self._pages_error("platform_id and user_id are required", 400, str(exc))
         expected_revision = payload.get("expected_record_revision")
         if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
             return self._pages_error("expected_record_revision must be an integer")
