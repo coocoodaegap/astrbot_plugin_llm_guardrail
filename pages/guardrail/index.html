@@ -37,8 +37,6 @@
           aria-controls="panel-knowledge" data-tab="knowledge">知识库经验</button>
         <button class="tab" id="tab-session" type="button" role="tab" aria-selected="false"
           aria-controls="panel-session" data-tab="session">会话策略监控</button>
-        <button class="tab" id="tab-token" type="button" role="tab" aria-selected="false"
-          aria-controls="panel-token" data-tab="token">Token 监控</button>
         <button class="tab" id="tab-system" type="button" role="tab" aria-selected="false"
           aria-controls="panel-system" data-tab="system">系统设置</button>
       </nav>
@@ -469,18 +467,6 @@
         <div><p class="eyebrow">CLEAR UMO STATE</p><h3 id="confirm-session-policy-state-delete-title">清除全部会话状态？</h3><p id="confirm-session-policy-state-delete-message" class="danger-notice"></p></div>
         <div class="dialog-actions"><button id="cancel-session-policy-state-delete" type="button" class="button-secondary">取消</button><button id="confirm-session-policy-state-delete" type="button" class="danger-button">清除全部状态</button></div>
       </dialog>
-    </section>
-    <section class="tab-panel" id="panel-token" role="tabpanel" aria-labelledby="tab-token" data-panel="token" hidden>
-      <div class="page-section-heading">
-        <p class="eyebrow">TOKEN OBSERVATORY</p>
-        <h2>Token 监控</h2>
-        <p>面向旁路 LLM 与 RAG 调用的用量、延迟、失败和成本观测将在后续版本提供。</p>
-      </div>
-      <div class="placeholder">
-        <p class="eyebrow">P3 · PLANNED</p>
-        <h3>监控能力尚未启用</h3>
-        <p>当前版本不会采集或展示旁路调用的次数、耗时、失败和估算成本。</p>
-      </div>
     </section>
     <section class="tab-panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" data-panel="system"
       hidden>
