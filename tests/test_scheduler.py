@@ -263,13 +263,59 @@ class SchedulerTests(unittest.TestCase):
             error_handler=lambda rule, context, exc: make_result(
                 rule,
                 matched=False,
+                status="failed",
                 metadata={"error": f"{type(exc).__name__}: {exc}"},
             ),
         )
 
         self.assertTrue(ctx.results["boom"].executed)
         self.assertFalse(ctx.results["boom"].matched)
+        self.assertEqual(ctx.results["boom"].status, "failed")
         self.assertTrue(ctx.results["after"].matched)
+
+    def test_failed_dependency_is_explicit_and_not_not_matched(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {"__template_key": "plain_keywords", "rule_id": "boom"},
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "on_failure",
+                            "depend_on": "~boom",
+                            "keywords": ["failure"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "on_non_match",
+                            "depend_on": "!boom",
+                            "keywords": ["non-match"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        def execute(rule, context):
+            if rule.rule_id == "boom":
+                raise RuntimeError("simulated")
+            return evaluate_text_rule(rule, context, "failure non-match")
+
+        RuleScheduler(build_graph_index(cfg)).run(
+            rail,
+            ctx,
+            execute,
+            error_handler=lambda rule, context, exc: make_result(
+                rule, matched=False, status="failed"
+            ),
+        )
+
+        self.assertEqual(ctx.results["boom"].status, "failed")
+        self.assertTrue(ctx.results["on_failure"].matched)
+        self.assertFalse(ctx.results["on_non_match"].executed)
+        self.assertEqual(ctx.results["on_non_match"].skipped_reason, "dependency_failed")
 
     def test_cyclic_dependency_is_skipped(self):
         cfg = normalize_config(
@@ -344,6 +390,42 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertTrue(ctx.results["gate"].matched)
         self.assertEqual(ctx.results["gate"].metadata["inputs"], {"!a": True, "?b": True})
+
+    def test_logic_gate_input_supports_failed_prefix(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {"__template_key": "plain_keywords", "rule_id": "boom"},
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "gate",
+                            "gate": "all",
+                            "inputs": ["~boom"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        def execute(rule, context):
+            if rule.rule_id == "boom":
+                raise RuntimeError("simulated")
+            return evaluate_logic_gate(rule, context)
+
+        RuleScheduler(build_graph_index(cfg)).run(
+            rail,
+            ctx,
+            execute,
+            error_handler=lambda rule, context, exc: make_result(
+                rule, matched=False, status="failed"
+            ),
+        )
+
+        self.assertTrue(ctx.results["gate"].matched)
+        self.assertEqual(ctx.results["gate"].metadata["inputs"], {"~boom": True})
 
     def test_current_step_dependency_on_future_step_expires(self):
         cfg = normalize_config(

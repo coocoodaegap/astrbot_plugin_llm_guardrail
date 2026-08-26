@@ -554,6 +554,45 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(manager.current.revision, 0)
         self.assertTrue(any("but Step input_rail is disabled" in item for item in result.diagnostics))
 
+    def test_publish_accepts_failed_dependency_references(self):
+        manager = ConfigSnapshotManager({})
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),
+                RuleDefinition("dependent", "plain_keywords", {"keywords": ["dependent"]}),
+            ),
+            policies=(
+                PolicyDefinition("_default", "Default", builtin=True),
+                PolicyDefinition(
+                    "failed_dependency",
+                    "Failed dependency",
+                    bindings=(
+                        PolicyRuleBinding("source", "input_rail"),
+                        PolicyRuleBinding(
+                            "dependent", "input_rail", depend_on="~source"
+                        ),
+                    ),
+                    components=(
+                        PolicyComponent(
+                            "failure_gate",
+                            "logic_gate",
+                            "input_rail",
+                            config={"gate": "all", "inputs": ["~source"]},
+                        ),
+                    ),
+                ),
+            ),
+            active_policy_id="failed_dependency",
+        )
+
+        result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
+
+        self.assertTrue(result.success, result.diagnostics)
+        runtime = result.snapshot.policy_runtime_configs["failed_dependency"]
+        nodes = runtime.rails["input_rail"].nodes
+        self.assertEqual(nodes[1].depend_on, "~source")
+        self.assertEqual(nodes[2].config["inputs"], ["~source"])
+
 
 if __name__ == "__main__":
     unittest.main()

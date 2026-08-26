@@ -902,6 +902,7 @@ function parsePolicyGraphReference(value) {
   if (!raw) return { raw, targetId: "", mode: "none" };
   if (raw.startsWith("!")) return { raw, targetId: raw.slice(1).trim(), mode: "not_matched" };
   if (raw.startsWith("?")) return { raw, targetId: raw.slice(1).trim(), mode: "executed" };
+  if (raw.startsWith("~")) return { raw, targetId: raw.slice(1).trim(), mode: "failed" };
   return { raw, targetId: raw, mode: "matched" };
 }
 function graphNodeInputs(node) {
@@ -1527,7 +1528,7 @@ function applyPolicyDependencySelection() {
   const draft = getPolicyGraphDraft();
   const node = findPolicyGraphDraftNode(dependentId, draft);
   if (!node) return;
-  const prefix = { matched: "", not_matched: "!", executed: "?" }[policyDependencyMode.value] ?? "";
+  const prefix = { matched: "", not_matched: "!", executed: "?", failed: "~" }[policyDependencyMode.value] ?? "";
   node.data.depend_on = `${prefix}${sourceId}`;
   markPolicyGraphNodeDirty(dependentId);
   policyDependencyModeDialog.close();

@@ -489,7 +489,7 @@ class ConfigSnapshotManager:
 
 def _runtime_dependency_target(value: Any) -> str:
     text = str(value or "").strip()
-    if text[:1] in {"!", "?"}:
+    if text[:1] in {"!", "?", "~"}:
         text = text[1:].strip()
     return text
 

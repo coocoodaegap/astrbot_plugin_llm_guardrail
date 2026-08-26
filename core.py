@@ -51,6 +51,9 @@ class NodeResult:
     enabled: bool
     executed: bool
     matched: bool
+    # ``executed`` is retained for backwards compatibility. ``status`` is the
+    # control-flow outcome: completed, failed, or skipped.
+    status: str = "completed"
     signal: NodeSignal | None = None
     skipped_reason: str = ""
     action_on_hit: str = "default"
@@ -509,6 +512,7 @@ class NodeScheduler:
             rule,
             matched=False,
             executed=True,
+            status="failed",
             skipped_reason="",
             metadata={"error": error_text},
         )
@@ -604,6 +608,8 @@ class NodeScheduler:
             return "satisfied", ""
         if _depend_result_matches(edge.mode, result):
             return "satisfied", ""
+        if result.status == "failed":
+            return "impossible", "dependency_failed"
         return "impossible", "dependency_not_satisfied"
 
     @staticmethod
@@ -686,6 +692,8 @@ class NodeScheduler:
             if not result.executed:
                 return "impossible", "dependency_not_executed"
             if not dep.matches(result):
+                if result.status == "failed":
+                    return "impossible", "dependency_failed"
                 return "impossible", "dependency_not_satisfied"
 
         for input_spec in logic_gate_input_specs(rule):
@@ -744,6 +752,8 @@ def parse_rule_ref(value: str) -> DependSpec:
         )
     if stripped.startswith("?"):
         return DependSpec(target=stripped[1:].strip(), mode="executed", raw=stripped)
+    if stripped.startswith("~"):
+        return DependSpec(target=stripped[1:].strip(), mode="failed", raw=stripped)
     return DependSpec(target=stripped, mode="matched", raw=stripped)
 
 
@@ -766,19 +776,19 @@ def logic_gate_input_specs(rule: NormalizedRule) -> list[DependSpec]:
 
 
 def logic_input_value(spec: DependSpec, result: RuleResult) -> bool:
-    if spec.mode == "not_matched":
-        return not result.matched
-    if spec.mode == "executed":
-        return result.executed
-    return result.matched
+    return _depend_result_matches(spec.mode, result)
 
 
 def _depend_result_matches(mode: str, result: RuleResult) -> bool:
     if mode == "matched":
-        return result.matched
+        return result.status == "completed" and result.matched
     if mode == "not_matched":
-        return not result.matched
-    return True
+        return result.status == "completed" and not result.matched
+    if mode == "executed":
+        return result.executed and result.status in {"completed", "failed"}
+    if mode == "failed":
+        return result.status == "failed"
+    return False
 
 
 def build_graph_index(source: NormalizedConfig | NormalizedRail) -> GraphIndex:
@@ -939,6 +949,7 @@ def _skip_reason_is_warning(reason: str) -> bool:
     return reason in {
         "dependency_missing",
         "dependency_not_executed",
+        "dependency_failed",
         "logic_input_missing",
         "logic_input_not_executed",
         "cyclic_dependency",
@@ -951,6 +962,7 @@ def make_node_result(
     node: NormalizedNode,
     matched: bool,
     executed: bool = True,
+    status: str | None = None,
     skipped_reason: str = "",
     action_on_hit: str | None = None,
     hits: list[dict[str, Any]] | None = None,
@@ -959,6 +971,8 @@ def make_node_result(
 ) -> NodeResult:
     if signal is None:
         signal = NodeSignal(value=matched, truthy=matched, payload={})
+    if status is None:
+        status = "completed" if executed else "skipped"
     return NodeResult(
         rail=node.rail,
         template_key=node.template_key,
@@ -968,6 +982,7 @@ def make_node_result(
         enabled=node.enabled,
         executed=executed,
         matched=matched,
+        status=status,
         signal=signal,
         skipped_reason=skipped_reason,
         action_on_hit=action_on_hit

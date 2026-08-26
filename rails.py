@@ -1062,6 +1062,7 @@ class GuardrailPipeline:
             rule,
             matched=False,
             executed=True,
+            status="failed",
             skipped_reason="",
             action_on_hit="observe",
             metadata={

@@ -1047,7 +1047,7 @@ def _dependency_target(value: str) -> str:
     stripped = value.strip()
     if not stripped:
         return ""
-    if stripped[0] in {"!", "?"}:
+    if stripped[0] in {"!", "?", "~"}:
         return stripped[1:].strip()
     return stripped
 

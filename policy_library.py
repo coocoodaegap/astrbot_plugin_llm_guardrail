@@ -792,7 +792,7 @@ def _dependency_target(value: Any) -> str:
     """Return the referenced rule ID from the public dependency syntax."""
 
     text = str(value or "").strip()
-    if text[:1] in {"!", "?"}:
+    if text[:1] in {"!", "?", "~"}:
         text = text[1:].strip()
     return text
 
