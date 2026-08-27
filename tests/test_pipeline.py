@@ -1424,6 +1424,7 @@ class PipelineTests(unittest.TestCase):
     def test_output_retry_blocks_when_the_provider_response_getter_fails(self):
         cfg = normalize_config(
             {
+                "fallback_policy_settings": {"block_message": ""},
                 "output_rail": {
                     "__policy_step_settings": {"max_retries": 1},
                     "rule_list": [
@@ -2551,7 +2552,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "用户 sender 的请求被会话控制阻断。"})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Step 1 被阻断。"})
         self.assertNotIn("risk", ctx.results)
         self.assertEqual(ctx.session_scope_decision.action, "block")
         self.assertEqual(ctx.terminal_action["source_kind"], "session_control")
@@ -2581,7 +2582,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "用户 sender 的请求被会话控制阻断。"})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Step 1 被阻断。"})
         self.assertNotIn("risk", ctx.results)
         self.assertEqual(ctx.session_scope_decision.action, "block")
         self.assertEqual(ctx.session_scope_decision.reason, "group_all_block")

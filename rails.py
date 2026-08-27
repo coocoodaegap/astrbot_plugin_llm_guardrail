@@ -112,8 +112,8 @@ INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
 RETRY_GENERATION_TIMEOUT_SECONDS = 30.0
 
 DEFAULT_INPUT_BLOCK_MESSAGE = DEFAULT_REQUEST_BLOCK_MESSAGE
-DEFAULT_OUTPUT_BLOCK_MESSAGE = "Response blocked by LLM Guardrail."
-DEFAULT_SESSION_CONTROL_BLOCK_MESSAGE = "用户 ${user_id} 的请求被会话控制阻断。"
+DEFAULT_OUTPUT_BLOCK_MESSAGE = DEFAULT_REQUEST_BLOCK_MESSAGE
+DEFAULT_SESSION_CONTROL_BLOCK_MESSAGE = DEFAULT_REQUEST_BLOCK_MESSAGE
 LLM_REVIEW_STRUCTURE_INSTRUCTION = (
     "Return JSON only. Do not return Markdown or extra commentary.\n"
     'The JSON object must be: {"matched": boolean, "payload": object}.\n'
@@ -422,6 +422,10 @@ class GuardrailPipeline:
         message = self._render_block_message(
             DEFAULT_SESSION_CONTROL_BLOCK_MESSAGE,
             context,
+            # Session scope is an admission gate immediately before Step 1.
+            # Reuse the shared request-block template without inventing a
+            # separate user-facing "Step 0" term.
+            rail="input_rail",
         )
         if context.response is not None:
             context.output_blocked = True
