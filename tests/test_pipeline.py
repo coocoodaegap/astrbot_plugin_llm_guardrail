@@ -548,11 +548,40 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(event.result, {"plain": "blocked"})
 
-    def test_input_sanitize_updates_event_text(self):
+    def test_input_sanitize_only_produces_payload_by_default(self):
         cfg = normalize_config(
             {
                 "input_rail": {
                     "default_action_on_hit": "observe",
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "sanitize",
+                            "sanitizer": "[redacted]",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("say secret")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertEqual(event.message_str, "say secret")
+        self.assertEqual(
+            context.results["risk"].signal.payload["sanitized"], "say [redacted]"
+        )
+
+    def test_input_sanitize_redirect_requires_explicit_template(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "default_action_on_hit": "observe",
+                    "__policy_step_settings": {
+                        "output_redirect_template": "${risk.sanitized}",
+                    },
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
@@ -779,10 +808,40 @@ class PipelineTests(unittest.TestCase):
             {"action": "block", "text": "用户 sender 的请求在 Step 5 被阻断。"},
         )
 
-    def test_output_sanitize_replaces_response_span(self):
+    def test_output_sanitize_only_produces_payload_by_default(self):
         cfg = normalize_config(
             {
                 "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "word",
+                            "keywords": ["secret"],
+                            "action_on_hit": "sanitize",
+                            "sanitizer": "[x]",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("the secret is out")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
+
+        self.assertEqual(response.completion_text, "the secret is out")
+        self.assertEqual(
+            context.results["word"].signal.payload["sanitized"], "the [x] is out"
+        )
+        self.assertIsNone(event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY))
+
+    def test_output_sanitize_redirect_requires_explicit_template(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {
+                        "output_redirect_template": "${word.sanitized}",
+                    },
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",

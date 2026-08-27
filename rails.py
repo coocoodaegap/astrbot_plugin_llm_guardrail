@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 try:
@@ -46,7 +47,6 @@ try:
         evaluate_message_fact_component,
     )
     from .rules import (
-        apply_literal_replacements,
         apply_span_replacements,
         clip_text,
         evaluate_llm_review_response,
@@ -90,7 +90,6 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_message_fact_component,
     )
     from rules import (
-        apply_literal_replacements,
         apply_span_replacements,
         clip_text,
         evaluate_llm_review_response,
@@ -559,7 +558,6 @@ class GuardrailPipeline:
             context.warnings.append("message component chain is unavailable")
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
-            nonlocal current_text
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key in {
@@ -580,8 +578,6 @@ class GuardrailPipeline:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
             await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
-            if hit_plan.mutate_text:
-                current_text = ctx.current_input
             return result
 
         await self.scheduler.run_async(
@@ -593,6 +589,8 @@ class GuardrailPipeline:
                 rail, rule, ctx, exc
             ),
         )
+        if not context.input_blocked:
+            self._commit_input_redirect(rail, context, context.original_input)
 
     async def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
@@ -603,7 +601,6 @@ class GuardrailPipeline:
         current_text = clip_text(request_text, max_chars)
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
-            nonlocal current_text
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key in {
@@ -620,8 +617,6 @@ class GuardrailPipeline:
                 result = evaluate_text_rule(rule, ctx, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
             await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
-            if hit_plan.mutate_text:
-                current_text = self.adapter.get_request_prompt(ctx.request) or ctx.current_input
             return result
 
         await self.scheduler.run_async(
@@ -633,6 +628,8 @@ class GuardrailPipeline:
                 rail, rule, ctx, exc
             ),
         )
+        if not context.input_blocked:
+            self._commit_input_redirect(rail, context, request_text)
 
     async def _apply_input_action(
         self,
@@ -644,25 +641,8 @@ class GuardrailPipeline:
     ) -> None:
         if hit_plan.action in {"none", "observe"}:
             return
-        if hit_plan.mutate_text:
-            rule = self._rule_by_id(rail, result.rule_id)
-            replacement = str(rule.config.get("sanitizer", ""))
-            sanitized = apply_span_replacements(
-                inspected_text, result.hits, replacement
-            )
-            context.current_input = sanitized
-            if context.request is None:
-                adapter_result = self.adapter.set_event_text(context.event, sanitized)
-            else:
-                prompt = self.adapter.get_request_prompt(context.request)
-                if prompt == inspected_text:
-                    new_prompt = sanitized
-                else:
-                    new_prompt = apply_literal_replacements(
-                        prompt, result.hits, replacement
-                    )
-                adapter_result = self.adapter.set_request_prompt(context.request, new_prompt)
-            context.warnings.extend(adapter_result.warnings)
+        if hit_plan.produces_sanitized_payload:
+            self._attach_sanitized_payload(rail, result, inspected_text)
             return
         if hit_plan.block:
             context.input_blocked = True
@@ -690,6 +670,76 @@ class GuardrailPipeline:
                 and context.request is None
             ):
                 await self._record_terminal_input_block(context)
+
+    def _attach_sanitized_payload(
+        self,
+        rail: NormalizedRail,
+        result: RuleResult,
+        inspected_text: str,
+    ) -> None:
+        """Store sanitize output on the matching node, without host mutation."""
+
+        if not result.matched or result.signal is None:
+            return
+        rule = self._rule_by_id(rail, result.rule_id)
+        replacement = str(rule.config.get("sanitizer", ""))
+        result.signal.payload["sanitized"] = apply_span_replacements(
+            inspected_text, result.hits, replacement
+        )
+
+    def _render_output_redirect(
+        self, rail: NormalizedRail, context: RailContext, original: str
+    ) -> str:
+        """Render the P3 nonblocking stage-output template.
+
+        Missing nodes and payload fields deliberately become an empty string.
+        They do not create a dependency edge or wait for another node.
+        """
+
+        template = str(rail.settings.get("output_redirect_template", "${original}"))
+        if not template:
+            template = "${original}"
+
+        def resolve(match: re.Match[str]) -> str:
+            reference = match.group(1).strip()
+            if reference == "original":
+                return original
+            node_id, separator, field = reference.partition(".")
+            if not separator or not node_id or not field:
+                return ""
+            result = context.results.get(node_id)
+            payload = getattr(getattr(result, "signal", None), "payload", None)
+            if not isinstance(payload, dict):
+                return ""
+            value = payload.get(field)
+            if value is None:
+                return ""
+            return str(value)
+
+        return re.sub(r"\$\{([^{}]+)\}", resolve, template)
+
+    def _commit_input_redirect(
+        self, rail: NormalizedRail, context: RailContext, original: str
+    ) -> None:
+        redirected = self._render_output_redirect(rail, context, original)
+        if redirected == original:
+            context.current_input = original
+            return
+        if context.request is None:
+            adapter_result = self.adapter.set_event_text(context.event, redirected)
+        else:
+            adapter_result = self.adapter.set_request_prompt(context.request, redirected)
+        context.warnings.extend(adapter_result.warnings)
+        # Do not let following stages observe a redirect AstrBot rejected.
+        context.current_input = redirected if adapter_result.success else original
+
+    def _apply_output_redirect(
+        self, rail: NormalizedRail, context: RailContext, original: str
+    ) -> None:
+        redirected = self._render_output_redirect(rail, context, original)
+        context.current_output = redirected
+        if redirected != original:
+            context.output_needs_commit = True
 
     async def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
@@ -962,7 +1012,7 @@ class GuardrailPipeline:
         retry_request: dict[str, str] | None = None
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
-            nonlocal current_text, retry_request
+            nonlocal retry_request
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key == "llm_review":
@@ -976,8 +1026,6 @@ class GuardrailPipeline:
                 retry_request = {"node_id": result.node_id}
             else:
                 self._apply_output_action(rail, ctx, result, current_text, hit_plan)
-            if hit_plan.mutate_text:
-                current_text = ctx.current_output
             return result
 
         await self.scheduler.run_async(
@@ -989,6 +1037,8 @@ class GuardrailPipeline:
                 rail, rule, ctx, exc
             ),
         )
+        if retry_request is None and not context.output_blocked:
+            self._apply_output_redirect(rail, context, context.current_output)
         return retry_request
 
     def _reset_output_rail_attempt(
@@ -1198,14 +1248,8 @@ class GuardrailPipeline:
     ) -> None:
         if hit_plan.action in {"none", "observe"}:
             return
-        if hit_plan.mutate_text:
-            rule = self._rule_by_id(rail, result.rule_id)
-            replacement = str(rule.config.get("sanitizer", ""))
-            sanitized = apply_span_replacements(
-                inspected_text, result.hits, replacement
-            )
-            context.current_output = sanitized
-            context.output_needs_commit = True
+        if hit_plan.produces_sanitized_payload:
+            self._attach_sanitized_payload(rail, result, inspected_text)
             return
         if hit_plan.block:
             context.output_blocked = True

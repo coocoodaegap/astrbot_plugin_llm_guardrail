@@ -19,12 +19,18 @@ class HitActionPlan:
     action: str
     target: str
     stop_rail: bool
-    mutate_text: bool
+    produces_sanitized_payload: bool
     block: bool
 
     @property
     def rule_id(self) -> str:
         return self.node_id
+
+    @property
+    def mutate_text(self) -> bool:
+        """Compatibility alias; sanitize no longer mutates host text directly."""
+
+        return self.produces_sanitized_payload
 
 
 @dataclass(frozen=True)
@@ -51,7 +57,7 @@ def resolve_hit_action_plan(rail: NormalizedRail, result: NodeResult) -> HitActi
         action=action,
         target=target,
         stop_rail=action in {"block", "retry_generation"},
-        mutate_text=action == "sanitize",
+        produces_sanitized_payload=action == "sanitize",
         block=action == "block",
     )
 

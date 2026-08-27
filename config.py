@@ -964,6 +964,10 @@ def _rail_defaults(
                 "default_action_on_hit": fallback_policy_settings["default_action_on_hit"],
                 "default_action_on_error": fallback_policy_settings["default_action_on_error"],
                 "block_message": fallback_policy_settings["block_message"],
+                # Sanitizers only create NodeSignal payloads.  A policy must
+                # explicitly choose a payload as stage output before any host
+                # text is changed.
+                "output_redirect_template": "${original}",
             }
         )
     if rail_name == "output_rail":
@@ -996,6 +1000,9 @@ def _coerce_rail_settings(
             error_action = "discard"
         settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
+        settings["output_redirect_template"] = _as_str(
+            settings.get("output_redirect_template", "${original}")
+        ) or "${original}"
     elif rail_name == "request_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
         settings["default_llm_provider"] = _as_str(
@@ -1017,6 +1024,9 @@ def _coerce_rail_settings(
             error_action = "discard"
         settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
+        settings["output_redirect_template"] = _as_str(
+            settings.get("output_redirect_template", "${original}")
+        ) or "${original}"
     elif rail_name == "output_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
         settings["default_llm_provider"] = _as_str(
@@ -1039,6 +1049,9 @@ def _coerce_rail_settings(
             error_action = "discard"
         settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
+        settings["output_redirect_template"] = _as_str(
+            settings.get("output_redirect_template", "${original}")
+        ) or "${original}"
     return settings
 
 

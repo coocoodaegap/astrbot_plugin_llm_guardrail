@@ -743,19 +743,21 @@ const policyStepDefinitions = [
     ["enabled", "启用 Step 1", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
     ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "阻断提示", "text"],
+    ["output_redirect_template", "输出重定向", "text"],
   ] },
   { rail: "routing_rail", title: "Step 2 · 模型路由", fields: [["enabled", "启用 Step 2", "boolean"]] },
   { rail: "request_rail", title: "Step 3 · 请求审查", fields: [
     ["enabled", "启用 Step 3", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
     ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]], ["block_message", "阻断提示", "text"],
+    ["output_redirect_template", "输出重定向", "text"],
   ] },
   { rail: "prompt_rail", title: "Step 4 · 提示词强化", fields: [["enabled", "启用 Step 4", "boolean"]] },
   { rail: "output_rail", title: "Step 5 · 输出检查", fields: [
     ["enabled", "启用 Step 5", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["max_retries", "最大重试次数", "number"],
     ["default_action_on_hit", "默认命中动作", "select", ["block", "retry_generation"]], ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]],
-    ["block_message", "阻断提示", "text"],
+    ["block_message", "阻断提示", "text"], ["output_redirect_template", "输出重定向", "text"],
   ] },
 ];
 const policyStepSettingHints = {
@@ -766,6 +768,7 @@ const policyStepSettingHints = {
   default_action_on_hit: "留空时沿用规则或系统默认动作（default）。",
   default_action_on_error: "留空时沿用规则或系统默认动作（default）。",
   block_message: "该 Step 阻断请求或输出时使用的提示；支持 ${user_id} 和 ${step_number}；留空沿用系统设置。",
+  output_redirect_template: "阶段结束时唯一允许提交给 AstrBot 的文本模板。默认 ${original}；例如 ${rule_id.sanitized}。sanitize 只产生 payload，不会自动改写文本。",
 };
 // Canvas does not inherit CSS custom properties. Keep its palette explicit and
 // six-digit so lane color alpha suffixes (for grid and selection overlays) stay valid.
@@ -2378,6 +2381,36 @@ function renderPolicyGraphStepEditor(rail) {
     grid.append(createPolicyGraphEditorField(labelText, policyStepSettingHints[key], control));
   }
   editor.append(grid);
+  const rulesById = new Map((policyLibrary.rules || []).map((rule) => [rule.rule_id, rule]));
+  const sanitizeBindings = (draft?.bindings || []).filter((binding) => {
+    if (binding.rail !== rail || binding.enabled === false) return false;
+    const rule = rulesById.get(binding.rule_id);
+    const action = binding.action_on_hit ?? rule?.default_action_on_hit;
+    return action === "sanitize";
+  });
+  if (sanitizeBindings.length) {
+    const notice = document.createElement("div");
+    notice.className = "policy-graph-editor-summary";
+    const warning = document.createElement("span");
+    warning.textContent = "此 Step 含 sanitize 节点：sanitize 现在只产出 NodeSignal payload，不会自动重定向输出。";
+    notice.append(warning);
+    if (sanitizeBindings.length === 1 && sanitizeBindings[0].rule_id) {
+      const ruleId = sanitizeBindings[0].rule_id;
+      const suggestion = `\${${ruleId}.sanitized}`;
+      const applySuggestion = document.createElement("button");
+      applySuggestion.type = "button";
+      applySuggestion.className = "button-secondary policy-graph-editor-action";
+      applySuggestion.textContent = `建议使用 ${suggestion}`;
+      applySuggestion.addEventListener("click", () => {
+        const updated = { ...(draft.rail_settings[rail] || {}), output_redirect_template: suggestion };
+        draft.rail_settings[rail] = updated;
+        setPolicyGraphEditorStatus(`已暂存输出重定向 ${suggestion}；点击“保存策略”后生效。`);
+        renderPolicyGraphEditor();
+      });
+      notice.append(applySuggestion);
+    }
+    editor.append(notice);
+  }
   const addRulesButton = document.createElement("button");
   addRulesButton.type = "button";
   addRulesButton.className = "button-secondary policy-graph-editor-action";
