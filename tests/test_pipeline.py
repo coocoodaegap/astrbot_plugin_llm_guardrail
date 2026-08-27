@@ -682,7 +682,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 3 被阻断。"})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Step 3 被阻断。"})
         self.assertNotIn("should_not_wrap", ctx.results)
         self.assertNotIn("<untrusted_user_input>", request.prompt)
 
@@ -772,7 +772,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
 
     def test_output_sanitize_replaces_response_span(self):
         cfg = normalize_config(
@@ -1176,7 +1176,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.output_blocked)
         self.assertEqual(len(provider.calls), 1)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
         self.assertEqual(
             [item["outcome"] for item in ctx.retry_trace],
             ["generated", "exhausted"],
@@ -1284,7 +1284,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(ctx.output_blocked)
         self.assertEqual(len(provider.calls), 1)
         self.assertEqual(ctx.retry_trace[0]["outcome"], "error")
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
 
     def test_output_retry_uses_only_the_snapshot_provider(self):
         cfg = normalize_config(
@@ -1352,7 +1352,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(ctx.output_blocked)
         self.assertIn("UnlistedProviderError", warnings)
         self.assertNotIn("private candidate must not enter audit", warnings)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
 
     def test_output_retry_blocks_when_original_response_cannot_be_read(self):
         cfg = normalize_config(
@@ -1386,7 +1386,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(ctx.terminal_action["source_kind"], "response_read")
         self.assertIn("UnlistedProviderError", warnings)
         self.assertNotIn("raw original response must not be delivered", warnings)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
 
     def test_output_retry_blocks_when_the_provider_interface_getter_fails(self):
         cfg = normalize_config(
@@ -1419,7 +1419,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(provider.calls, [])
         self.assertIn("UnlistedProviderError", warnings)
         self.assertNotIn("provider interface must not enter audit", warnings)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
 
     def test_output_retry_blocks_when_the_provider_response_getter_fails(self):
         cfg = normalize_config(
@@ -1452,7 +1452,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(provider.calls), 1)
         self.assertIn("UnlistedProviderError", warnings)
         self.assertNotIn("private provider response must not enter audit", warnings)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
 
     def test_output_retry_rejects_an_empty_provider_completion(self):
         cfg = normalize_config(
@@ -1486,7 +1486,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(len(provider.calls), 1)
                 self.assertIn("returned no text", " ".join(ctx.warnings))
                 self.assertEqual(
-                    response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。"
+                    response.completion_text, "用户 sender 的请求在 Step 5 被阻断。"
                 )
 
     def test_output_retry_stops_when_the_response_cannot_be_replaced(self):
@@ -1680,7 +1680,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.input_blocked)
         self.assertTrue(event.stopped)
-        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 1 被阻断。"})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Step 1 被阻断。"})
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
         self.assertIn("RuntimeError: simulated", ctx.results["boom"].metadata["error"])
         self.assertEqual(ctx.terminal_action["source_kind"], "error")
@@ -1739,7 +1739,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
-        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 1 被阻断。"})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Step 1 被阻断。"})
         self.assertTrue(ctx.results["review"].matched)
         self.assertEqual(ctx.results["review"].signal.payload["reason"], "prompt leak")
         self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "safe-provider")
@@ -1841,7 +1841,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         self.assertTrue(ctx.input_blocked)
-        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Rail 1 被阻断。"})
+        self.assertEqual(event.result, {"plain": "用户 sender 的请求在 Step 1 被阻断。"})
         self.assertTrue(ctx.results["rag"].matched)
         self.assertEqual(ctx.results["rag"].signal.payload["evidence_count"], 1)
         self.assertIn("Policy says hello", ctx.results["rag"].signal.payload["matched_text"])
@@ -1945,7 +1945,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
         self.assertEqual(ctx.results["rag"].metadata["error_action"], "block")
         self.assertIn("knowledge base manager is unavailable", " ".join(ctx.warnings))
 
@@ -1972,7 +1972,7 @@ class PipelineTests(unittest.TestCase):
             ctx = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
         self.assertEqual(ctx.results["boom"].metadata["error_action"], "block")
 
     def test_output_llm_review_parse_error_uses_error_action_block(self):
@@ -2000,7 +2000,7 @@ class PipelineTests(unittest.TestCase):
         ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_response(event, response))
 
         self.assertTrue(ctx.output_blocked)
-        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
         self.assertEqual(ctx.results["review"].metadata["error_action"], "block")
         self.assertIn("ValueError", ctx.results["review"].metadata["error"])
 

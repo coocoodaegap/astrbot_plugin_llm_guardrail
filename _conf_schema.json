@@ -52,8 +52,8 @@
       "block_message": {
         "type": "string",
         "description": "请求阻断提示",
-        "hint": "请求被 Rail 阻断时返回给用户的提示。支持 ${user_id} 和 ${rail_number}；留空则使用内置默认提示。此设置为所有自定义策略提供默认值。",
-        "default": "用户 ${user_id} 的请求在 Rail ${rail_number} 被阻断。"
+        "hint": "请求被 Step 阻断时返回给用户的提示。支持 ${user_id} 和 ${step_number}；留空则使用内置默认提示。此设置为所有自定义策略提供默认值。",
+        "default": "用户 ${user_id} 的请求在 Step ${step_number} 被阻断。"
       },
       "enable_encoded_payload_detector": {
         "invisible": true,
@@ -328,8 +328,8 @@
       "block_message": {
         "type": "string",
         "description": "请求阻断提示",
-        "hint": "输入被阻断时返回给用户的提示。支持 ${user_id} 和 ${rail_number}；留空则使用插件内置默认值。",
-        "default": "用户 ${user_id} 的请求在 Rail ${rail_number} 被阻断。"
+        "hint": "输入被 Step 阻断时返回给用户的提示。支持 ${user_id} 和 ${step_number}；留空则使用插件内置默认值。",
+        "default": "用户 ${user_id} 的请求在 Step ${step_number} 被阻断。"
       },
       "rule_list": {
         "type": "template_list",

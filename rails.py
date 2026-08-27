@@ -414,7 +414,7 @@ class GuardrailPipeline:
             parts = self.adapter.get_principal_parts(context.event)
             user_id = parts[1] if parts is not None else ""
         return str(template).replace("${user_id}", str(user_id)).replace(
-            "${rail_number}", str(RAIL_STEPS.get(rail, ""))
+            "${step_number}", str(RAIL_STEPS.get(rail, ""))
         )
 
     def _apply_session_control_block(self, context: RailContext) -> None:

@@ -85,7 +85,7 @@ OUTPUT_ACTIONS = {
 }
 ERROR_ACTIONS = {"default", "discard", "record", "retry_generation", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
-DEFAULT_REQUEST_BLOCK_MESSAGE = "用户 ${user_id} 的请求在 Rail ${rail_number} 被阻断。"
+DEFAULT_REQUEST_BLOCK_MESSAGE = "用户 ${user_id} 的请求在 Step ${step_number} 被阻断。"
 DEFAULT_BLACKLIST_MESSAGE = (
     "用户 ${user_id} 已因多次触发风险规则被临时限制使用，请稍后再试。"
 )
