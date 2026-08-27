@@ -33,7 +33,7 @@ try:
         GUARDRAIL_WAITING_RAILS_PRIORITY,
         INTERNAL_MARKER,
     )
-    from .rails import GuardrailPipeline
+    from .rails import GuardrailPipeline, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY
     from .pages_api import GuardrailPagesApiMixin
     from .rag_experience import RagExperienceService
     from .session_policy_state import SessionPolicyStateService
@@ -57,7 +57,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         GUARDRAIL_WAITING_RAILS_PRIORITY,
         INTERNAL_MARKER,
     )
-    from rails import GuardrailPipeline
+    from rails import GuardrailPipeline, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY
     from pages_api import GuardrailPagesApiMixin
     from rag_experience import RagExperienceService
     from session_policy_state import SessionPolicyStateService
@@ -249,6 +249,60 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             logger.error("[LLMGuardrail] response pipeline failed: %s", exc, exc_info=True)
             return
         self._log_context_summary("response", rail_context)
+
+    @filter.on_agent_done(priority=GUARDRAIL_RESPONSE_PRIORITY)
+    async def on_agent_done(
+        self, event: AstrMessageEvent, run_context: Any, _resp: LLMResponse, *_args, **_kwargs
+    ) -> None:
+        """仅将通过输出审核的输出提交到对话记录中。"""
+
+        if not self or not getattr(self, "normalized_config", None):
+            return
+        directive = self.adapter.get_event_extra(
+            event, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY, None
+        )
+        if not isinstance(directive, dict):
+            return
+        action = str(directive.get("action", "") or "")
+        text = str(directive.get("text", "") or "")
+        if action == "commit":
+            result = self.adapter.replace_final_assistant_message(run_context, text)
+            if result.success:
+                return
+            logger.error(
+                "[LLMGuardrail] final Step 5 output cannot replace history source: %s",
+                "; ".join(result.warnings),
+            )
+            # Never allow the rejected candidate to be saved merely because
+            # the host runtime changed its internal history representation.
+            sent = await self.adapter.send_text_result(event, text)
+            stop_result = self.adapter.stop_event(event)
+            if not sent.success:
+                logger.error(
+                    "[LLMGuardrail] failed to send accepted output after history sync failure: %s",
+                    "; ".join(sent.warnings),
+                )
+            if not stop_result.success:
+                logger.error(
+                    "[LLMGuardrail] failed to stop event after history sync failure: %s",
+                    "; ".join(stop_result.warnings),
+                )
+            return
+        if action == "block":
+            # The block text is sent directly, then the core event is stopped
+            # so it neither sends the candidate nor writes it to history.
+            sent = await self.adapter.send_text_result(event, text)
+            stop_result = self.adapter.stop_event(event)
+            if not sent.success:
+                logger.error(
+                    "[LLMGuardrail] failed to send Step 5 block reply: %s",
+                    "; ".join(sent.warnings),
+                )
+            if not stop_result.success:
+                logger.error(
+                    "[LLMGuardrail] failed to stop Step 5 blocked event: %s",
+                    "; ".join(stop_result.warnings),
+                )
 
     @filter.command_group("guardrail")
     @filter.permission_type(filter.PermissionType.ADMIN)

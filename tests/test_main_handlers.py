@@ -60,6 +60,7 @@ def _install_astrbot_stubs():
         on_waiting_llm_request=passthrough_decorator,
         on_llm_request=passthrough_decorator,
         on_llm_response=passthrough_decorator,
+        on_agent_done=passthrough_decorator,
         permission_type=passthrough_decorator,
         command=passthrough_decorator,
         command_group=command_group_decorator,
@@ -104,6 +105,9 @@ class MainHandlerSignatureTests(unittest.TestCase):
         asyncio.run(
             plugin.on_llm_response(object(), object(), object())
         )
+        asyncio.run(
+            plugin.on_agent_done(object(), object(), object(), object())
+        )
 
     def test_message_handlers_skip_none_self_from_astrbot_edge_event(self):
         _install_astrbot_stubs()
@@ -129,6 +133,58 @@ class MainHandlerSignatureTests(unittest.TestCase):
                 None, object(), object(), object()
             )
         )
+        asyncio.run(
+            module.LlmGuardrailPlugin.on_agent_done(
+                None, object(), object(), object(), object()
+            )
+        )
+
+    def test_agent_done_commits_approved_output_or_stops_a_blocked_one(self):
+        _install_astrbot_stubs()
+        module = importlib.import_module("main")
+        plugin = module.LlmGuardrailPlugin(object(), {"enabled": False})
+
+        class Event:
+            def __init__(self):
+                self.extras = {}
+                self.sent = []
+                self.stopped = False
+
+            def get_extra(self, key, default=None):
+                return self.extras.get(key, default)
+
+            def set_extra(self, key, value):
+                self.extras[key] = value
+
+            def plain_result(self, text):
+                return {"plain": text}
+
+            async def send(self, result):
+                self.sent.append(result)
+
+            def stop_event(self):
+                self.stopped = True
+
+        committed_event = Event()
+        committed_event.set_extra(
+            module.OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
+            {"action": "commit", "text": "safe replacement"},
+        )
+        committed_context = types.SimpleNamespace(
+            messages=[{"role": "user", "content": "hello"}, {"role": "assistant", "content": "unsafe draft"}]
+        )
+        asyncio.run(plugin.on_agent_done(committed_event, committed_context, object()))
+        self.assertEqual(committed_context.messages[-1]["content"], "safe replacement")
+        self.assertFalse(committed_event.stopped)
+
+        blocked_event = Event()
+        blocked_event.set_extra(
+            module.OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
+            {"action": "block", "text": "blocked"},
+        )
+        asyncio.run(plugin.on_agent_done(blocked_event, types.SimpleNamespace(messages=[]), object()))
+        self.assertEqual(blocked_event.sent, [{"plain": "blocked"}])
+        self.assertTrue(blocked_event.stopped)
 
     def test_access_control_commands_use_current_adapter_and_manual_command_reason(self):
         _install_astrbot_stubs()

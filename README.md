@@ -41,7 +41,7 @@
 - 支持检查 `LLMResponse.completion_text`。
 - 支持关键词、正则和逻辑门规则。
 - 支持观察、拦截和净化输出。
-- Step 5 可使用 `retry_generation`：命中后以本轮文本请求快照直接调用本轮已选中的 Provider 重新生成，并对新文本重新执行完整 Step 5；旧的 Step 5 结果会被丢弃。首版仅支持非流式纯文本请求，Provider 不可用、超时、失败或次数耗尽都会一次性阻断，且不会回退到备用 Provider。
+- Step 5 可使用 `retry_generation`：命中后以本轮文本请求快照直接调用本轮已选中的 Provider 重新生成，并对新文本重新执行完整 Step 5；旧的 Step 5 结果会被丢弃。首版仅支持非流式纯文本请求，Provider 不可用、超时、失败或次数耗尽都会一次性阻断，且不会回退到备用 Provider。仅当最终文本通过 Step 5 后才会提交给 AstrBot 写入会话历史；最终阻断不会写入候选回复。
 - 流式 chunk 响应会被跳过。
 
 ### RAG 知识经验

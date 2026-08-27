@@ -1465,6 +1465,61 @@ class AstrBotAdapter:
             )
         return AdapterResult(True)
 
+    async def send_text_result(self, event: Any, text: str) -> AdapterResult:
+        """Send a final plain-text result directly from an agent-done hook."""
+
+        sender = getattr(event, "send", None)
+        if not callable(sender):
+            return AdapterResult(False, ["event.send is unavailable"])
+        result_value: Any = text
+        plain_result = getattr(event, "plain_result", None)
+        if callable(plain_result):
+            try:
+                result_value = plain_result(text)
+            except Exception as exc:
+                return AdapterResult(
+                    False, [f"event.plain_result failed: {type(exc).__name__}"]
+                )
+        try:
+            value = sender(result_value)
+            if inspect.isawaitable(value):
+                await value
+        except Exception as exc:
+            return AdapterResult(False, [f"event.send failed: {type(exc).__name__}"])
+        return AdapterResult(True)
+
+    def replace_final_assistant_message(
+        self, run_context: Any, text: str
+    ) -> AdapterResult:
+        """Replace the last persisted assistant text before AstrBot saves history."""
+
+        messages = getattr(run_context, "messages", None)
+        if not isinstance(messages, list):
+            return AdapterResult(False, ["agent run context messages are unavailable"])
+        for message in reversed(messages):
+            role = (
+                message.get("role")
+                if isinstance(message, dict)
+                else getattr(message, "role", None)
+            )
+            if role != "assistant":
+                continue
+            try:
+                if isinstance(message, dict):
+                    message["content"] = text
+                else:
+                    setattr(message, "content", text)
+            except Exception as exc:
+                return AdapterResult(
+                    False,
+                    [
+                        "failed to replace final assistant history message: "
+                        f"{type(exc).__name__}"
+                    ],
+                )
+            return AdapterResult(True)
+        return AdapterResult(False, ["final assistant history message is unavailable"])
+
     def stop_event(self, event: Any) -> AdapterResult:
         stopper = getattr(event, "stop_event", None)
         if not callable(stopper):

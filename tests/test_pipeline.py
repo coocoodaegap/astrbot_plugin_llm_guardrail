@@ -26,6 +26,7 @@ from rails import (
     RESULTS_EXTRA_KEY,
     RETRY_TRACE_EXTRA_KEY,
     STATE_EXTRA_KEY,
+    OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
 )
 from fallback_graph import build_fallback_runtime_config
 from session_lock import PrincipalLockManager
@@ -773,6 +774,10 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.output_blocked)
         self.assertEqual(response.completion_text, "用户 sender 的请求在 Step 5 被阻断。")
+        self.assertEqual(
+            event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY),
+            {"action": "block", "text": "用户 sender 的请求在 Step 5 被阻断。"},
+        )
 
     def test_output_sanitize_replaces_response_span(self):
         cfg = normalize_config(
@@ -796,10 +801,15 @@ class PipelineTests(unittest.TestCase):
         asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertEqual(response.completion_text, "the [x] is out")
+        self.assertEqual(
+            event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY),
+            {"action": "commit", "text": "the [x] is out"},
+        )
 
     def test_output_retry_regenerates_then_reruns_a_fresh_rail_five(self):
         cfg = normalize_config(
             {
+                "debug_settings": {"logging": True},
                 "input_rail": {"enabled": False},
                 "routing_rail": {"enabled": False},
                 "request_rail": {
@@ -852,7 +862,8 @@ class PipelineTests(unittest.TestCase):
         pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
 
         asyncio.run(pipeline.run_request(event, request))
-        ctx = asyncio.run(pipeline.run_response(event, response))
+        with patch("rails.logger.info") as log_info:
+            ctx = asyncio.run(pipeline.run_response(event, response))
 
         self.assertEqual(response.completion_text, "safe replacement")
         self.assertEqual(fake_context.llm_calls, [])
@@ -879,8 +890,19 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             ctx.retry_trace[0]["provider_source"], "current_chat_provider"
         )
+        retry_logs = [
+            call.args
+            for call in log_info.call_args_list
+            if call.args and "retry_generation start" in call.args[0]
+        ]
+        self.assertEqual(len(retry_logs), 1)
+        self.assertEqual(retry_logs[0][1:], ("retry", 1, 1, "default-provider", "current_chat_provider"))
         self.assertEqual(ctx.retry_trace[-1]["outcome"], "passed")
         self.assertEqual(event.get_extra(RETRY_TRACE_EXTRA_KEY), ctx.retry_trace)
+        self.assertEqual(
+            event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY),
+            {"action": "commit", "text": "safe replacement"},
+        )
 
     def test_output_retry_uses_the_step_five_default_hit_action(self):
         cfg = normalize_config(
@@ -1182,6 +1204,10 @@ class PipelineTests(unittest.TestCase):
             ["generated", "exhausted"],
         )
         self.assertEqual(ctx.terminal_action["source_kind"], "retry_generation")
+        self.assertEqual(
+            event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY),
+            {"action": "block", "text": "用户 sender 的请求在 Step 5 被阻断。"},
+        )
 
     def test_output_retry_with_zero_limit_blocks_without_calling_provider(self):
         cfg = normalize_config(

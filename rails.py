@@ -105,6 +105,7 @@ WARNINGS_EXTRA_KEY = "_llm_guardrail_warnings"
 STATE_EXTRA_KEY = "_llm_guardrail_state"
 RETRY_REQUEST_SNAPSHOT_EXTRA_KEY = "_llm_guardrail_retry_request_snapshot"
 RETRY_TRACE_EXTRA_KEY = "_llm_guardrail_retry_trace"
+OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY = "_llm_guardrail_output_history_directive"
 INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
 
 # P3 deliberately keeps the first retry timeout private and fixed.  Exposing
@@ -900,6 +901,15 @@ class GuardrailPipeline:
                 )
                 return
 
+            if self.config.debug_settings["logging"]:
+                logger.info(
+                    "[LLMGuardrail] retry_generation start | rail=output_rail | rule=%s | attempt=%s/%s | provider=%s | provider_source=%s",
+                    source_node_id,
+                    completed_retries + 1,
+                    max_retries,
+                    snapshot.provider_id or "-",
+                    snapshot.provider_source or "-",
+                )
             retry_result = await self.adapter.regenerate_llm_text(
                 context.event,
                 snapshot,
@@ -1074,6 +1084,9 @@ class GuardrailPipeline:
         context.warnings.extend(adapter_result.warnings)
         if adapter_result.success:
             context.output_needs_commit = False
+            self._set_output_history_directive(
+                context, action="commit", text=context.current_output
+            )
             return
         context.output_blocked = True
         stop_result = self.adapter.stop_event(context.event)
@@ -1147,10 +1160,33 @@ class GuardrailPipeline:
         result = self.adapter.set_response_text(context.response, message)
         warnings = list(result.warnings)
         if result.success:
+            directive_result = self.adapter.set_event_extra(
+                context.event,
+                OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
+                {"action": "block", "text": message},
+            )
+            warnings.extend(directive_result.warnings)
             return True, warnings
         stop_result = self.adapter.stop_event(context.event)
         warnings.extend(stop_result.warnings)
         return stop_result.success, warnings
+
+    def _set_output_history_directive(
+        self, context: RailContext, *, action: str, text: str
+    ) -> None:
+        """Defer the Step 5 history decision until AstrBot's agent-done hook.
+
+        AstrBot persists ``run_context.messages`` after ``on_llm_response``.
+        The directive lets the plugin update that persistence source only after
+        Step 5 has accepted the final text, rather than retaining a candidate.
+        """
+
+        result = self.adapter.set_event_extra(
+            context.event,
+            OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
+            {"action": action, "text": str(text or "")},
+        )
+        context.warnings.extend(result.warnings)
 
     def _apply_output_action(
         self,
