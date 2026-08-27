@@ -21,7 +21,12 @@ from access_control import (
 )
 from constants import INTERNAL_MARKER
 from adapters import AstrBotAdapter
-from rails import GuardrailPipeline
+from rails import (
+    GuardrailPipeline,
+    RESULTS_EXTRA_KEY,
+    RETRY_TRACE_EXTRA_KEY,
+    STATE_EXTRA_KEY,
+)
 from fallback_graph import build_fallback_runtime_config
 from session_lock import PrincipalLockManager
 from state import MemoryStateStore
@@ -111,12 +116,124 @@ class FakeRequest:
         self.prompt = prompt
         self.system_prompt = system_prompt
         self.extra_user_content_parts = []
+        self.contexts = []
+        self.image_urls = []
+        self.tools = None
 
 
 class FakeResponse:
     def __init__(self, text):
         self.completion_text = text
         self.is_chunk = False
+
+
+class FakeReadOnlyResponse:
+    def __init__(self, text):
+        self._text = text
+        self.is_chunk = False
+
+    @property
+    def completion_text(self):
+        return self._text
+
+
+class FakeInitiallyUnreadableResponse:
+    def __init__(self, text):
+        self._text = text
+        self._fails_next_read = True
+        self.is_chunk = False
+
+    @property
+    def completion_text(self):
+        if self._fails_next_read:
+            self._fails_next_read = False
+            raise UnlistedProviderError("raw original response must not be delivered")
+        return self._text
+
+    @completion_text.setter
+    def completion_text(self, value):
+        self._text = value
+
+
+class FakeTextPart:
+    def __init__(self, text):
+        self.text = text
+
+
+class UnlistedProviderError(Exception):
+    pass
+
+
+class FakeUnreadableProviderResponse:
+    @property
+    def completion_text(self):
+        raise UnlistedProviderError("private provider response must not enter audit")
+
+
+class FakeUnreadableTextProvider:
+    def __init__(self):
+        self.calls = []
+
+    async def text_chat(self, *, prompt, context, system_prompt):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "context": context,
+                "system_prompt": system_prompt,
+            }
+        )
+        return FakeUnreadableProviderResponse()
+
+
+class FakeUnreadableProviderInterface:
+    def __init__(self):
+        self.calls = []
+
+    @property
+    def text_chat(self):
+        raise UnlistedProviderError("provider interface must not enter audit")
+
+
+class FakeTextProvider:
+    def __init__(self, responses=None, *, delay_seconds=0.0):
+        self.responses = list(responses or [])
+        self.delay_seconds = delay_seconds
+        self.calls = []
+
+    async def text_chat(self, *, prompt, context, system_prompt):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "context": context,
+                "system_prompt": system_prompt,
+            }
+        )
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
+        value = self.responses.pop(0) if self.responses else ""
+        if isinstance(value, Exception):
+            raise value
+        if value is None:
+            return types.SimpleNamespace(completion_text=None)
+        return FakeResponse(str(value))
+
+
+class FakePluralContextTextProvider:
+    """Compatibility fixture for third-party Providers using ``contexts``."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    async def text_chat(self, *, prompt, contexts, system_prompt):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "contexts": contexts,
+                "system_prompt": system_prompt,
+            }
+        )
+        return FakeResponse(self.response)
 
 
 class FakeProviderManager:
@@ -679,6 +796,865 @@ class PipelineTests(unittest.TestCase):
         asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
 
         self.assertEqual(response.completion_text, "the [x] is out")
+
+    def test_output_retry_regenerates_then_reruns_a_fresh_rail_five(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {
+                    "enabled": True,
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "request_state",
+                            "keywords": ["original"],
+                            "action_on_hit": "observe",
+                        }
+                    ],
+                },
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "strengthen_prompt",
+                            "rule_id": "retry_system_suffix",
+                            "insertion_target": "system_suffix",
+                            "insertion_text": "keep the reply safe",
+                        }
+                    ]
+                },
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "safe_after_retry",
+                            "keywords": ["safe"],
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original request", "original system")
+        request.contexts = [{"role": "user", "content": "prior turn"}]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertEqual(response.completion_text, "safe replacement")
+        self.assertEqual(fake_context.llm_calls, [])
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(provider.calls[0]["context"], request.contexts)
+        self.assertEqual(
+            provider.calls[0]["system_prompt"],
+            "original system\n\nkeep the reply safe",
+        )
+        self.assertIn("original request", provider.calls[0]["prompt"])
+        self.assertIn("unsafe draft", provider.calls[0]["prompt"])
+        # The first attempt short-circuits before this node.  It must be
+        # cleared and executed after the replacement text is generated.
+        self.assertTrue(ctx.results["request_state"].matched)
+        self.assertFalse(ctx.results["retry"].matched)
+        self.assertTrue(ctx.results["safe_after_retry"].executed)
+        self.assertTrue(ctx.results["safe_after_retry"].matched)
+        self.assertEqual(
+            event.get_extra(RESULTS_EXTRA_KEY)["safe_after_retry"].status,
+            "completed",
+        )
+        self.assertEqual(ctx.retry_trace[0]["outcome"], "generated")
+        self.assertEqual(ctx.retry_trace[0]["max_retries"], 1)
+        self.assertEqual(
+            ctx.retry_trace[0]["provider_source"], "current_chat_provider"
+        )
+        self.assertEqual(ctx.retry_trace[-1]["outcome"], "passed")
+        self.assertEqual(event.get_extra(RETRY_TRACE_EXTRA_KEY), ctx.retry_trace)
+
+    def test_output_retry_uses_the_step_five_default_hit_action(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {
+                        "max_retries": 1,
+                        "default_action_on_hit": "retry_generation",
+                    },
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry_by_default",
+                            "keywords": ["unsafe"],
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertFalse(ctx.output_blocked)
+        self.assertEqual(response.completion_text, "safe replacement")
+        self.assertEqual(len(provider.calls), 1)
+
+    def test_output_retry_can_rerun_step_five_more_than_once(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 2},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "safe_after_retry",
+                            "keywords": ["safe"],
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe original")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["unsafe replacement", "safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertFalse(ctx.output_blocked)
+        self.assertEqual(response.completion_text, "safe replacement")
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(
+            [item["outcome"] for item in ctx.retry_trace],
+            ["generated", "generated", "passed"],
+        )
+        # The final pass is a new Rail 5 attempt, not a reuse of a previous hit.
+        self.assertFalse(ctx.results["retry"].matched)
+        self.assertTrue(ctx.results["safe_after_retry"].matched)
+
+    def test_output_retry_supports_a_provider_using_plural_contexts(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original", "system")
+        request.contexts = [{"role": "user", "content": "previous turn"}]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakePluralContextTextProvider("safe replacement")
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertFalse(ctx.output_blocked)
+        self.assertEqual(response.completion_text, "safe replacement")
+        self.assertEqual(provider.calls[0]["contexts"], request.contexts)
+
+    def test_output_retry_uses_a_deep_copied_final_request_snapshot(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original request", "original system")
+        request.contexts = [{"role": "user", "content": "original history"}]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        request.prompt = "mutated request"
+        request.system_prompt = "mutated system"
+        request.contexts[0]["content"] = "mutated history"
+        asyncio.run(pipeline.run_response(event, response))
+
+        self.assertIn("original request", provider.calls[0]["prompt"])
+        self.assertNotIn("mutated request", provider.calls[0]["prompt"])
+        self.assertEqual(provider.calls[0]["system_prompt"], "original system")
+        self.assertEqual(
+            provider.calls[0]["context"],
+            [{"role": "user", "content": "original history"}],
+        )
+
+    def test_output_retry_preserves_text_only_temporary_request_context(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original")
+        request.extra_user_content_parts = [FakeTextPart("temporary guardrail context")]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertFalse(ctx.output_blocked)
+        self.assertIn("temporary guardrail context", provider.calls[0]["prompt"])
+        self.assertEqual(response.completion_text, "safe replacement")
+
+    def test_output_retry_rejects_multimodal_context_history(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original")
+        request.contexts = [
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": "https://example.invalid/a.png"}],
+            }
+        ]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertIn("contexts contain non-text", " ".join(ctx.warnings))
+
+    def test_output_retry_rejects_a_text_context_part_with_unknown_media_field(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original")
+        request.contexts = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "apparently plain text",
+                        "input_image": "https://example.invalid/hidden.png",
+                    }
+                ],
+            }
+        ]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertIn("contexts contain non-text", " ".join(ctx.warnings))
+
+    def test_output_retry_exhaustion_blocks_once_after_the_configured_limit(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe first draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["unsafe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+        self.assertEqual(
+            [item["outcome"] for item in ctx.retry_trace],
+            ["generated", "exhausted"],
+        )
+        self.assertEqual(ctx.terminal_action["source_kind"], "retry_generation")
+
+    def test_output_retry_with_zero_limit_blocks_without_calling_provider(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 0},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(ctx.retry_trace[0]["outcome"], "exhausted")
+
+    def test_output_retry_does_not_resume_an_already_blocked_response(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        event.set_extra(
+            STATE_EXTRA_KEY,
+            {"input_blocked": False, "output_blocked": True},
+        )
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(response.completion_text, "unsafe draft")
+
+    def test_output_retry_provider_error_blocks_without_leaking_a_candidate(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider([RuntimeError("provider failed")])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(ctx.retry_trace[0]["outcome"], "error")
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+
+    def test_output_retry_uses_only_the_snapshot_provider(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        event.set_extra("selected_provider", "missing-selected-provider")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        default_provider = FakeTextProvider(["unexpected fallback"])
+        fake_context.providers["default-provider"] = default_provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(default_provider.calls, [])
+        self.assertEqual(ctx.retry_trace[0]["provider_id"], "missing-selected-provider")
+        self.assertEqual(
+            ctx.retry_trace[0]["provider_source"], "event_selected_provider"
+        )
+
+    def test_output_retry_records_only_the_provider_error_type(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(
+            [UnlistedProviderError("private candidate must not enter audit")]
+        )
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        warnings = " ".join(ctx.warnings)
+        self.assertTrue(ctx.output_blocked)
+        self.assertIn("UnlistedProviderError", warnings)
+        self.assertNotIn("private candidate must not enter audit", warnings)
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+
+    def test_output_retry_blocks_when_original_response_cannot_be_read(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeInitiallyUnreadableResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        warnings = " ".join(ctx.warnings)
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(ctx.terminal_action["source_kind"], "response_read")
+        self.assertIn("UnlistedProviderError", warnings)
+        self.assertNotIn("raw original response must not be delivered", warnings)
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+
+    def test_output_retry_blocks_when_the_provider_interface_getter_fails(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeUnreadableProviderInterface()
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        warnings = " ".join(ctx.warnings)
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertIn("UnlistedProviderError", warnings)
+        self.assertNotIn("provider interface must not enter audit", warnings)
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+
+    def test_output_retry_blocks_when_the_provider_response_getter_fails(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeUnreadableTextProvider()
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        warnings = " ".join(ctx.warnings)
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn("UnlistedProviderError", warnings)
+        self.assertNotIn("private provider response must not enter audit", warnings)
+        self.assertEqual(response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。")
+
+    def test_output_retry_rejects_an_empty_provider_completion(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        for candidate in (None, "", "   "):
+            with self.subTest(candidate=repr(candidate)):
+                event = FakeEvent("hello")
+                response = FakeResponse("unsafe draft")
+                fake_context = FakeContext()
+                provider = FakeTextProvider([candidate])
+                fake_context.providers["default-provider"] = provider
+                pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+                asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+                ctx = asyncio.run(pipeline.run_response(event, response))
+
+                self.assertTrue(ctx.output_blocked)
+                self.assertEqual(len(provider.calls), 1)
+                self.assertIn("returned no text", " ".join(ctx.warnings))
+                self.assertEqual(
+                    response.completion_text, "用户 sender 的请求在 Rail 5 被阻断。"
+                )
+
+    def test_output_retry_stops_when_the_response_cannot_be_replaced(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeReadOnlyResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(response.completion_text, "unsafe draft")
+        self.assertEqual(ctx.retry_trace[0]["outcome"], "error")
+
+    def test_output_retry_missing_provider_blocks_without_a_generation_call(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        fake_context.providers.pop("default-provider")
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(ctx.retry_trace[0]["outcome"], "error")
+        self.assertIn("provider is unavailable", " ".join(ctx.warnings))
+
+    def test_output_retry_timeout_blocks_without_leaking_a_candidate(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"], delay_seconds=0.02)
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        with patch("rails.RETRY_GENERATION_TIMEOUT_SECONDS", 0.001):
+            ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn("timed out", " ".join(ctx.warnings))
+
+    def test_output_retry_rejects_non_text_request_snapshot(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("original")
+        request.extra_user_content_parts = [object()]
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, request))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertTrue(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertIn("temporary content parts", " ".join(ctx.warnings))
+
+    def test_output_retry_skips_streaming_chunks(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        response.is_chunk = True
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        ctx = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertFalse(ctx.output_blocked)
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(response.completion_text, "unsafe draft")
 
     def test_input_error_block_stops_event(self):
         cfg = normalize_config(

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +24,31 @@ class AdapterResult:
     success: bool
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def _elapsed_milliseconds(started_at: float) -> int:
+    return max(int((time.monotonic() - started_at) * 1000), 0)
+
+
+@dataclass(frozen=True)
+class RetryRequestSnapshot:
+    """A replay-safe subset of one final ProviderRequest.
+
+    The snapshot intentionally excludes media, tools, and opaque temporary
+    parts.  P3's first retry implementation only replays plain text requests.
+    """
+
+    prompt: str
+    system_prompt: str
+    contexts: tuple[Any, ...]
+    extra_user_text_parts: tuple[str, ...]
+    provider_id: str
+    provider_source: str = "unavailable"
+    unsupported_reason: str = ""
+
+    @property
+    def replayable(self) -> bool:
+        return not self.unsupported_reason
 
 
 @dataclass(frozen=True)
@@ -720,6 +747,223 @@ class AstrBotAdapter:
             metadata={"provider_id": target_provider_id, "text": text},
         )
 
+    async def capture_retry_request_snapshot(
+        self, event: Any, request: Any
+    ) -> AdapterResult:
+        """Capture the final request form needed by P3 output regeneration.
+
+        Saving a deep-copied, limited snapshot prevents later request mutations
+        from changing a retry.  Unsupported request shapes are retained as a
+        non-replayable snapshot so they can fail closed only if retry is asked
+        for; the ordinary main request remains unaffected.
+        """
+
+        if request is None:
+            return AdapterResult(False, ["retry request snapshot is unavailable"])
+
+        prompt = str(getattr(request, "prompt", "") or "")
+        system_prompt = str(getattr(request, "system_prompt", "") or "")
+        unsupported_reason = ""
+        raw_contexts = getattr(request, "contexts", [])
+        if raw_contexts is None:
+            raw_contexts = []
+        if not isinstance(raw_contexts, (list, tuple)):
+            unsupported_reason = "request contexts are not replayable"
+            contexts: tuple[Any, ...] = ()
+        else:
+            try:
+                contexts = tuple(copy.deepcopy(raw_contexts))
+            except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+                unsupported_reason = (
+                    "request contexts cannot be copied "
+                    f"({type(exc).__name__})"
+                )
+                contexts = ()
+
+        if not unsupported_reason and not self._contexts_are_text_replayable(contexts):
+            unsupported_reason = "request contexts contain non-text content"
+
+        extra_user_text_parts: tuple[str, ...] = ()
+        if not unsupported_reason:
+            extra_user_text_parts, unsupported_reason = self._text_extra_parts(
+                getattr(request, "extra_user_content_parts", None)
+            )
+        if not unsupported_reason and self._has_request_values(
+            getattr(request, "image_urls", None)
+        ):
+            unsupported_reason = "request has image URLs"
+        if not unsupported_reason and self._has_request_values(
+            getattr(request, "tools", None)
+        ):
+            unsupported_reason = "request has tools"
+
+        provider_id = self._request_provider_id(request)
+        provider_source = "provider_request" if provider_id else ""
+        if not provider_id:
+            provider_id = self.get_selected_request_provider_id(event)
+            provider_source = "event_selected_provider" if provider_id else ""
+        if not provider_id:
+            provider_id = await self.get_current_chat_provider_id(event)
+            provider_source = "current_chat_provider" if provider_id else "unavailable"
+        snapshot = RetryRequestSnapshot(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            contexts=contexts,
+            extra_user_text_parts=extra_user_text_parts,
+            provider_id=provider_id,
+            provider_source=provider_source,
+            unsupported_reason=unsupported_reason,
+        )
+        return AdapterResult(True, metadata={"snapshot": snapshot})
+
+    async def regenerate_llm_text(
+        self,
+        event: Any,
+        snapshot: RetryRequestSnapshot,
+        prompt: str,
+        *,
+        timeout_seconds: float,
+    ) -> AdapterResult:
+        """Call the selected Provider directly for one plain-text retry.
+
+        This deliberately does not use ``Context.llm_generate``: a retry
+        generated inside ``on_llm_response`` must not re-enter the complete
+        AstrBot hook chain and emit another user-facing response.
+        """
+
+        if not snapshot.replayable:
+            return AdapterResult(
+                False,
+                [
+                    "retry generation cannot replay this request: "
+                    f"{snapshot.unsupported_reason}"
+                ],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": snapshot.provider_source,
+                    "elapsed_ms": 0,
+                },
+            )
+
+        provider = self._get_provider_by_id(snapshot.provider_id)
+        provider_source = snapshot.provider_source
+        if provider is None:
+            return AdapterResult(
+                False,
+                ["retry generation provider is unavailable"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": 0,
+                },
+            )
+        try:
+            text_chat = getattr(provider, "text_chat", None)
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"retry generation provider interface failed: {type(exc).__name__}"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": 0,
+                },
+            )
+        if not callable(text_chat):
+            return AdapterResult(
+                False,
+                ["retry generation provider has no text_chat"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": 0,
+                },
+            )
+
+        async def call() -> Any:
+            kwargs = {
+                "prompt": prompt,
+                "context": list(copy.deepcopy(snapshot.contexts)),
+                "system_prompt": snapshot.system_prompt,
+            }
+            try:
+                value = text_chat(**kwargs)
+            except TypeError as exc:
+                # Older / third-party Providers sometimes use the plural
+                # spelling.  The official SDK documents ``context``; keep the
+                # compatibility branch inside the adapter rather than Rails.
+                if "context" not in str(exc):
+                    raise
+                kwargs["contexts"] = kwargs.pop("context")
+                value = text_chat(**kwargs)
+            return await value if inspect.isawaitable(value) else value
+
+        started_at = time.monotonic()
+        try:
+            response = await asyncio.wait_for(call(), timeout_seconds)
+        except TimeoutError:
+            return AdapterResult(
+                False,
+                [f"retry generation timed out after {timeout_seconds:g}s"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": _elapsed_milliseconds(started_at),
+                },
+            )
+        except asyncio.CancelledError:
+            return AdapterResult(
+                False,
+                ["retry generation was cancelled"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": _elapsed_milliseconds(started_at),
+                },
+            )
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"retry generation failed: {type(exc).__name__}"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": _elapsed_milliseconds(started_at),
+                },
+            )
+
+        try:
+            text = getattr(response, "completion_text", None)
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"retry generation response read failed: {type(exc).__name__}"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": _elapsed_milliseconds(started_at),
+                },
+            )
+        if not isinstance(text, str) or not text.strip():
+            return AdapterResult(
+                False,
+                ["retry generation returned no text"],
+                {
+                    "provider_id": snapshot.provider_id,
+                    "provider_source": provider_source,
+                    "elapsed_ms": _elapsed_milliseconds(started_at),
+                },
+            )
+        return AdapterResult(
+            True,
+            metadata={
+                "provider_id": snapshot.provider_id,
+                "provider_source": provider_source,
+                "elapsed_ms": _elapsed_milliseconds(started_at),
+                "text": text,
+            },
+        )
+
     async def search_knowledge_base(
         self,
         knowledge_bases: list[str],
@@ -806,6 +1050,111 @@ class AstrBotAdapter:
         """
 
         return await self._resolve_chat_provider_id(event, "")
+
+    @staticmethod
+    def _has_request_values(value: Any) -> bool:
+        if value is None:
+            return False
+        try:
+            return bool(value)
+        except (AttributeError, TypeError, ValueError):
+            # An opaque request field cannot be safely replayed as text.
+            return True
+
+    @staticmethod
+    def _text_extra_parts(value: Any) -> tuple[tuple[str, ...], str]:
+        """Extract only text-shaped temporary request content for P3 replay."""
+
+        if value is None:
+            return (), ""
+        if not isinstance(value, (list, tuple)):
+            return (), "request temporary content parts are not replayable"
+        texts: list[str] = []
+        for part in value:
+            if isinstance(part, str):
+                texts.append(part)
+                continue
+            if isinstance(part, Mapping):
+                part_type = str(part.get("type", "text") or "text").strip().lower()
+                text = part.get("text")
+            else:
+                part_type = str(getattr(part, "type", "text") or "text").strip().lower()
+                text = getattr(part, "text", None)
+            if part_type not in {"text", "textpart"} or not isinstance(text, str):
+                return (), "request has non-text temporary content parts"
+            texts.append(text)
+        return tuple(texts), ""
+
+    @classmethod
+    def _contexts_are_text_replayable(cls, contexts: tuple[Any, ...]) -> bool:
+        """Accept only OpenAI-style context messages carrying text content."""
+
+        unsupported_keys = {
+            "tool_calls",
+            "function_call",
+            "tool_call",
+            "tool",
+            "image_url",
+            "image_urls",
+            "image",
+            "attachments",
+            "files",
+            "file",
+            "input_file",
+            "audio",
+            "input_audio",
+            "video",
+            "input_video",
+            "media",
+        }
+        allowed_message_keys = {"role", "content", "name"}
+        allowed_content_part_keys = {"type", "text"}
+        for message in contexts:
+            if not isinstance(message, Mapping):
+                return False
+            if any(key not in allowed_message_keys for key in message):
+                return False
+            role_value = message.get("role")
+            if not isinstance(role_value, str):
+                return False
+            role = role_value.strip().lower()
+            if role in {"tool", "function"}:
+                return False
+            if any(cls._has_request_values(message.get(key)) for key in unsupported_keys):
+                return False
+            if "name" in message and not isinstance(message.get("name"), str):
+                return False
+            content = message.get("content")
+            if isinstance(content, str):
+                continue
+            if not isinstance(content, list):
+                return False
+            for part in content:
+                if not isinstance(part, Mapping):
+                    return False
+                if any(key not in allowed_content_part_keys for key in part):
+                    return False
+                if any(
+                    cls._has_request_values(part.get(key))
+                    for key in unsupported_keys
+                ):
+                    return False
+                part_type = str(part.get("type", "") or "").strip().lower()
+                text = part.get("text")
+                if part_type not in {"text", "input_text", "output_text"} or not isinstance(
+                    text, str
+                ):
+                    return False
+        return True
+
+    @staticmethod
+    def _request_provider_id(request: Any) -> str:
+        """Read only an explicit ProviderRequest provider ID when exposed."""
+
+        try:
+            return str(getattr(request, "provider_id", "") or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            return ""
 
     def _provider_exists(self, provider_id: str) -> bool | None:
         if self.context is None:
@@ -1076,14 +1425,44 @@ class AstrBotAdapter:
                 continue
         return None
 
+    def read_response_text(self, response: Any) -> AdapterResult:
+        """Read a response text field without letting adapter errors escape."""
+
+        try:
+            text = str(getattr(response, "completion_text", "") or "")
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"failed to read response.completion_text: {type(exc).__name__}"],
+            )
+        return AdapterResult(True, metadata={"text": text})
+
     def get_response_text(self, response: Any) -> str:
-        return str(getattr(response, "completion_text", "") or "")
+        result = self.read_response_text(response)
+        return str(result.metadata.get("text", "") or "")
+
+    def can_set_response_text(self, response: Any) -> bool:
+        """Conservatively preflight the writable response field for P3 retry."""
+
+        if response is None:
+            return False
+        try:
+            descriptor = inspect.getattr_static(type(response), "completion_text", None)
+            if isinstance(descriptor, property) and descriptor.fset is None:
+                return False
+            getattr(response, "completion_text")
+        except Exception:
+            return False
+        return True
 
     def set_response_text(self, response: Any, text: str) -> AdapterResult:
         try:
             setattr(response, "completion_text", text)
-        except (AttributeError, TypeError) as exc:
-            return AdapterResult(False, [f"failed to set response.completion_text: {exc}"])
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"failed to set response.completion_text: {type(exc).__name__}"],
+            )
         return AdapterResult(True)
 
     def stop_event(self, event: Any) -> AdapterResult:

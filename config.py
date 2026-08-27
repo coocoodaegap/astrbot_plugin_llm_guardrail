@@ -175,7 +175,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     """Normalize AstrBotConfig or a dict into runtime-only dataclasses."""
 
     warnings: list[str] = []
-    schema_version = "0.2.0"
+    schema_version = "0.3.0"
     fallback_policy_settings = _normalize_fallback_policy_settings(
         _as_dict(_config_get(raw_config, "fallback_policy_settings", {})),
         warnings,
@@ -1024,7 +1024,7 @@ def _coerce_rail_settings(
         settings["max_retries"] = max(_as_int(settings.get("max_retries"), 0), 0)
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
         action = raw_action
-        if action != "block":
+        if action not in {"block", "retry_generation"}:
             warnings.append("output_rail.default_action_on_hit is invalid; fallback to block")
             action = "block"
         settings["default_action_on_hit"] = action

@@ -169,6 +169,7 @@ class SessionPolicyStateService:
         settings: Mapping[str, Any] | None,
         route_candidate: Mapping[str, Any] | None = None,
         request_target_observation: Mapping[str, Any] | None = None,
+        retry_activities: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
     ) -> SessionPolicyStateWriteResult:
         """Merge one completed pipeline phase into the UMO state.
 
@@ -200,6 +201,7 @@ class SessionPolicyStateService:
                 signals=signals,
                 route_candidate=route_candidate,
                 request_target_observation=request_target_observation,
+                retry_activities=retry_activities,
             )
         except (TypeError, ValueError) as exc:
             return SessionPolicyStateWriteResult(
@@ -663,6 +665,7 @@ def _normalize_phase_observation(
     signals: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None,
     route_candidate: Mapping[str, Any] | None,
     request_target_observation: Mapping[str, Any] | None,
+    retry_activities: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None,
 ) -> dict[str, Any]:
     normalized_signals = _safe_json_signal_list(signals)
     if signals and len(normalized_signals) != len(signals):
@@ -681,6 +684,7 @@ def _normalize_phase_observation(
         "request_target_observation": _normalize_request_observation_input(
             request_target_observation
         ),
+        "retry_activities": _normalize_retry_activities(retry_activities),
     }
 
 
@@ -717,6 +721,44 @@ def _normalize_request_observation_input(
         "model_id": model_id,
         "source": source,
     }
+
+
+def _normalize_retry_activities(
+    raw_items: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None,
+) -> list[dict[str, Any]]:
+    """Keep P3 retry activity summaries compact and content-free."""
+
+    if not isinstance(raw_items, (list, tuple)):
+        return []
+    normalized: list[dict[str, Any]] = []
+    valid_outcomes = {
+        "generated",
+        "passed",
+        "exhausted",
+        "error",
+        "snapshot_unavailable",
+    }
+    for item in raw_items:
+        if not isinstance(item, Mapping):
+            continue
+        outcome = str(item.get("outcome", "") or "").strip()
+        if outcome not in valid_outcomes:
+            continue
+        normalized.append(
+            {
+                "request_id": _safe_identifier(item.get("request_id")),
+                "node_id": _safe_identifier(item.get("node_id")),
+                "attempt": _non_negative_int(item.get("attempt"), 0),
+                "max_retries": _non_negative_int(item.get("max_retries"), 0),
+                "provider_id": _safe_identifier(item.get("provider_id")),
+                "provider_source": _safe_identifier(
+                    item.get("provider_source")
+                ),
+                "outcome": outcome,
+                "elapsed_ms": _non_negative_int(item.get("elapsed_ms"), 0),
+            }
+        )
+    return normalized
 
 
 def _merge_phase_observation(
@@ -774,6 +816,25 @@ def _merge_phase_observation(
                 "terminal_action": _terminal_action_summary(observation["terminal_action"]),
             },
         )
+        for retry in observation["retry_activities"]:
+            _append_activity(
+                record,
+                {
+                    "at": now,
+                    "kind": "retry_generation",
+                    "phase": observation["phase"],
+                    "run_id": observation["run_id"],
+                    "policy_id": observation["policy_id"],
+                    "request_id": retry["request_id"],
+                    "node_id": retry["node_id"],
+                    "attempt": retry["attempt"],
+                    "max_retries": retry["max_retries"],
+                    "provider_id": retry["provider_id"],
+                    "provider_source": retry["provider_source"],
+                    "outcome": retry["outcome"],
+                    "elapsed_ms": retry["elapsed_ms"],
+                },
+            )
     else:
         _append_activity(
             record,

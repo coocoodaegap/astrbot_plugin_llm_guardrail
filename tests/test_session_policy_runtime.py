@@ -211,6 +211,61 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
         self.assertEqual(detail.record["route_candidate"]["provider_id"], "provider-a")
         self.assertEqual(detail.record["route_candidate"]["mode"], "observe_only")
 
+    def test_response_retry_trace_is_persisted_as_a_session_activity(self):
+        _install_astrbot_stubs()
+        module = importlib.import_module("main")
+        plugin = module.LlmGuardrailPlugin(object(), {})
+        event = _Event()
+        run_id, _started_at = plugin._ensure_policy_run(event)
+        context = RailContext(
+            event=event,
+            request=None,
+            response=object(),
+            umo=event.unified_msg_origin,
+            original_input="",
+            current_input="",
+            current_output="safe replacement",
+            retry_trace=[
+                {
+                    "request_id": run_id,
+                    "node_id": "retry_rule",
+                    "attempt": 1,
+                    "max_retries": 1,
+                    "provider_id": "provider-a",
+                    "provider_source": "event_selected_provider",
+                    "outcome": "generated",
+                    "elapsed_ms": 12,
+                },
+                {
+                    "request_id": run_id,
+                    "node_id": "retry_rule",
+                    "attempt": 1,
+                    "max_retries": 1,
+                    "provider_id": "",
+                    "provider_source": "",
+                    "outcome": "passed",
+                    "elapsed_ms": 0,
+                },
+            ],
+        )
+
+        asyncio.run(plugin._record_session_policy_state("response", event, context))
+        detail = asyncio.run(
+            plugin.session_policy_state.get_detail(
+                event.unified_msg_origin,
+                settings=plugin.normalized_config.session_policy_state,
+            )
+        )
+
+        retries = [
+            item
+            for item in detail.record["activities"]["items"]
+            if item["kind"] == "retry_generation"
+        ]
+        self.assertEqual([item["outcome"] for item in retries], ["passed", "generated"])
+        self.assertEqual(retries[1]["provider_source"], "event_selected_provider")
+        self.assertEqual(retries[1]["elapsed_ms"], 12)
+
     def test_request_target_observation_prefers_direct_fields_then_explicit_selection(self):
         _install_astrbot_stubs()
         module = importlib.import_module("main")

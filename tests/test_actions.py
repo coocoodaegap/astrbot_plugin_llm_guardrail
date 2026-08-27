@@ -84,7 +84,7 @@ class HitActionPlanTests(unittest.TestCase):
         self.assertFalse(plan.block)
         self.assertFalse(plan.mutate_text)
 
-    def test_retry_generation_hit_action_uses_the_step_default_until_implemented(self):
+    def test_retry_generation_outside_step_five_uses_the_step_default(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -107,6 +107,32 @@ class HitActionPlanTests(unittest.TestCase):
 
         self.assertEqual(plan.action, "block")
         self.assertTrue(plan.block)
+
+    def test_output_retry_generation_hit_action_stops_for_local_retry(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "retry",
+                            "keywords": ["risk"],
+                            "action_on_hit": "retry_generation",
+                        }
+                    ]
+                }
+            }
+        )
+
+        plan = resolve_hit_action_plan(
+            cfg.rails["output_rail"],
+            evaluate_plain_keywords(cfg.rails["output_rail"].rules[0], "risk"),
+        )
+
+        self.assertEqual(plan.action, "retry_generation")
+        self.assertEqual(plan.target, "output")
+        self.assertTrue(plan.stop_rail)
+        self.assertFalse(plan.block)
 
 
 class ErrorActionPlanTests(unittest.TestCase):

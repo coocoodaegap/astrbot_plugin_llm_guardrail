@@ -96,6 +96,62 @@ class SessionPolicyStateServiceTests(unittest.TestCase):
         self.assertEqual(result["signals"][0]["signal"], _signal()["signal"])
         self.assertEqual(detail.record["activities"]["items"][0]["kind"], "policy_stage_completed")
 
+    def test_retry_summaries_are_persisted_as_content_free_activities(self):
+        async def run_case():
+            service = self._service(_Clock(100))
+            await service.record_phase(
+                "qq:group:1",
+                run_id="run-a",
+                policy_id="safe-chat",
+                snapshot_revision=7,
+                started_at=90,
+                phase="response",
+                outcome="allowed",
+                terminal_action=None,
+                rail_outcomes={"output_rail": {"outcome": "completed"}},
+                signals=[],
+                settings=_settings(),
+                retry_activities=[
+                    {
+                        "request_id": "request-a",
+                        "node_id": "retry_rule",
+                        "attempt": 1,
+                        "max_retries": 2,
+                        "provider_id": "provider-a",
+                        "provider_source": "provider_request",
+                        "outcome": "generated",
+                        "elapsed_ms": 23,
+                        "must_not_persist": "candidate output",
+                    },
+                    {
+                        "request_id": "request-a",
+                        "node_id": "retry_rule",
+                        "attempt": 1,
+                        "max_retries": 2,
+                        "provider_id": "",
+                        "provider_source": "",
+                        "outcome": "passed",
+                        "elapsed_ms": 0,
+                    },
+                ],
+            )
+            return await service.get_detail("qq:group:1", settings=_settings())
+
+        detail = asyncio.run(run_case())
+
+        retries = [
+            item
+            for item in detail.record["activities"]["items"]
+            if item["kind"] == "retry_generation"
+        ]
+        self.assertEqual([item["outcome"] for item in retries], ["passed", "generated"])
+        generated = retries[1]
+        self.assertEqual(generated["request_id"], "request-a")
+        self.assertEqual(generated["node_id"], "retry_rule")
+        self.assertEqual(generated["max_retries"], 2)
+        self.assertEqual(generated["elapsed_ms"], 23)
+        self.assertNotIn("must_not_persist", generated)
+
     def test_selection_placeholder_is_listed_without_persisting_monitor_state(self):
         async def run_case():
             service = self._service(_Clock(100))

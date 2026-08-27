@@ -50,7 +50,7 @@ def resolve_hit_action_plan(rail: NormalizedRail, result: NodeResult) -> HitActi
         rail=rail.rail,
         action=action,
         target=target,
-        stop_rail=action == "block",
+        stop_rail=action in {"block", "retry_generation"},
         mutate_text=action == "sanitize",
         block=action == "block",
     )
@@ -75,7 +75,7 @@ def _resolved_hit_action(rail: NormalizedRail, result: NodeResult) -> str:
         return "none"
     if result.action_on_hit != "default":
         action = result.action_on_hit
-        if action != "retry_generation":
+        if action != "retry_generation" or rail.rail == "output_rail":
             return action
     return _default_hit_action(rail)
 
@@ -96,7 +96,7 @@ def _resolved_error_action(rail: NormalizedRail, action: str) -> str:
 
 
 def _hit_action_target(rail_name: str, action: str) -> str:
-    if action not in {"block", "sanitize"}:
+    if action not in {"block", "sanitize", "retry_generation"}:
         return "none"
     if rail_name in {"input_rail", "request_rail"}:
         return "input"

@@ -12,7 +12,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
 
         for label in (
             "总览", "规则库", "策略编排", "访问控制", "知识库经验",
-            "会话策略监控", "Token 监控", "系统设置",
+            "会话策略监控", "系统设置",
         ):
             self.assertIn(label, html)
         self.assertIn('id="rule-list"', html)

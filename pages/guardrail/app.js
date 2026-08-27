@@ -754,7 +754,7 @@ const policyStepDefinitions = [
   { rail: "output_rail", title: "Step 5 · 输出检查", fields: [
     ["enabled", "启用 Step 5", "boolean"], ["max_text_chars", "最大检查字符数", "number"],
     ["default_llm_provider", "默认辅助 Provider", "provider"], ["max_retries", "最大重试次数", "number"],
-    ["default_action_on_hit", "默认命中动作", "select", ["block"]], ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]],
+    ["default_action_on_hit", "默认命中动作", "select", ["block", "retry_generation"]], ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]],
     ["block_message", "阻断提示", "text"],
   ] },
 ];
@@ -2845,7 +2845,7 @@ function createRuleEditor(rule) {
   const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
   const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(createRuleFieldHint("数值越小越先执行；策略编排可覆盖此值。"), priority);
   const hitAction = createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit); hitAction.className = "rule-hit-action";
-  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 当前会回退为 Step 默认动作。"), hitAction);
+  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 仅在 Step 5 生效，其他 Step 会回退为默认动作。"), hitAction);
   const errorAction = createActionSelect(errorActions, rule.default_action_on_error); errorAction.className = "rule-error-action";
   const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；retry_generation 当前会回退为 Step 默认动作。"), errorAction);
   grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
@@ -3300,6 +3300,7 @@ function sessionPolicyActivityLabel(kind) {
     late_policy_stage_observed: "迟到策略阶段（未覆盖较新结果）",
     route_candidate_recorded: "记录路由候选",
     request_target_observed: "记录请求选择目标",
+    retry_generation: "重试生成",
   }[kind] || String(kind || "活动");
 }
 function updateSessionPolicyPagination() {
@@ -3417,7 +3418,10 @@ function renderSessionPolicyActivities(items) {
     const detail = document.createElement("small");
     title.textContent = sessionPolicyActivityLabel(item.kind);
     timestamp.textContent = formatStateTime(item.at);
-    const parts = [item.phase, item.policy_id, item.provider_id, item.outcome]
+    const retryProgress = item.kind === "retry_generation"
+      ? `第 ${Number(item.attempt || 0)}/${Number(item.max_retries || 0)} 次`
+      : "";
+    const parts = [item.phase, item.policy_id, item.provider_id, retryProgress, item.outcome]
       .filter(Boolean)
       .map((value) => String(value));
     detail.textContent = parts.join(" · ") || "无额外摘要";

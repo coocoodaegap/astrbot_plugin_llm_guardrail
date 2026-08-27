@@ -236,6 +236,24 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertTrue(rule.enabled)
         self.assertEqual(rule.config["action_on_hit"], "retry_generation")
 
+    def test_output_default_retry_generation_is_valid_at_step_five(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "retry_generation",
+                        "max_retries": 2,
+                    },
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.rails["output_rail"].settings["default_action_on_hit"],
+            "retry_generation",
+        )
+        self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 2)
+
     def test_sanitize_is_rejected_for_non_text_matching_templates(self):
         cfg = normalize_config(
             {

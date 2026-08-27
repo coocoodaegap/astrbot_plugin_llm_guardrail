@@ -67,7 +67,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.3.0"
 POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
@@ -128,7 +128,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             rag_experience=self.rag_experience,
         )
         logger.info(
-            "[LLMGuardrail] loaded P2 v%s | warnings=%s",
+            "[LLMGuardrail] loaded P3 v%s | warnings=%s",
             PLUGIN_VERSION,
             len(self.normalized_config.warnings),
         )
@@ -261,7 +261,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("status")
     async def guardrail_status(self, event: AstrMessageEvent):
-        """查看当前 LLM Guardrail P2 状态。"""
+        """查看当前 LLM Guardrail P3 状态。"""
 
         yield event.plain_result(self._guardrail_status_text(event))
 
@@ -510,7 +510,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             )
 
         lines = [
-            "LLM Guardrail P2",
+            "LLM Guardrail P3",
             f"- version: {PLUGIN_VERSION}",
             f"- schema: {cfg.schema_version}",
             "- session scope: "
@@ -520,7 +520,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             f"- current session action: {session_decision.action} ({session_decision.reason})",
             f"- warnings: {len(cfg.warnings)}",
             *rail_lines,
-            "- capabilities: keywords, regex, logic gates, request checks, prompt mutations, first-hit routing, output blocking/sanitizing",
+            "- capabilities: keywords, regex, logic gates, request checks, prompt mutations, first-hit routing, output blocking/sanitizing, bounded output retry",
         ]
         if cfg.warnings:
             lines.append("- first warning: " + self._clip_text(cfg.warnings[0], 160))
@@ -744,6 +744,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 settings=settings,
                 route_candidate=route_candidate,
                 request_target_observation=request_target,
+                retry_activities=self._phase_retry_activities(phase, rail_context),
             )
             if not result.success and result.warning:
                 logger.warning(
@@ -867,6 +868,33 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 }
             )
         return signals
+
+    @staticmethod
+    def _phase_retry_activities(phase: str, rail_context: Any) -> list[dict[str, Any]]:
+        """Expose P3's compact retry audit entries only for the response phase."""
+
+        if phase != "response":
+            return []
+        raw_trace = getattr(rail_context, "retry_trace", [])
+        if not isinstance(raw_trace, list):
+            return []
+        entries: list[dict[str, Any]] = []
+        for item in raw_trace:
+            if not isinstance(item, dict):
+                continue
+            entries.append(
+                {
+                    "request_id": item.get("request_id", ""),
+                    "node_id": item.get("node_id", ""),
+                    "attempt": item.get("attempt", 0),
+                    "max_retries": item.get("max_retries", 0),
+                    "provider_id": item.get("provider_id", ""),
+                    "provider_source": item.get("provider_source", ""),
+                    "outcome": item.get("outcome", ""),
+                    "elapsed_ms": item.get("elapsed_ms", 0),
+                }
+            )
+        return entries
 
     def _route_candidate_observation(
         self,
