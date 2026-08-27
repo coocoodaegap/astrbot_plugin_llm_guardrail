@@ -41,6 +41,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function hitActionsForTemplate", javascript)
         self.assertIn('action !== "sanitize"', javascript)
         self.assertIn('errorActions = ["default", "discard", "record", "block"]', javascript)
+        self.assertIn('"沿用规则或系统默认动作（default）"', javascript)
+        self.assertIn('input.placeholder = "沿用系统设置"', javascript)
         self.assertIn("function createRuleFieldHint", javascript)
         self.assertIn("function createTemplateParameterForm", javascript)
         self.assertIn("function collectTemplateConfig", javascript)

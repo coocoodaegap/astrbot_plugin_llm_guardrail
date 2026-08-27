@@ -762,9 +762,9 @@ const policyStepSettingHints = {
   enabled: "关闭后，该 Step 中的所有规则与电子元件都不会执行。",
   max_text_chars: "限制该 Step 每次送入检查的文本长度；留空沿用系统设置。",
   default_llm_provider: "该 Step 的 LLM 类规则默认使用的辅助 Provider；留空沿用系统设置。",
-  max_retries: "仅 Step 5 使用；限制 retry_generation 的最大重试次数。",
-  default_action_on_hit: "该 Step 未覆写命中动作时采用的默认处理方式。",
-  default_action_on_error: "该 Step 未覆写错误动作时采用的默认处理方式。",
+  max_retries: "仅 Step 5 使用；限制 retry_generation 的最大重试次数；留空沿用系统设置。",
+  default_action_on_hit: "留空时沿用规则或系统默认动作（default）。",
+  default_action_on_error: "留空时沿用规则或系统默认动作（default）。",
   block_message: "该 Step 阻断请求或输出时使用的提示；支持 ${user_id} 和 ${step_number}；留空沿用系统设置。",
 };
 // Canvas does not inherit CSS custom properties. Keep its palette explicit and
@@ -1755,7 +1755,7 @@ function renderPolicyGraph(policy, { resetSelection = false } = {}) {
   policyGraphCanvas.classList.toggle("is-dependency-selecting", Boolean(policyGraphState.dependencySelection));
   updatePolicyGraphAnimation();
 }
-function createPolicyStepControl(type, value, options) {
+function createPolicyStepControl(key, type, value, options) {
   if (type === "boolean") {
     const input = document.createElement("input");
     input.type = "checkbox";
@@ -1768,7 +1768,9 @@ function createPolicyStepControl(type, value, options) {
     const select = document.createElement("select");
     const inherit = document.createElement("option");
     inherit.value = "";
-    inherit.textContent = "沿用系统设置（default）";
+    inherit.textContent = ["default_action_on_hit", "default_action_on_error"].includes(key)
+      ? "沿用规则或系统默认动作（default）"
+      : "沿用系统设置";
     select.append(inherit);
     populateRuleActionOptions(select, options || []);
     ensureOption(select, String(value ?? ""));
@@ -1778,7 +1780,7 @@ function createPolicyStepControl(type, value, options) {
   const input = document.createElement("input");
   input.type = type === "number" ? "number" : "text";
   input.value = String(value ?? "");
-  input.placeholder = "沿用系统设置（default）";
+  input.placeholder = "沿用系统设置";
   return input;
 }
 function getPolicyGraphDraft(policy = null) {
@@ -2364,12 +2366,12 @@ function renderPolicyGraphStepEditor(rail) {
     editor,
     "STEP SETTINGS",
     `编辑 ${definition.title}`,
-    `当前 Step 有 ${nodeCount} 个节点（${ruleCount} 条规则、${componentCount} 个元件）。未填写的项会沿用系统默认设置。`,
+    `当前 Step 有 ${nodeCount} 个节点（${ruleCount} 条规则、${componentCount} 个元件）。未填写的动作项会沿用规则或系统默认动作（default）；其他项沿用系统设置。`,
   );
   const grid = document.createElement("div");
   grid.className = "form-grid";
   for (const [key, labelText, type, options] of definition.fields) {
-    const control = createPolicyStepControl(type, settings[key], options);
+    const control = createPolicyStepControl(key, type, settings[key], options);
     const apply = () => updatePolicyStepSetting(rail, key, type, control);
     control.addEventListener("change", apply);
     if (type !== "boolean" && type !== "number") control.addEventListener("input", apply);
