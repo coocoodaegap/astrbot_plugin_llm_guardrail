@@ -254,6 +254,22 @@ class ConfigNormalizerTests(unittest.TestCase):
         )
         self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 2)
 
+    def test_stage_output_defaults_use_specific_origin_references(self):
+        cfg = normalize_config({})
+
+        self.assertEqual(
+            cfg.rails["input_rail"].settings["output_redirect_template"],
+            "${event_origin}",
+        )
+        self.assertEqual(
+            cfg.rails["request_rail"].settings["output_redirect_template"],
+            "${req_origin}",
+        )
+        self.assertEqual(
+            cfg.rails["output_rail"].settings["output_redirect_template"],
+            "${res_origin}",
+        )
+
     def test_sanitize_is_rejected_for_non_text_matching_templates(self):
         cfg = normalize_config(
             {

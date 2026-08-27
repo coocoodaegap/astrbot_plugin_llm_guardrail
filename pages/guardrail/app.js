@@ -208,7 +208,7 @@ const ruleActionDescriptions = {
   default: "沿用策略默认动作（default）",
   observe: "仅记录命中，不改变请求或输出（observe）",
   block: "阻断本轮请求或输出（block）",
-  sanitize: "净化命中内容后继续（sanitize）",
+  sanitize: "生成净化文本（sanitize）",
   retry_generation: "请求模型重新生成输出（retry_generation）",
   discard: "丢弃本次规则结果（discard）",
   record: "记录可被依赖的错误结果（record）",
@@ -247,11 +247,11 @@ const templateParameterFields = {
     { key: "keywords", label: "关键词列表", hint: "每行一个关键词或短语。", type: "list", default: [], fullWidth: true },
     { key: "keyword_weights", label: "关键词权值", hint: "每行一项，格式为：关键词:权重。未填写的关键词权重为 1。", type: "list", default: [], fullWidth: true },
     { key: "threshold", label: "命中门槛", hint: "命中关键词的权重总和达到此值时规则命中。", type: "number", default: 1 },
-    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用；留空会移除命中片段。", type: "string" },
+    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用，将命中片段替换为净化文本，留空则移除命中片段；命中时不自动改写文本，而是在信号的 payload 中生成 sanitized 字段来存放净化后的文本，可在后续节点中使用 ${规则名.sanitized}。", type: "string" },
   ],
   regex_pattern: [
     { key: "pattern", label: "正则模式", hint: "用于匹配文本的正则表达式；保存后由后端编译校验。", type: "text", fullWidth: true },
-    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用；留空会移除命中片段。", type: "string" },
+    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用，将命中片段替换为净化文本，留空则移除命中片段；命中时不自动改写文本，而是在信号的 payload 中生成 sanitized 字段来存放净化后的文本，可在后续节点中使用 ${规则名.sanitized}。", type: "string" },
   ],
   contains_request_user_id: [
     { key: "user_ids", label: "用户 ID 列表", hint: "每行一个请求者 ID；空列表不能保存为可用规则。", type: "list", default: [], fullWidth: true },
@@ -768,7 +768,7 @@ const policyStepSettingHints = {
   default_action_on_hit: "留空时沿用规则或系统默认动作（default）。",
   default_action_on_error: "留空时沿用规则或系统默认动作（default）。",
   block_message: "该 Step 阻断请求或输出时使用的提示；支持 ${user_id} 和 ${step_number}；留空沿用系统设置。",
-  output_redirect_template: "阶段结束时唯一允许提交给 AstrBot 的文本模板。默认 ${original}；例如 ${rule_id.sanitized}。sanitize 只产生 payload，不会自动改写文本。",
+  output_redirect_template: "阶段结束时唯一允许提交给 AstrBot 的文本模板。origin 是不可变快照：Step 1 可用 ${event_origin}；Step 3 还可用 ${req_origin}；Step 5 还可用 ${res_origin}。默认模板分别为 ${event_origin}、${req_origin}、${res_origin}。",
 };
 // Canvas does not inherit CSS custom properties. Keep its palette explicit and
 // six-digit so lane color alpha suffixes (for grid and selection overlays) stay valid.
@@ -2392,7 +2392,7 @@ function renderPolicyGraphStepEditor(rail) {
     const notice = document.createElement("div");
     notice.className = "policy-graph-editor-summary";
     const warning = document.createElement("span");
-    warning.textContent = "此 Step 含 sanitize 节点：sanitize 现在只产出 NodeSignal payload，不会自动重定向输出。";
+    warning.textContent = "此 Step 含 sanitize 节点；请确认输出重定向是否符合预期。";
     notice.append(warning);
     if (sanitizeBindings.length === 1 && sanitizeBindings[0].rule_id) {
       const ruleId = sanitizeBindings[0].rule_id;

@@ -103,6 +103,8 @@ RESULTS_EXTRA_KEY = "_llm_guardrail_results"
 WARNINGS_EXTRA_KEY = "_llm_guardrail_warnings"
 STATE_EXTRA_KEY = "_llm_guardrail_state"
 RETRY_REQUEST_SNAPSHOT_EXTRA_KEY = "_llm_guardrail_retry_request_snapshot"
+EVENT_ORIGIN_EXTRA_KEY = "_llm_guardrail_event_origin"
+REQUEST_ORIGIN_EXTRA_KEY = "_llm_guardrail_request_origin"
 RETRY_TRACE_EXTRA_KEY = "_llm_guardrail_retry_trace"
 OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY = "_llm_guardrail_output_history_directive"
 INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
@@ -174,6 +176,10 @@ class GuardrailPipeline:
         ingress = ingress_result.metadata["message_ingress_profile"]
         context.original_input = ingress.text
         context.current_input = ingress.text
+        origin_result = self.adapter.set_event_extra(
+            event, EVENT_ORIGIN_EXTRA_KEY, context.original_input
+        )
+        context.warnings.extend(origin_result.warnings)
         # A framework may continue dispatching lower-priority waiting hooks
         # after Access Gate has stopped the event.  Never let Rail 1 run in
         # that case.
@@ -243,6 +249,11 @@ class GuardrailPipeline:
             self._store_context(event, context)
             return context
 
+        request_origin = self.adapter.get_request_prompt(request) or context.current_input
+        origin_result = self.adapter.set_event_extra(
+            event, REQUEST_ORIGIN_EXTRA_KEY, request_origin
+        )
+        context.warnings.extend(origin_result.warnings)
         request_rail = self.config.rails["request_rail"]
         if request_rail.enabled:
             await self._run_request_rail(request_rail, context)
@@ -302,7 +313,11 @@ class GuardrailPipeline:
         previous_state = self.adapter.get_event_extra(event, STATE_EXTRA_KEY, {})
         if not isinstance(previous_state, dict):
             previous_state = {}
-        original_input = self.adapter.get_event_text(event)
+        original_input = self.adapter.get_event_extra(
+            event, EVENT_ORIGIN_EXTRA_KEY, self.adapter.get_event_text(event)
+        )
+        if not isinstance(original_input, str):
+            original_input = self.adapter.get_event_text(event)
         prompt = self.adapter.get_request_prompt(request)
         return RailContext(
             event=event,
@@ -335,8 +350,8 @@ class GuardrailPipeline:
             request=None,
             response=response,
             umo=self.adapter.get_umo(event),
-            original_input=self.adapter.get_event_text(event),
-            current_input=self.adapter.get_event_text(event),
+            original_input=self._get_event_origin(event),
+            current_input=self._get_request_origin(event),
             current_output=current_output,
             results=dict(previous_results),
             warnings=list(previous_warnings),
@@ -699,14 +714,24 @@ class GuardrailPipeline:
         They do not create a dependency edge or wait for another node.
         """
 
-        template = str(rail.settings.get("output_redirect_template", "${original}"))
+        origins = {"event_origin": context.original_input}
+        if rail.rail in {"request_rail", "output_rail"}:
+            origins["req_origin"] = self._get_request_origin(context.event)
+        if rail.rail == "output_rail":
+            origins["res_origin"] = original
+        default_template = {
+            "input_rail": "${event_origin}",
+            "request_rail": "${req_origin}",
+            "output_rail": "${res_origin}",
+        }.get(rail.rail, "")
+        template = str(rail.settings.get("output_redirect_template", default_template))
         if not template:
-            template = "${original}"
+            template = default_template
 
         def resolve(match: re.Match[str]) -> str:
             reference = match.group(1).strip()
-            if reference == "original":
-                return original
+            if reference in origins:
+                return origins[reference]
             node_id, separator, field = reference.partition(".")
             if not separator or not node_id or not field:
                 return ""
@@ -720,6 +745,16 @@ class GuardrailPipeline:
             return str(value)
 
         return re.sub(r"\$\{([^{}]+)\}", resolve, template)
+
+    def _get_event_origin(self, event: Any) -> str:
+        value = self.adapter.get_event_extra(
+            event, EVENT_ORIGIN_EXTRA_KEY, self.adapter.get_event_text(event)
+        )
+        return value if isinstance(value, str) else self.adapter.get_event_text(event)
+
+    def _get_request_origin(self, event: Any) -> str:
+        value = self.adapter.get_event_extra(event, REQUEST_ORIGIN_EXTRA_KEY, "")
+        return value if isinstance(value, str) else ""
 
     def _commit_input_redirect(
         self, rail: NormalizedRail, context: RailContext, original: str

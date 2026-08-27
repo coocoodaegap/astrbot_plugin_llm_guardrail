@@ -625,6 +625,59 @@ class PipelineTests(unittest.TestCase):
             context.results["risk"].signal.payload["sanitized"], "ordinary text"
         )
 
+    def test_step_one_cannot_read_future_request_origin(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "__policy_step_settings": {
+                        "output_redirect_template": "${req_origin}",
+                    },
+                },
+            }
+        )
+        event = FakeEvent("event text")
+
+        asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+
+        self.assertEqual(event.message_str, "")
+
+    def test_step_three_can_combine_event_and_request_origins(self):
+        cfg = normalize_config(
+            {
+                "request_rail": {
+                    "__policy_step_settings": {
+                        "output_redirect_template": "${event_origin}|${req_origin}",
+                    },
+                },
+            }
+        )
+        event = FakeEvent("event text")
+        request = FakeRequest("request text")
+
+        asyncio.run(GuardrailPipeline(cfg).run_request(event, request))
+
+        self.assertEqual(request.prompt, "event text|request text")
+
+    def test_step_five_can_combine_all_available_origins(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {
+                        "output_redirect_template": "${event_origin}|${req_origin}|${res_origin}",
+                    },
+                },
+            }
+        )
+        event = FakeEvent("event text")
+        request = FakeRequest("request text")
+        response = FakeResponse("response text")
+        pipeline = GuardrailPipeline(cfg)
+
+        asyncio.run(pipeline.run_request(event, request))
+        asyncio.run(pipeline.run_response(event, response))
+
+        self.assertEqual(response.completion_text, "event text|request text|response text")
+
     def test_prompt_wrapper_uses_previous_input_result(self):
         cfg = normalize_config(
             {
