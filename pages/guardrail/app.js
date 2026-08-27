@@ -186,6 +186,7 @@ const systemSettingHintOverrides = {
   blacklist_message: "命中封禁时的提示文本；支持 ${user_id}。留空仍会使用内置默认提示。",
   blacklist_message_interval_minutes: "同一已封禁用户的提示间隔。0 表示每次提示；-1 表示静默；其他负数无效。",
 };
+const multilineSystemSettingKeys = new Set(["block_message", "blacklist_message"]);
 const templates = [
     "plain_keywords",
     "regex_pattern",
@@ -476,6 +477,20 @@ function createUmoTagEditor(value) {
   renderTags();
   return editor;
 }
+function createUmoTextarea(value) {
+  const textarea = document.createElement("textarea");
+  textarea.rows = 4;
+  textarea.className = "list-value";
+  textarea.value = Array.isArray(value) ? value.join("\n") : "";
+  textarea.placeholder = "每行一个 UMO，也可用逗号分隔";
+  return textarea;
+}
+function parseUmoList(value) {
+  return String(value ?? "")
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 function createProviderSelector(value) {
   const editor = document.createElement("div");
   editor.className = "provider-selector";
@@ -535,7 +550,7 @@ function createSystemSettingControl(groupKey, fieldKey, field, value) {
     return input;
   }
   if (field.type === "list" && groupKey === "session_control") {
-    return createUmoTagEditor(value);
+    return createUmoTextarea(value);
   }
   if (field._special === "select_provider") {
     return createProviderSelector(value);
@@ -545,6 +560,12 @@ function createSystemSettingControl(groupKey, fieldKey, field, value) {
     textarea.className = "list-value";
     textarea.value = Array.isArray(value) ? value.join("\n") : "";
     textarea.placeholder = "（空列表）";
+    return textarea;
+  }
+  if (multilineSystemSettingKeys.has(fieldKey)) {
+    const textarea = document.createElement("textarea");
+    textarea.rows = 4;
+    textarea.value = String(value ?? "");
     return textarea;
   }
   if (Array.isArray(field.options)) {
@@ -641,10 +662,12 @@ function collectSystemSettings() {
       } else if (field.type === "list") {
         groupSettings[fieldKey] = Array.isArray(control.umoValues)
           ? [...control.umoValues]
-          : control.value
-              .split("\n")
-              .map((item) => item.trim())
-              .filter(Boolean);
+          : groupKey === "session_control"
+            ? parseUmoList(control.value)
+            : control.value
+                .split("\n")
+                .map((item) => item.trim())
+                .filter(Boolean);
       } else if (field.type === "int") {
         const value = Number(control.value);
         if (!Number.isInteger(value)) {
@@ -2011,8 +2034,8 @@ function renderPolicyGraphNodeEditor(node) {
     priority,
   ));
   if (inputRedirectTemplates.has(templateKey)) {
-    const inputRedirect = document.createElement("input");
-    inputRedirect.type = "text";
+    const inputRedirect = document.createElement("textarea");
+    inputRedirect.rows = 4;
     inputRedirect.value = nodeData.inspection_template || "";
     inputRedirect.placeholder = "留空使用当前阶段原文";
     inputRedirect.addEventListener("change", () => updatePolicyBinding(
@@ -2489,7 +2512,7 @@ function renderPolicyDetail(policy) {
   renderPolicyGraph(policyGraphState.draft, { resetSelection: true });
   renderPolicyGraphEditor();
   policyUmoList.replaceChildren();
-  policyUmoList.umoEditor = createUmoTagEditor(policy.umo_list || []);
+  policyUmoList.umoEditor = createUmoTextarea(policy.umo_list || []);
   policyUmoList.append(policyUmoList.umoEditor);
   const isDefaultPolicy = policy.policy_id === policyLibrary.active_policy_id;
   defaultPolicyIndicator.hidden = !isDefaultPolicy;
@@ -2518,7 +2541,7 @@ function collectPolicyDetailDraft(policy) {
     components: structuredClone(draft.components || []),
     node_order: completePolicyGraphNodeOrder(draft),
     rail_settings: structuredClone(draft.rail_settings || {}),
-    umo_list: Array.isArray(umoEditor?.umoValues) ? [...umoEditor.umoValues] : [],
+    umo_list: typeof umoEditor?.value === "string" ? parseUmoList(umoEditor.value) : [],
   };
 }
 function validCustomPolicyId(id) {
@@ -2790,7 +2813,7 @@ function createTemplateParameterControl(field, value) {
     select.value = String(value ?? field.default ?? "");
     return select;
   }
-  if (field.type === "list" || field.type === "text") {
+  if (field.type === "list" || field.type === "text" || field.key === "sanitizer") {
     const textarea = document.createElement("textarea");
     textarea.className = field.type === "list" ? "template-list-value" : "template-text-value";
     textarea.spellcheck = field.type !== "list";
@@ -2819,7 +2842,7 @@ function createTemplateParameterForm(rule) {
   const config = rule.template_config || {};
   for (const field of templateParameterFields[rule.template_key] || []) {
     const label = document.createElement("label");
-    if (field.fullWidth) label.classList.add("full-width");
+    if (field.fullWidth || field.key === "sanitizer") label.classList.add("full-width");
     label.textContent = field.label;
     const control = createTemplateParameterControl(field, templateConfigValue(config, field));
     control.dataset.templateField = field.key;
