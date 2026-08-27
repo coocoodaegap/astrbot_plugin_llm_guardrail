@@ -182,7 +182,7 @@ class ErrorActionPlanTests(unittest.TestCase):
         self.assertTrue(plan.record)
         self.assertFalse(plan.block)
 
-    def test_retry_generation_error_action_uses_the_step_default_until_implemented(self):
+    def test_legacy_retry_generation_error_action_uses_the_step_default(self):
         cfg = normalize_config(
             {
                 "output_rail": {
@@ -197,6 +197,9 @@ class ErrorActionPlanTests(unittest.TestCase):
                 }
             }
         )
+
+        rule = cfg.rails["output_rail"].rules[0]
+        self.assertEqual(rule.config["action_on_error"], "default")
 
         plan = resolve_error_action_plan(
             cfg.rails["output_rail"], "retry", "retry_generation"

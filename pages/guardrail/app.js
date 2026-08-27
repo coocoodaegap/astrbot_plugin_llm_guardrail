@@ -203,7 +203,7 @@ const templates = [
     "sanitize",
     "retry_generation",
   ],
-  errorActions = ["default", "discard", "record", "retry_generation", "block"];
+  errorActions = ["default", "discard", "record", "block"];
 const ruleActionDescriptions = {
   default: "沿用策略默认动作（default）",
   observe: "仅记录命中，不改变请求或输出（observe）",
@@ -2847,7 +2847,7 @@ function createRuleEditor(rule) {
   const hitAction = createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit); hitAction.className = "rule-hit-action";
   const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 仅在 Step 5 生效，在其他 Step 会回退为默认动作。"), hitAction);
   const errorAction = createActionSelect(errorActions, rule.default_action_on_error); errorAction.className = "rule-error-action";
-  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；策略编排可覆盖。retry_generation 仅在 Step 5 生效，在其他 Step 会回退为默认动作。"), errorAction);
+  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；策略编排可覆盖。"), errorAction);
   grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
   editor.append(heading, grid, createTemplateParameterForm(rule));
   editor.addEventListener("input", () => editor.classList.add("is-dirty"));

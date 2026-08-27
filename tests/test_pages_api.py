@@ -292,6 +292,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):
             settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
             settings["fallback_policy_settings"]["max_text_chars"] = 321
+            settings["fallback_policy_settings"]["max_retries"] = 2
             settings["session_control"]["group_chat_mode"] = "all_pass"
             settings["session_policy_state"]["state_ttl_seconds"] = 7200
             settings["debug_settings"]["logging"] = True
@@ -305,6 +306,11 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(saved["revision"], 1)
         self.assertEqual(plugin.config.save_count, 1)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_text_chars"], 321)
+        self.assertEqual(plugin.config["fallback_policy_settings"]["max_retries"], 2)
+        self.assertEqual(
+            plugin.snapshot_manager.current.runtime_config.rails["output_rail"].settings["max_retries"],
+            2,
+        )
         self.assertEqual(plugin.config["session_policy_state"]["state_ttl_seconds"], 7200)
         self.assertTrue(plugin.config["debug_settings"]["logging"])
         self.assertEqual(

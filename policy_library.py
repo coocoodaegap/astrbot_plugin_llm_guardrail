@@ -564,12 +564,9 @@ class PolicyLibrary:
                         if binding.action_on_error is not None
                         else rule.default_action_on_error
                     )
-                    if (
-                        _is_retry_generation_action(action_on_error)
-                        and binding.rail != "output_rail"
-                    ):
+                    if _is_retry_generation_action(action_on_error):
                         warnings.append(
-                            f"rule {rule.rule_id} uses retry_generation as its error action outside Step 5; "
+                            f"rule {rule.rule_id} uses retry_generation as its error action; "
                             "it will fall back to the Step default"
                         )
                 else:
@@ -609,12 +606,9 @@ class PolicyLibrary:
                         f"component {component.component_id} uses retry_generation as its hit action outside Step 5; "
                         "it will fall back to the Step default"
                     )
-                if (
-                    _is_retry_generation_action(component.action_on_error)
-                    and component.rail != "output_rail"
-                ):
+                if _is_retry_generation_action(component.action_on_error):
                     warnings.append(
-                        f"component {component.component_id} uses retry_generation as its error action outside Step 5; "
+                        f"component {component.component_id} uses retry_generation as its error action; "
                         "it will fall back to the Step default"
                     )
 

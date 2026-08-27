@@ -83,7 +83,7 @@ OUTPUT_ACTIONS = {
     "block",
     "sanitize",
 }
-ERROR_ACTIONS = {"default", "discard", "record", "retry_generation", "block"}
+ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 DEFAULT_REQUEST_BLOCK_MESSAGE = "用户 ${user_id} 的请求在 Step ${step_number} 被阻断。"
 DEFAULT_BLACKLIST_MESSAGE = (
@@ -885,6 +885,7 @@ def _normalize_fallback_policy_settings(
 
     settings = {
         "max_text_chars": max(_as_int(raw_settings.get("max_text_chars"), 6000), 0),
+        "max_retries": max(_as_int(raw_settings.get("max_retries"), 0), 0),
         "default_llm_provider": _as_str(raw_settings.get("default_llm_provider", "")).strip(),
         "enable_llm_review_in_fallback_policy": _as_bool(
             raw_settings.get("enable_llm_review_in_fallback_policy"), False
@@ -966,7 +967,7 @@ def _rail_defaults(
             }
         )
     if rail_name == "output_rail":
-        settings["max_retries"] = 0
+        settings["max_retries"] = fallback_policy_settings["max_retries"]
     return settings
 
 

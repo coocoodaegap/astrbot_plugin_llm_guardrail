@@ -301,7 +301,7 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertTrue(validation.valid)
         self.assertTrue(any("outside Step 5" in warning for warning in validation.warnings))
 
-    def test_retry_generation_error_action_warns_outside_step_five(self):
+    def test_retry_generation_error_action_always_warns(self):
         library = PolicyLibrary(
             rules=(RuleDefinition("retry", "plain_keywords", {"keywords": ["retry"]}, default_action_on_error="retry_generation"),),
             policies=(
@@ -318,7 +318,7 @@ class PolicyLibraryTests(unittest.TestCase):
         _raw, validation = compile_policy_to_runtime_config({}, library)
 
         self.assertTrue(validation.valid)
-        self.assertTrue(any("error action outside Step 5" in warning for warning in validation.warnings))
+        self.assertTrue(any("uses retry_generation as its error action" in warning for warning in validation.warnings))
 
     def test_unsupported_legacy_template_is_preserved_as_warning(self):
         library = PolicyLibrary(

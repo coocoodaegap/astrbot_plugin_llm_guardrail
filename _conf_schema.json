@@ -16,6 +16,12 @@
         "hint": "超出部分会被截断后再检查，避免超长输入拖慢审核。此设置为所有自定义策略提供默认值。",
         "default": 6000
       },
+      "max_retries": {
+        "type": "int",
+        "description": "最大重试次数",
+        "hint": "仅作为 Step 5 的 retry_generation 系统默认值；0 表示命中后直接阻断。自定义策略可在 Step 5 设置中覆盖。",
+        "default": 0
+      },
       "default_llm_provider": {
         "type": "string",
         "description": "默认辅助 Provider",

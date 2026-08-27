@@ -40,6 +40,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function renderRuleList", javascript)
         self.assertIn("function hitActionsForTemplate", javascript)
         self.assertIn('action !== "sanitize"', javascript)
+        self.assertIn('errorActions = ["default", "discard", "record", "block"]', javascript)
         self.assertIn("function createRuleFieldHint", javascript)
         self.assertIn("function createTemplateParameterForm", javascript)
         self.assertIn("function collectTemplateConfig", javascript)

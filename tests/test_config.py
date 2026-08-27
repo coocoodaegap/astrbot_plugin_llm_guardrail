@@ -273,7 +273,7 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(rule.config["action_on_hit"], "default")
         self.assertTrue(any("only supported" in warning for warning in rule.warnings))
 
-    def test_retry_generation_is_accepted_as_a_rule_error_action(self):
+    def test_retry_generation_is_rejected_as_a_rule_error_action(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -289,10 +289,9 @@ class ConfigNormalizerTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(
-            cfg.rails["input_rail"].rules[0].config["action_on_error"],
-            "retry_generation",
-        )
+        rule = cfg.rails["input_rail"].rules[0]
+        self.assertEqual(rule.config["action_on_error"], "default")
+        self.assertTrue(any("retry_error.action_on_error is invalid" in warning for warning in rule.warnings))
 
     def test_request_rail_keyword_rule_is_normalized(self):
         cfg = normalize_config(
@@ -417,6 +416,7 @@ class ConfigNormalizerTests(unittest.TestCase):
                 "fallback_policy_settings": {
                     "default_llm_provider": "fallback-provider",
                     "max_text_chars": 42,
+                    "max_retries": 2,
                     "default_action_on_hit": "observe",
                     "default_action_on_error": "record",
                     "enable_prompt_leakage_detector": False,
@@ -439,7 +439,19 @@ class ConfigNormalizerTests(unittest.TestCase):
             "fallback-provider",
         )
         self.assertEqual(cfg.rails["input_rail"].settings["max_text_chars"], 42)
+        self.assertEqual(cfg.fallback_policy_settings["max_retries"], 2)
+        self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 2)
         self.assertFalse(cfg.fallback_policy_settings["enable_prompt_leakage_detector"])
+
+    def test_output_step_retry_setting_overrides_system_default(self):
+        cfg = normalize_config(
+            {
+                "fallback_policy_settings": {"max_retries": 2},
+                "output_rail": {"__policy_step_settings": {"max_retries": 1}},
+            }
+        )
+
+        self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 1)
 
     def test_error_action_defaults_are_normalized(self):
         cfg = normalize_config(
