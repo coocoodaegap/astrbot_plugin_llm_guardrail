@@ -29,7 +29,7 @@ RULE_TEMPLATES: dict[str, set[str]] = {
         "rag_judge",
         "llm_review",
     },
-    "prompt_rail": {"replace_input", "strengthen_prompt"},
+    "prompt_rail": {"strengthen_prompt"},
     "routing_rail": {"route_policy"},
     "output_rail": {
         "plain_keywords",
@@ -495,8 +495,6 @@ def _normalize_node(
         if template_key == "contains_request_user_id" and not config["user_ids"]:
             valid = False
             enabled = False
-    elif template_key == "replace_input":
-        config["replacement_text"] = _as_str(config.get("replacement_text", ""))
     elif template_key == "strengthen_prompt":
         _normalize_strengthen_prompt(rule_id, config, warnings)
     elif template_key == "route_policy":

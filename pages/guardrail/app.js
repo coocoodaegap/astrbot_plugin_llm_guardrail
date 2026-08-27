@@ -192,7 +192,6 @@ const templates = [
     "contains_request_user_id",
     "rag_judge",
     "llm_review",
-    "replace_input",
     "strengthen_prompt",
     "route_policy",
   ],
@@ -228,7 +227,6 @@ const templateDescriptions = {
   contains_video: "视频消息检测器",
   rag_judge: "知识库裁判",
   llm_review: "LLM 审查",
-  replace_input: "替换输入",
   strengthen_prompt: "增强提示词",
   route_policy: "模型路由",
 };
@@ -238,7 +236,6 @@ const templateCreationDetails = {
   contains_request_user_id: "判断当前请求发送者 ID 是否命中可复用的用户 ID 列表；不替代访问控制。",
   rag_judge: "以知识库检索结果为证据进行风险裁判。",
   llm_review: "调用旁路 LLM 对内容进行结构化审查。",
-  replace_input: "将输入中的指定文本替换为安全内容。",
   strengthen_prompt: "向请求注入额外约束或上下文提示。",
   route_policy: "根据规则命中结果选择目标模型 Provider。",
 };
@@ -266,9 +263,6 @@ const templateParameterFields = {
     { key: "provider_id", label: "审查 Provider", hint: "留空则跟随当前会话 Provider。", type: "provider", fullWidth: true },
     { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
     { key: "audit_prompt", label: "审查提示词", hint: "描述判断目标与希望记录的 payload；插件会自动要求 JSON 结构化输出。", type: "text", fullWidth: true },
-  ],
-  replace_input: [
-    { key: "replacement_text", label: "替换内容", hint: "将整段用户输入替换为此内容；留空会清空输入。", type: "text", fullWidth: true },
   ],
   strengthen_prompt: [
     { key: "insertion_target", label: "注入位置", hint: "选择要写入系统提示、临时上下文或输入包装的位置。", type: "select", default: "temp_user_context", options: [["system_prefix", "系统提示开头（system_prefix）"], ["system_suffix", "系统提示结尾（system_suffix）"], ["temp_user_context", "临时用户上下文（temp_user_context）"], ["input_wrapper", "包装用户输入（input_wrapper）"]] },
@@ -801,7 +795,7 @@ const policyGraphSteps = [
 const supportedTemplatesByRail = {
   input_rail: new Set(["plain_keywords", "regex_pattern", "contains_request_user_id", "rag_judge", "llm_review"]),
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
-  prompt_rail: new Set(["replace_input", "strengthen_prompt"]),
+  prompt_rail: new Set(["strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
   output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
 };

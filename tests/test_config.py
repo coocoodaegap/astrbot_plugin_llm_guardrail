@@ -289,6 +289,25 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(rule.config["action_on_hit"], "default")
         self.assertTrue(any("only supported" in warning for warning in rule.warnings))
 
+    def test_replace_input_is_not_a_supported_prompt_rule(self):
+        cfg = normalize_config(
+            {
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "replace_input",
+                            "rule_id": "removed_rule",
+                        }
+                    ]
+                }
+            }
+        )
+
+        rule = cfg.rails["prompt_rail"].rules[0]
+        self.assertFalse(rule.valid)
+        self.assertFalse(rule.enabled)
+        self.assertTrue(any("unsupported template" in warning for warning in rule.warnings))
+
     def test_retry_generation_is_rejected_as_a_rule_error_action(self):
         cfg = normalize_config(
             {

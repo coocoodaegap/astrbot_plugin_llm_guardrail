@@ -227,13 +227,13 @@ class PolicyLibraryTests(unittest.TestCase):
 
     def test_known_template_cannot_be_bound_to_an_unsupported_step(self):
         library = PolicyLibrary(
-            rules=(RuleDefinition("replace", "replace_input", {}),),
+            rules=(RuleDefinition("strengthen", "strengthen_prompt", {}),),
             policies=(
                 PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_step",
                     "Invalid step",
-                    bindings=(PolicyRuleBinding("replace", "input_rail"),),
+                    bindings=(PolicyRuleBinding("strengthen", "input_rail"),),
                 ),
             ),
             active_policy_id="invalid_step",

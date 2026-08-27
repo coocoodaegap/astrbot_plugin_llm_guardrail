@@ -50,11 +50,12 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertNotIn('JSON.parse(editor.querySelector("textarea").value)', javascript)
         for template_key in (
             "plain_keywords", "regex_pattern", "rag_judge",
-            "llm_review", "replace_input", "strengthen_prompt", "route_policy",
+            "llm_review", "strengthen_prompt", "route_policy",
         ):
             self.assertIn(template_key, javascript)
         rule_template_block = javascript.split("const templates =", 1)[1].split("hitActions", 1)[0]
         self.assertNotIn('"logic_gate"', rule_template_block)
+        self.assertNotIn('"replace_input"', javascript)
         self.assertIn(".rule-field-hint", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
         self.assertIn(".template-parameters", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))
         self.assertIn(".setting-checkbox:checked", (PAGES_DIR / "style.css").read_text(encoding="utf-8"))

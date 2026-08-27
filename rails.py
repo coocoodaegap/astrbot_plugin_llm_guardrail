@@ -784,32 +784,11 @@ class GuardrailPipeline:
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
-            if rule.template_key == "replace_input":
-                return self._execute_replace_input(rule, ctx)
             if rule.template_key == "strengthen_prompt":
                 return self._execute_strengthen_prompt(rule, ctx)
             return skipped_result(rule, "unsupported_template")
 
         await self.scheduler.run_async(rail, context, execute)
-
-    def _execute_replace_input(
-        self, rule: NormalizedRule, context: RailContext
-    ) -> RuleResult:
-        replacement = str(rule.config.get("replacement_text", ""))
-        if replacement == "":
-            context.warnings.append(f"{rule.rule_id}.replacement_text is empty")
-        adapter_result = self.adapter.set_request_prompt(context.request, replacement)
-        context.warnings.extend(adapter_result.warnings)
-        if adapter_result.success:
-            context.current_input = replacement
-            context.prompt_mutations.append(
-                {"rule_id": rule.rule_id, "kind": "replace_input"}
-            )
-        return make_result(
-            rule,
-            matched=adapter_result.success,
-            metadata={"replacement_length": len(replacement)},
-        )
 
     def _execute_strengthen_prompt(
         self, rule: NormalizedRule, context: RailContext
