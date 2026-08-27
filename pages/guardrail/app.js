@@ -799,6 +799,15 @@ const supportedTemplatesByRail = {
   routing_rail: new Set(["route_policy"]),
   output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
 };
+const inputRedirectTemplates = new Set([
+  "plain_keywords",
+  "regex_pattern",
+  "rag_judge",
+  "llm_review",
+  "length_anomaly_detector",
+  "role_marker_spoofing_detector",
+  "instruction_override_detector",
+]);
 const componentDefinitions = {
   logic_gate: {
     label: "逻辑门",
@@ -1970,6 +1979,7 @@ function renderPolicyGraphNodeEditor(node) {
     [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || templateKey || "未知类型"],
     ["所属 Step", step?.label || node.rail],
     ["依赖", nodeData.depend_on || "未设置"],
+    ["检查内容", nodeData.inspection_template || "当前阶段原文"],
   ]) {
     const item = document.createElement("span");
     item.textContent = `${label}：${value}`;
@@ -2000,6 +2010,23 @@ function renderPolicyGraphNodeEditor(node) {
     isComponent ? "数值越小越先执行；默认值为 100。" : "数值越小越先执行；留空继承规则默认优先级。",
     priority,
   ));
+  if (inputRedirectTemplates.has(templateKey)) {
+    const inputRedirect = document.createElement("input");
+    inputRedirect.type = "text";
+    inputRedirect.value = nodeData.inspection_template || "";
+    inputRedirect.placeholder = "留空使用当前阶段原文";
+    inputRedirect.addEventListener("change", () => updatePolicyBinding(
+      node.id,
+      "inspection_template",
+      inputRedirect,
+    ));
+    grid.append(createPolicyGraphEditorField(
+      "检查内容重定向",
+      "仅作用于当前策略的这个节点。可引用本阶段可见的 origin 或 ${node_id.field}；缺失引用为空，不等待也不自动建立 depends_on。",
+      inputRedirect,
+      true,
+    ));
+  }
   const hitAction = isComponent
     ? createActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit || "default")
     : createPolicyBindingActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit);
@@ -2334,6 +2361,7 @@ function createPolicyComponent() {
     action_on_hit: definition.defaultAction || "default",
     action_on_error: "default",
     depend_on: "",
+    inspection_template: "",
     config: definition.defaultConfig(),
   }];
   draft.node_order = [...nodeOrder, id];
@@ -2772,7 +2800,7 @@ function createTemplateParameterControl(field, value) {
     return textarea;
   }
   const input = document.createElement("input");
-  input.type = "number";
+  input.type = field.type === "string" ? "text" : "number";
   input.step = field.type === "integer" ? "1" : "any";
   input.value = String(value ?? field.default ?? "");
   return input;

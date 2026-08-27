@@ -81,6 +81,7 @@ class PolicyRuleBinding:
     action_on_hit: str | None = None
     action_on_error: str | None = None
     depend_on: str = ""
+    inspection_template: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +92,7 @@ class PolicyRuleBinding:
             "action_on_hit": self.action_on_hit,
             "action_on_error": self.action_on_error,
             "depend_on": self.depend_on,
+            "inspection_template": self.inspection_template,
         }
 
     @classmethod
@@ -103,6 +105,7 @@ class PolicyRuleBinding:
             action_on_hit=_as_optional_string(value.get("action_on_hit")),
             action_on_error=_as_optional_string(value.get("action_on_error")),
             depend_on=str(value.get("depend_on") or "").strip(),
+            inspection_template=str(value.get("inspection_template") or "").strip(),
         )
 
 
@@ -124,6 +127,7 @@ class PolicyComponent:
     action_on_hit: str = "default"
     action_on_error: str = "default"
     depend_on: str = ""
+    inspection_template: str = ""
     config: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -136,6 +140,7 @@ class PolicyComponent:
             "action_on_hit": self.action_on_hit,
             "action_on_error": self.action_on_error,
             "depend_on": self.depend_on,
+            "inspection_template": self.inspection_template,
             "config": copy.deepcopy(self.config),
         }
 
@@ -150,6 +155,7 @@ class PolicyComponent:
             action_on_hit=str(value.get("action_on_hit") or "default").strip(),
             action_on_error=str(value.get("action_on_error") or "default").strip(),
             depend_on=str(value.get("depend_on") or "").strip(),
+            inspection_template=str(value.get("inspection_template") or "").strip(),
             config=_copy_dict(value.get("config")),
         )
 
@@ -678,6 +684,7 @@ def _compile_binding(rule: RuleDefinition, binding: PolicyRuleBinding) -> dict[s
             "enabled": binding.enabled,
             "priority": rule.default_priority if binding.priority is None else binding.priority,
             "depend_on": binding.depend_on,
+            "inspection_template": binding.inspection_template,
             "action_on_hit": (
                 rule.default_action_on_hit
                 if binding.action_on_hit is None
@@ -702,6 +709,7 @@ def _compile_component(component: PolicyComponent) -> dict[str, Any]:
             "enabled": component.enabled,
             "priority": component.priority,
             "depend_on": component.depend_on,
+            "inspection_template": component.inspection_template,
             "action_on_hit": component.action_on_hit,
             "action_on_error": component.action_on_error,
         }

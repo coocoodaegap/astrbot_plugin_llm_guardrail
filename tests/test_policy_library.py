@@ -59,6 +59,7 @@ class PolicyLibraryTests(unittest.TestCase):
                             rail="input_rail",
                             priority=10,
                             action_on_hit="sanitize",
+                            inspection_template="${event_origin}",
                         ),
                     ),
                 ),
@@ -78,6 +79,8 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(rule.config["action_on_hit"], "sanitize")
         self.assertEqual(rule.config["threshold"], 2.0)
         self.assertEqual(rule.config["action_on_error"], "record")
+        self.assertEqual(rule.config["inspection_template"], "${event_origin}")
+        self.assertNotIn("inspection_template", library.rules[0].template_config)
 
     def test_rule_can_be_reused_by_different_policies(self):
         rule = RuleDefinition(

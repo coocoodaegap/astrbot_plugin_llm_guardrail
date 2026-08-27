@@ -678,6 +678,59 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(response.completion_text, "event text|request text|response text")
 
+    def test_node_inspection_template_reads_prior_sanitize_payload_without_dependency(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "sanitize_source",
+                            "keywords": ["secret"],
+                            "action_on_hit": "sanitize",
+                            "sanitizer": "[redacted]",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "payload_consumer",
+                            "keywords": ["[redacted]"],
+                            "inspection_template": "${sanitize_source.sanitized}",
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("contains secret")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+
+        self.assertTrue(context.results["sanitize_source"].matched)
+        self.assertTrue(context.results["payload_consumer"].matched)
+        self.assertEqual(event.message_str, "contains secret")
+
+    def test_node_inspection_template_missing_payload_is_nonblocking_empty_text(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "regex_pattern",
+                            "rule_id": "payload_consumer",
+                            "pattern": "^$",
+                            "inspection_template": "${missing.sanitized}",
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("contains secret")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+
+        self.assertTrue(context.results["payload_consumer"].matched)
+
     def test_prompt_wrapper_uses_previous_input_result(self):
         cfg = normalize_config(
             {

@@ -553,7 +553,7 @@ class GuardrailPipeline:
     ) -> None:
         await self._log_step_provider(rail, context)
         max_chars = int(rail.settings.get("max_text_chars", 6000))
-        current_text = clip_text(context.original_input, max_chars)
+        stage_text = context.original_input
         if message_facts is None and any(
             rule.enabled and rule.valid and rule.template_key in MESSAGE_FACT_TEMPLATES
             for rule in rail.rules
@@ -573,6 +573,9 @@ class GuardrailPipeline:
             context.warnings.append("message component chain is unavailable")
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+            inspected_text = self._resolve_node_inspection_template(
+                rail, ctx, rule, stage_text, max_chars
+            )
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key in {
@@ -580,21 +583,21 @@ class GuardrailPipeline:
                 "role_marker_spoofing_detector",
                 "instruction_override_detector",
             }:
-                result = evaluate_input_detector(rule, ctx, context.original_input)
+                result = evaluate_input_detector(rule, ctx, inspected_text)
             elif rule.template_key in MESSAGE_FACT_TEMPLATES:
                 if message_facts is None:
                     raise RuntimeError("message fact snapshot is unavailable")
                 result = evaluate_message_fact_component(rule, message_facts)
             elif rule.template_key == "llm_review":
-                result = await self._execute_llm_review(rail, rule, ctx, current_text)
+                result = await self._execute_llm_review(rail, rule, ctx, inspected_text)
             elif rule.template_key == "rag_judge":
-                result = await self._execute_rag_judge(rule, ctx, current_text)
+                result = await self._execute_rag_judge(rule, ctx, inspected_text)
             else:
-                result = evaluate_text_rule(rule, ctx, current_text)
+                result = evaluate_text_rule(rule, ctx, inspected_text)
             if result.action_on_hit == "sanitize":
-                self._attach_sanitized_payload(rail, result, current_text)
+                self._attach_sanitized_payload(rail, result, inspected_text)
             hit_plan = resolve_hit_action_plan(rail, result)
-            await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
+            await self._apply_input_action(rail, ctx, result, inspected_text, hit_plan)
             return result
 
         await self.scheduler.run_async(
@@ -615,9 +618,12 @@ class GuardrailPipeline:
         request_text = (
             self.adapter.get_request_prompt(context.request) or context.current_input
         )
-        current_text = clip_text(request_text, max_chars)
+        stage_text = request_text
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
+            inspected_text = self._resolve_node_inspection_template(
+                rail, ctx, rule, stage_text, max_chars
+            )
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key in {
@@ -625,17 +631,17 @@ class GuardrailPipeline:
                 "role_marker_spoofing_detector",
                 "instruction_override_detector",
             }:
-                result = evaluate_input_detector(rule, ctx, request_text)
+                result = evaluate_input_detector(rule, ctx, inspected_text)
             elif rule.template_key == "llm_review":
-                result = await self._execute_llm_review(rail, rule, ctx, current_text)
+                result = await self._execute_llm_review(rail, rule, ctx, inspected_text)
             elif rule.template_key == "rag_judge":
-                result = await self._execute_rag_judge(rule, ctx, current_text)
+                result = await self._execute_rag_judge(rule, ctx, inspected_text)
             else:
-                result = evaluate_text_rule(rule, ctx, current_text)
+                result = evaluate_text_rule(rule, ctx, inspected_text)
             if result.action_on_hit == "sanitize":
-                self._attach_sanitized_payload(rail, result, current_text)
+                self._attach_sanitized_payload(rail, result, inspected_text)
             hit_plan = resolve_hit_action_plan(rail, result)
-            await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
+            await self._apply_input_action(rail, ctx, result, inspected_text, hit_plan)
             return result
 
         await self.scheduler.run_async(
@@ -705,10 +711,14 @@ class GuardrailPipeline:
             inspected_text, result.hits, replacement
         )
 
-    def _render_output_redirect(
-        self, rail: NormalizedRail, context: RailContext, original: str
+    def _render_stage_template(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        original: str,
+        template: str,
     ) -> str:
-        """Render the P3 nonblocking stage-output template.
+        """Render a P3 nonblocking template against the current node snapshot.
 
         Missing nodes and payload fields deliberately become an empty string.
         They do not create a dependency edge or wait for another node.
@@ -719,15 +729,6 @@ class GuardrailPipeline:
             origins["req_origin"] = self._get_request_origin(context.event)
         if rail.rail == "output_rail":
             origins["res_origin"] = original
-        default_template = {
-            "input_rail": "${event_origin}",
-            "request_rail": "${req_origin}",
-            "output_rail": "${res_origin}",
-        }.get(rail.rail, "")
-        template = str(rail.settings.get("output_redirect_template", default_template))
-        if not template:
-            template = default_template
-
         def resolve(match: re.Match[str]) -> str:
             reference = match.group(1).strip()
             if reference in origins:
@@ -745,6 +746,37 @@ class GuardrailPipeline:
             return str(value)
 
         return re.sub(r"\$\{([^{}]+)\}", resolve, template)
+
+    def _render_output_redirect(
+        self, rail: NormalizedRail, context: RailContext, original: str
+    ) -> str:
+        default_template = {
+            "input_rail": "${event_origin}",
+            "request_rail": "${req_origin}",
+            "output_rail": "${res_origin}",
+        }.get(rail.rail, "")
+        template = str(rail.settings.get("output_redirect_template", default_template))
+        if not template:
+            template = default_template
+        return self._render_stage_template(rail, context, original, template)
+
+    def _resolve_node_inspection_template(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        rule: NormalizedRule,
+        stage_text: str,
+        max_chars: int,
+    ) -> str:
+        """Return the text inspected by one node's policy-local template."""
+
+        template = str(rule.config.get("inspection_template", "")).strip()
+        if not template:
+            return clip_text(stage_text, max_chars)
+        return clip_text(
+            self._render_stage_template(rail, context, stage_text, template),
+            max_chars,
+        )
 
     def _get_event_origin(self, event: Any) -> str:
         value = self.adapter.get_event_extra(
@@ -1025,26 +1057,29 @@ class GuardrailPipeline:
         self, rail: NormalizedRail, context: RailContext
     ) -> dict[str, str] | None:
         max_chars = int(rail.settings.get("max_text_chars", 6000))
-        current_text = clip_text(context.current_output, max_chars)
+        stage_text = context.current_output
         retry_request: dict[str, str] | None = None
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             nonlocal retry_request
+            inspected_text = self._resolve_node_inspection_template(
+                rail, ctx, rule, stage_text, max_chars
+            )
             if rule.template_key == "logic_gate":
                 result = evaluate_logic_gate(rule, ctx)
             elif rule.template_key == "llm_review":
-                result = await self._execute_llm_review(rail, rule, ctx, current_text)
+                result = await self._execute_llm_review(rail, rule, ctx, inspected_text)
             elif rule.template_key == "rag_judge":
-                result = await self._execute_rag_judge(rule, ctx, current_text)
+                result = await self._execute_rag_judge(rule, ctx, inspected_text)
             else:
-                result = evaluate_text_rule(rule, ctx, current_text)
+                result = evaluate_text_rule(rule, ctx, inspected_text)
             if result.action_on_hit == "sanitize":
-                self._attach_sanitized_payload(rail, result, current_text)
+                self._attach_sanitized_payload(rail, result, inspected_text)
             hit_plan = resolve_hit_action_plan(rail, result)
             if hit_plan.action == "retry_generation":
                 retry_request = {"node_id": result.node_id}
             else:
-                self._apply_output_action(rail, ctx, result, current_text, hit_plan)
+                self._apply_output_action(rail, ctx, result, inspected_text, hit_plan)
             return result
 
         await self.scheduler.run_async(
