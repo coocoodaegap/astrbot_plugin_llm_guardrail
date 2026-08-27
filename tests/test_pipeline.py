@@ -600,6 +600,31 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(event.message_str, "say [redacted]")
 
+    def test_unmatched_sanitize_payload_preserves_original_text(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "action_on_hit": "sanitize",
+                            "sanitizer": "[redacted]",
+                        }
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("ordinary text")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_message(event))
+
+        self.assertFalse(context.results["risk"].matched)
+        self.assertEqual(
+            context.results["risk"].signal.payload["sanitized"], "ordinary text"
+        )
+
     def test_prompt_wrapper_uses_previous_input_result(self):
         cfg = normalize_config(
             {

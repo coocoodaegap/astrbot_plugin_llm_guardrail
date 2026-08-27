@@ -576,6 +576,8 @@ class GuardrailPipeline:
                 result = await self._execute_rag_judge(rule, ctx, current_text)
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
+            if result.action_on_hit == "sanitize":
+                self._attach_sanitized_payload(rail, result, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
             await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
             return result
@@ -615,6 +617,8 @@ class GuardrailPipeline:
                 result = await self._execute_rag_judge(rule, ctx, current_text)
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
+            if result.action_on_hit == "sanitize":
+                self._attach_sanitized_payload(rail, result, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
             await self._apply_input_action(rail, ctx, result, current_text, hit_plan)
             return result
@@ -642,7 +646,6 @@ class GuardrailPipeline:
         if hit_plan.action in {"none", "observe"}:
             return
         if hit_plan.produces_sanitized_payload:
-            self._attach_sanitized_payload(rail, result, inspected_text)
             return
         if hit_plan.block:
             context.input_blocked = True
@@ -679,7 +682,7 @@ class GuardrailPipeline:
     ) -> None:
         """Store sanitize output on the matching node, without host mutation."""
 
-        if not result.matched or result.signal is None:
+        if result.signal is None:
             return
         rule = self._rule_by_id(rail, result.rule_id)
         replacement = str(rule.config.get("sanitizer", ""))
@@ -1021,6 +1024,8 @@ class GuardrailPipeline:
                 result = await self._execute_rag_judge(rule, ctx, current_text)
             else:
                 result = evaluate_text_rule(rule, ctx, current_text)
+            if result.action_on_hit == "sanitize":
+                self._attach_sanitized_payload(rail, result, current_text)
             hit_plan = resolve_hit_action_plan(rail, result)
             if hit_plan.action == "retry_generation":
                 retry_request = {"node_id": result.node_id}
@@ -1249,7 +1254,6 @@ class GuardrailPipeline:
         if hit_plan.action in {"none", "observe"}:
             return
         if hit_plan.produces_sanitized_payload:
-            self._attach_sanitized_payload(rail, result, inspected_text)
             return
         if hit_plan.block:
             context.output_blocked = True
