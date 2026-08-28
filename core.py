@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import time
 import inspect
 import heapq
@@ -69,6 +71,21 @@ class NodeResult:
     @property
     def user_rule_id(self) -> str:
         return self.user_node_id
+
+
+@dataclass
+class NodeExecution:
+    """One worker outcome that has not yet been committed to a RailContext.
+
+    ``result`` remains optional so an ``action_on_error=discard`` worker can
+    retain its diagnostic without manufacturing a dependency-visible result.
+    ``deferred`` is short-lived, coordinator-only data such as a RAG capture
+    request; it must never be copied into ``RailContext.results``.
+    """
+
+    result: NodeResult | None
+    warnings: list[str] = field(default_factory=list)
+    deferred: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -160,8 +177,12 @@ class GraphIndex:
 
 NodeExecutor = Callable[[NormalizedNode, RailContext], NodeResult]
 AsyncNodeExecutor = Callable[[NormalizedNode, RailContext], Any]
-NodeErrorHandler = Callable[[NormalizedNode, RailContext, Exception], NodeResult | None]
+NodeErrorHandler = Callable[[NormalizedNode, RailContext, Exception], Any]
 StopPredicate = Callable[[RailContext], bool]
+AsyncBatchHandler = Callable[
+    [list[tuple[NormalizedNode, NodeExecution]], RailContext], Any
+]
+ExecutionSemaphorePredicate = Callable[[NormalizedNode], bool]
 
 
 # Compatibility aliases preserve direct P0 callers while the runtime and all
@@ -207,13 +228,37 @@ class NodeScheduler:
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None = None,
         error_handler: RuleErrorHandler | None = None,
+        *,
+        max_parallel_checks: int = 1,
+        execution_semaphore: asyncio.Semaphore | None = None,
+        execution_semaphore_predicate: ExecutionSemaphorePredicate | None = None,
+        batch_handler: AsyncBatchHandler | None = None,
     ) -> None:
         if self.strategy == "bruteforce":
             await self._run_bruteforce_async(
-                rail, context, executor, should_stop, error_handler
+                rail,
+                context,
+                executor,
+                should_stop,
+                error_handler,
+                batch_handler=batch_handler,
             )
             return
-        await self._run_graph_async(rail, context, executor, should_stop, error_handler)
+        try:
+            parallel_limit = max(int(max_parallel_checks), 1)
+        except (TypeError, ValueError):
+            parallel_limit = 1
+        await self._run_graph_async(
+            rail,
+            context,
+            executor,
+            should_stop,
+            error_handler,
+            max_parallel_checks=parallel_limit,
+            execution_semaphore=execution_semaphore,
+            execution_semaphore_predicate=execution_semaphore_predicate,
+            batch_handler=batch_handler,
+        )
 
     def _run_graph(
         self,
@@ -265,6 +310,44 @@ class NodeScheduler:
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None,
         error_handler: RuleErrorHandler | None,
+        *,
+        max_parallel_checks: int,
+        execution_semaphore: asyncio.Semaphore | None,
+        execution_semaphore_predicate: ExecutionSemaphorePredicate | None,
+        batch_handler: AsyncBatchHandler | None,
+    ) -> None:
+        if max_parallel_checks <= 1:
+            await self._run_graph_async_serial(
+                rail,
+                context,
+                executor,
+                should_stop,
+                error_handler,
+                batch_handler=batch_handler,
+            )
+            return
+
+        await self._run_graph_async_batched(
+            rail,
+            context,
+            executor,
+            should_stop,
+            error_handler,
+            max_parallel_checks=max_parallel_checks,
+            execution_semaphore=execution_semaphore,
+            execution_semaphore_predicate=execution_semaphore_predicate,
+            batch_handler=batch_handler,
+        )
+
+    async def _run_graph_async_serial(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        executor: AsyncRuleExecutor,
+        should_stop: StopPredicate | None,
+        error_handler: RuleErrorHandler | None,
+        *,
+        batch_handler: AsyncBatchHandler | None,
     ) -> None:
         graph = self.graph or build_graph_index(rail)
         active_rules = self._collect_active_rules(rail, context)
@@ -280,10 +363,16 @@ class NodeScheduler:
             if rule_id not in pending:
                 continue
             rule = active_rules[rule_id]
-            result = await self._execute_rule_async(rule, context, executor, error_handler)
-            if result is not None:
-                context.results[rule_id] = result
+            execution = await self._execute_rule_async(
+                rule, context, executor, error_handler
+            )
+            result = execution.result
+            self._commit_execution(rule, execution, context)
             pending.remove(rule_id)
+
+            await self._run_batch_handler(
+                batch_handler, [(rule, execution)], context
+            )
 
             if should_stop is not None and should_stop(context):
                 self._stop_pending(active_rules, pending, context)
@@ -300,6 +389,170 @@ class NodeScheduler:
             )
 
         self._expire_pending(graph, active_rules, pending, context)
+
+    async def _run_graph_async_batched(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        executor: AsyncRuleExecutor,
+        should_stop: StopPredicate | None,
+        error_handler: RuleErrorHandler | None,
+        *,
+        max_parallel_checks: int,
+        execution_semaphore: asyncio.Semaphore | None,
+        execution_semaphore_predicate: ExecutionSemaphorePredicate | None,
+        batch_handler: AsyncBatchHandler | None,
+    ) -> None:
+        """Execute each ready frontier against one immutable context snapshot."""
+
+        graph = self.graph or build_graph_index(rail)
+        active_rules = self._collect_active_rules(rail, context)
+        pending = set(active_rules)
+        queued: set[str] = set()
+        ready_heap: list[tuple[int, int, str]] = []
+
+        self._refresh_ready(graph, active_rules, pending, queued, ready_heap, context)
+
+        while ready_heap:
+            batch: list[NormalizedRule] = []
+            while ready_heap:
+                _, _, rule_id = heapq.heappop(ready_heap)
+                queued.discard(rule_id)
+                if rule_id in pending:
+                    batch.append(active_rules[rule_id])
+
+            executions = await self._execute_ready_batch(
+                batch,
+                context,
+                executor,
+                error_handler,
+                max_parallel_checks=max_parallel_checks,
+                execution_semaphore=execution_semaphore,
+                execution_semaphore_predicate=execution_semaphore_predicate,
+            )
+            changed_sources: list[str] = []
+            for rule, execution in executions:
+                self._commit_execution(rule, execution, context)
+                pending.remove(rule.rule_id)
+                if execution.result is not None:
+                    changed_sources.append(rule.rule_id)
+
+            await self._run_batch_handler(batch_handler, executions, context)
+
+            if should_stop is not None and should_stop(context):
+                self._stop_pending(active_rules, pending, context)
+                return
+
+            self._refresh_ready(
+                graph,
+                active_rules,
+                pending,
+                queued,
+                ready_heap,
+                context,
+                changed_sources=changed_sources,
+            )
+
+        self._expire_pending(graph, active_rules, pending, context)
+
+    async def _execute_ready_batch(
+        self,
+        batch: list[NormalizedRule],
+        context: RailContext,
+        executor: AsyncRuleExecutor,
+        error_handler: RuleErrorHandler | None,
+        *,
+        max_parallel_checks: int,
+        execution_semaphore: asyncio.Semaphore | None,
+        execution_semaphore_predicate: ExecutionSemaphorePredicate | None,
+    ) -> list[tuple[NormalizedRule, NodeExecution]]:
+        """Return worker outcomes in stable ready-queue order.
+
+        ``asyncio.gather`` preserves the supplied task order.  Every worker
+        receives an independent snapshot, so sibling payloads cannot become
+        visible merely because one task returns earlier than another.
+        """
+
+        batch_semaphore = asyncio.Semaphore(max_parallel_checks)
+        base_warning_count = len(context.warnings)
+
+        async def execute_one(
+            rule: NormalizedRule,
+        ) -> tuple[NormalizedRule, NodeExecution]:
+            worker_context = self._snapshot_context(context)
+            uses_shared_slot = (
+                execution_semaphore is not None
+                and (
+                    execution_semaphore_predicate is None
+                    or execution_semaphore_predicate(rule)
+                )
+            )
+            if uses_shared_slot:
+                # Do not let a provider-starved external check consume this
+                # Rail's limited worker slots: local siblings must still run.
+                async with execution_semaphore:
+                    async with batch_semaphore:
+                        execution = await self._execute_rule_async(
+                            rule, worker_context, executor, error_handler
+                        )
+            else:
+                async with batch_semaphore:
+                    execution = await self._execute_rule_async(
+                        rule, worker_context, executor, error_handler
+                    )
+            worker_warnings = worker_context.warnings[base_warning_count:]
+            if worker_warnings:
+                execution.warnings.extend(worker_warnings)
+            return rule, execution
+
+        return list(await asyncio.gather(*(execute_one(rule) for rule in batch)))
+
+    @staticmethod
+    def _snapshot_context(context: RailContext) -> RailContext:
+        """Copy coordinator-visible data while retaining read-only host objects."""
+
+        return RailContext(
+            event=context.event,
+            request=context.request,
+            response=context.response,
+            umo=context.umo,
+            original_input=context.original_input,
+            current_input=context.current_input,
+            current_output=context.current_output,
+            results=copy.deepcopy(context.results),
+            warnings=list(context.warnings),
+            input_blocked=context.input_blocked,
+            output_blocked=context.output_blocked,
+            output_needs_commit=context.output_needs_commit,
+            terminal_action=copy.deepcopy(context.terminal_action),
+            prompt_mutations=copy.deepcopy(context.prompt_mutations),
+            retry_trace=copy.deepcopy(context.retry_trace),
+            route_decision=copy.deepcopy(context.route_decision),
+            session_scope_decision=copy.deepcopy(context.session_scope_decision),
+        )
+
+    @staticmethod
+    def _commit_execution(
+        rule: NormalizedRule,
+        execution: NodeExecution,
+        context: RailContext,
+    ) -> None:
+        result = execution.result
+        if result is not None:
+            context.results[rule.rule_id] = result
+        context.warnings.extend(execution.warnings)
+
+    @staticmethod
+    async def _run_batch_handler(
+        handler: AsyncBatchHandler | None,
+        executions: list[tuple[NormalizedRule, NodeExecution]],
+        context: RailContext,
+    ) -> None:
+        if handler is None:
+            return
+        maybe_result = handler(executions, context)
+        if inspect.isawaitable(maybe_result):
+            await maybe_result
 
     def _run_bruteforce(
         self,
@@ -382,6 +635,8 @@ class NodeScheduler:
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None,
         error_handler: RuleErrorHandler | None,
+        *,
+        batch_handler: AsyncBatchHandler | None,
     ) -> None:
         pending: dict[str, NormalizedRule] = {}
         expired_sources: set[str] = set()
@@ -428,20 +683,15 @@ class NodeScheduler:
             for rule in ready:
                 if rule.rule_id not in pending:
                     continue
-                started = time.perf_counter()
-                try:
-                    maybe_result = executor(rule, context)
-                    result = (
-                        await maybe_result
-                        if inspect.isawaitable(maybe_result)
-                        else maybe_result
-                    )
-                except Exception as exc:  # Defensive boundary for user rules/config.
-                    result = self._handle_rule_error(rule, context, exc, error_handler)
-                if result is not None:
-                    result.latency_ms = int((time.perf_counter() - started) * 1000)
-                    context.results[rule.rule_id] = result
-                else:
+                execution = await self._execute_rule_async(
+                    rule, context, executor, error_handler
+                )
+                result = execution.result
+                self._commit_execution(rule, execution, context)
+                await self._run_batch_handler(
+                    batch_handler, [(rule, execution)], context
+                )
+                if result is None:
                     expired_sources.add(rule.rule_id)
                 pending.pop(rule.rule_id, None)
                 if should_stop is not None and should_stop(context):
@@ -493,16 +743,45 @@ class NodeScheduler:
         context: RailContext,
         executor: AsyncRuleExecutor,
         error_handler: RuleErrorHandler | None,
-    ) -> RuleResult | None:
+    ) -> NodeExecution:
         started = time.perf_counter()
         try:
-            maybe_result = executor(rule, context)
-            result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
+            maybe_execution = executor(rule, context)
+            raw_execution = (
+                await maybe_execution
+                if inspect.isawaitable(maybe_execution)
+                else maybe_execution
+            )
+            execution = self._coerce_execution(raw_execution)
+        except asyncio.CancelledError as exc:
+            # An application-level cancellation must still tear down the whole
+            # request.  A node implementation independently raising
+            # CancelledError, however, is a per-node failure and must not
+            # discard already-started siblings in this ready batch.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            execution = self._coerce_execution(
+                self._handle_rule_error(rule, context, exc, error_handler)
+            )
         except Exception as exc:  # Defensive boundary for user rules/config.
-            result = self._handle_rule_error(rule, context, exc, error_handler)
+            execution = self._coerce_execution(
+                self._handle_rule_error(rule, context, exc, error_handler)
+            )
+        result = execution.result
         if result is not None:
             result.latency_ms = int((time.perf_counter() - started) * 1000)
-        return result
+        return execution
+
+    @staticmethod
+    def _coerce_execution(value: Any) -> NodeExecution:
+        if isinstance(value, NodeExecution):
+            return value
+        if isinstance(value, NodeResult) or value is None:
+            return NodeExecution(result=value)
+        raise TypeError(
+            "async node executor must return NodeResult, NodeExecution, or None"
+        )
 
     @staticmethod
     def _handle_rule_error(

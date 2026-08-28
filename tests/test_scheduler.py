@@ -628,6 +628,249 @@ class SchedulerTests(unittest.TestCase):
         self.assertTrue(ctx.results["a"].matched)
         self.assertTrue(ctx.results["b"].matched)
 
+    def test_run_async_batches_ready_nodes_and_hides_sibling_payloads(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "a",
+                            "priority": 10,
+                            "keywords": ["a"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "b",
+                            "priority": 20,
+                            "keywords": ["b"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "child",
+                            "priority": 1,
+                            "depend_on": "?a",
+                            "keywords": ["child"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+        seed = make_result(
+            rail.nodes[0],
+            matched=True,
+            signal=NodeSignal(
+                value=True,
+                truthy=True,
+                payload={"nested": {"state": "original"}},
+            ),
+        )
+        ctx.results["seed"] = seed
+
+        async def scenario():
+            a_started = asyncio.Event()
+            b_started = asyncio.Event()
+            release = asyncio.Event()
+            child_started = asyncio.Event()
+            seen_sibling = {"value": "unset"}
+            batches = []
+
+            async def execute(rule, worker_context):
+                if rule.rule_id == "a":
+                    worker_context.results["seed"].signal.payload["nested"][
+                        "state"
+                    ] = "changed-by-a"
+                    a_started.set()
+                    await release.wait()
+                elif rule.rule_id == "b":
+                    seen_sibling["value"] = worker_context.results.get("a")
+                    self.assertEqual(
+                        worker_context.results["seed"].signal.payload["nested"][
+                            "state"
+                        ],
+                        "original",
+                    )
+                    b_started.set()
+                    await release.wait()
+                else:
+                    child_started.set()
+                    self.assertIn("a", worker_context.results)
+                return evaluate_text_rule(rule, worker_context, "a b child")
+
+            async def commit_batch(executions, _context):
+                batches.append([rule.rule_id for rule, _execution in executions])
+
+            task = asyncio.create_task(
+                RuleScheduler(build_graph_index(cfg)).run_async(
+                    rail,
+                    ctx,
+                    execute,
+                    max_parallel_checks=2,
+                    batch_handler=commit_batch,
+                )
+            )
+            await asyncio.wait_for(
+                asyncio.gather(a_started.wait(), b_started.wait()), timeout=1
+            )
+            self.assertFalse(child_started.is_set())
+            release.set()
+            await asyncio.wait_for(task, timeout=1)
+
+            self.assertIsNone(seen_sibling["value"])
+            self.assertEqual(
+                ctx.results["seed"].signal.payload["nested"]["state"],
+                "original",
+            )
+            self.assertEqual(batches, [["a", "b"], ["child"]])
+
+        asyncio.run(scenario())
+
+    def test_run_async_batch_commits_error_and_sibling_in_stable_order(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "slow_failure",
+                            "priority": 10,
+                            "keywords": ["slow_failure"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "fast_success",
+                            "priority": 20,
+                            "keywords": ["fast_success"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        async def execute(rule, context):
+            if rule.rule_id == "slow_failure":
+                await asyncio.sleep(0.01)
+                raise RuntimeError("simulated")
+            await asyncio.sleep(0)
+            return evaluate_text_rule(rule, context, "fast_success")
+
+        asyncio.run(
+            RuleScheduler(build_graph_index(cfg)).run_async(
+                rail,
+                ctx,
+                execute,
+                error_handler=lambda rule, context, exc: make_result(
+                    rule, matched=False, status="failed"
+                ),
+                max_parallel_checks=2,
+            )
+        )
+
+        self.assertEqual(list(ctx.results)[-2:], ["slow_failure", "fast_success"])
+        self.assertEqual(ctx.results["slow_failure"].status, "failed")
+        self.assertTrue(ctx.results["fast_success"].matched)
+
+    def test_run_async_batch_isolates_node_cancelled_error_from_siblings(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "cancelled",
+                            "priority": 10,
+                            "keywords": ["cancelled"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "sibling",
+                            "priority": 20,
+                            "keywords": ["sibling"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        async def execute(rule, context):
+            if rule.rule_id == "cancelled":
+                raise asyncio.CancelledError("simulated node cancellation")
+            return evaluate_text_rule(rule, context, "sibling")
+
+        asyncio.run(
+            RuleScheduler(build_graph_index(cfg)).run_async(
+                rail,
+                ctx,
+                execute,
+                error_handler=lambda rule, context, exc: make_result(
+                    rule, matched=False, status="failed"
+                ),
+                max_parallel_checks=2,
+            )
+        )
+
+        self.assertEqual(ctx.results["cancelled"].status, "failed")
+        self.assertTrue(ctx.results["sibling"].matched)
+
+    def test_external_slot_wait_does_not_block_local_ready_sibling(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "external",
+                            "priority": 10,
+                            "keywords": ["external"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "local",
+                            "priority": 20,
+                            "keywords": ["local"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        async def scenario():
+            external_slots = asyncio.Semaphore(0)
+            local_finished = asyncio.Event()
+
+            async def execute(rule, context):
+                if rule.rule_id == "local":
+                    local_finished.set()
+                return evaluate_text_rule(rule, context, "external local")
+
+            task = asyncio.create_task(
+                RuleScheduler(build_graph_index(cfg)).run_async(
+                    rail,
+                    ctx,
+                    execute,
+                    max_parallel_checks=1,
+                    execution_semaphore=external_slots,
+                    execution_semaphore_predicate=lambda rule: rule.rule_id
+                    == "external",
+                )
+            )
+            await asyncio.wait_for(local_finished.wait(), timeout=1)
+            external_slots.release()
+            await asyncio.wait_for(task, timeout=1)
+
+        asyncio.run(scenario())
+
+        self.assertTrue(ctx.results["external"].matched)
+        self.assertTrue(ctx.results["local"].matched)
+
 
 if __name__ == "__main__":
     unittest.main()

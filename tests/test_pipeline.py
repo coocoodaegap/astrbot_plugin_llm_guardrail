@@ -548,6 +548,117 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(event.result, {"plain": "blocked"})
 
+    def test_input_block_commits_same_ready_batch_before_stopping_dependents(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "blocking",
+                            "priority": 10,
+                            "keywords": ["stop"],
+                            "action_on_hit": "block",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "sibling",
+                            "priority": 20,
+                            "keywords": ["sibling"],
+                            "action_on_hit": "observe",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "later",
+                            "priority": 1,
+                            "depend_on": "?blocking",
+                            "keywords": ["later"],
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("stop sibling later")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+
+        self.assertTrue(context.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertTrue(context.results["blocking"].matched)
+        self.assertTrue(context.results["sibling"].matched)
+        self.assertEqual(context.results["later"].skipped_reason, "rail_stopped")
+        self.assertEqual(context.terminal_action["node_id"], "blocking")
+        self.assertEqual(
+            list(context.results), ["blocking", "sibling", "later"]
+        )
+
+    def test_input_batch_uses_stable_single_block_action_after_out_of_order_checks(self):
+        class CountingEvent(FakeEvent):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.stop_calls = 0
+
+            def stop_event(self):
+                self.stop_calls += 1
+                super().stop_event()
+
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "slow_high_priority",
+                            "priority": 10,
+                            "provider_id": "slow-provider",
+                            "audit_prompt": "slow audit",
+                            "action_on_hit": "block",
+                        },
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "fast_low_priority",
+                            "priority": 20,
+                            "provider_id": "fast-provider",
+                            "audit_prompt": "fast audit",
+                            "action_on_hit": "block",
+                        },
+                    ],
+                },
+            }
+        )
+        event = CountingEvent("unsafe")
+        fake_context = FakeContext()
+        fake_context.providers.update(
+            {"slow-provider": object(), "fast-provider": object()}
+        )
+        completion_order = []
+
+        async def delayed_llm_generate(chat_provider_id, prompt, system_prompt=None):
+            fake_context.llm_calls.append(
+                {
+                    "chat_provider_id": chat_provider_id,
+                    "prompt": prompt,
+                    "system_prompt": system_prompt,
+                }
+            )
+            if chat_provider_id == "slow-provider":
+                await asyncio.sleep(0.01)
+            completion_order.append(chat_provider_id)
+            return FakeResponse('{"matched": true, "payload": {}}')
+
+        fake_context.llm_generate = delayed_llm_generate
+
+        context = asyncio.run(
+            GuardrailPipeline(cfg, AstrBotAdapter(fake_context)).run_message_input(event)
+        )
+
+        self.assertTrue(context.results["slow_high_priority"].matched)
+        self.assertTrue(context.results["fast_low_priority"].matched)
+        self.assertEqual(completion_order, ["fast-provider", "slow-provider"])
+        self.assertEqual(context.terminal_action["node_id"], "slow_high_priority")
+        self.assertEqual(event.stop_calls, 1)
+
     def test_input_sanitize_only_produces_payload_by_default(self):
         cfg = normalize_config(
             {
@@ -727,7 +838,7 @@ class PipelineTests(unittest.TestCase):
             "base system prompt\n\nKeep the response safe.",
         )
 
-    def test_node_inspection_template_reads_prior_sanitize_payload_without_dependency(self):
+    def test_node_inspection_template_reads_sanitize_payload_with_explicit_dependency(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -743,11 +854,43 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "payload_consumer",
                             "keywords": ["[redacted]"],
+                            "depend_on": "?sanitize_source",
                             "inspection_template": "${sanitize_source.sanitized}",
                             "action_on_hit": "observe",
                         },
                     ],
                 },
+            }
+        )
+        event = FakeEvent("contains secret")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
+
+        self.assertTrue(context.results["sanitize_source"].matched)
+        self.assertTrue(context.results["payload_consumer"].matched)
+        self.assertEqual(event.message_str, "contains secret")
+
+    def test_node_inspection_template_hides_same_ready_batch_payload(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "sanitize_source",
+                            "keywords": ["secret"],
+                            "action_on_hit": "sanitize",
+                            "sanitizer": "[redacted]",
+                        },
+                        {
+                            "__template_key": "regex_pattern",
+                            "rule_id": "payload_consumer",
+                            "pattern": "^$",
+                            "inspection_template": "${sanitize_source.sanitized}",
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                }
             }
         )
         event = FakeEvent("contains secret")
@@ -1142,6 +1285,48 @@ class PipelineTests(unittest.TestCase):
             event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY),
             {"action": "commit", "text": "safe replacement"},
         )
+
+    def test_output_batch_selects_one_stable_retry_source(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "first_retry",
+                            "priority": 10,
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "second_retry",
+                            "priority": 20,
+                            "keywords": ["unsafe"],
+                            "action_on_hit": "retry_generation",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        provider = FakeTextProvider(["safe replacement"])
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        asyncio.run(pipeline.run_request(event, FakeRequest("original")))
+        context = asyncio.run(pipeline.run_response(event, response))
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(context.retry_trace[0]["node_id"], "first_retry")
+        self.assertEqual(response.completion_text, "safe replacement")
 
     def test_output_retry_uses_the_step_five_default_hit_action(self):
         cfg = normalize_config(
