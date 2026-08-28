@@ -494,23 +494,32 @@ def _runtime_dependency_target(value: Any) -> str:
     return text
 
 
+def _runtime_logic_gate_input_target(value: Any) -> str:
+    text = str(value or "").strip()
+    if text[:1] in {"!", "?", "~"}:
+        text = text[1:].strip()
+    if text.endswith("?"):
+        text = text[:-1]
+    return text.partition(".")[0]
+
+
 def _runtime_dependency_references(
     policy: PolicyDefinition,
     rule_by_id: Mapping[str, RuleDefinition],
-) -> list[tuple[str, str]]:
-    references: list[tuple[str, str]] = []
+) -> list[tuple[str, str, str]]:
+    references: list[tuple[str, str, str]] = []
     for binding in policy.bindings:
         if binding.depend_on:
-            references.append((binding.rule_id, binding.depend_on))
+            references.append((binding.rule_id, binding.depend_on, "depend_on"))
     for component in policy.components:
         if component.depend_on:
-            references.append((component.component_id, component.depend_on))
+            references.append((component.component_id, component.depend_on, "depend_on"))
         if component.component_type != "logic_gate":
             continue
         inputs = component.config.get("inputs")
         if isinstance(inputs, list):
             references.extend(
-                (component.component_id, str(item))
+                (component.component_id, str(item), "logic_input")
                 for item in inputs
                 if str(item).strip()
             )
@@ -541,8 +550,12 @@ def _runtime_dependency_errors(
             for rule in rail.nodes
             if rule.user_rule_id
         }
-        for dependent_id, raw_reference in _runtime_dependency_references(policy, rule_by_id):
-            target_id = _runtime_dependency_target(raw_reference)
+        for dependent_id, raw_reference, source_kind in _runtime_dependency_references(policy, rule_by_id):
+            target_id = (
+                _runtime_logic_gate_input_target(raw_reference)
+                if source_kind == "logic_input"
+                else _runtime_dependency_target(raw_reference)
+            )
             target = normalized_by_id.get(target_id)
             if target is None:
                 # Structural validation reports references outside this policy.

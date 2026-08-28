@@ -469,6 +469,55 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertFalse(validation.valid)
         self.assertTrue(any("gate in Step 1 cannot depend on source in later Step 3" in error for error in validation.fatal_errors))
 
+    def test_logic_gate_payload_input_references_its_source_node(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),),
+            policies=(
+                PolicyDefinition(
+                    "with_payload_gate",
+                    "With payload gate",
+                    bindings=(PolicyRuleBinding("source", "input_rail"),),
+                    components=(
+                        PolicyComponent(
+                            "gate",
+                            "logic_gate",
+                            "input_rail",
+                            config={"inputs": ["source.sanitized?"]},
+                        ),
+                    ),
+                ),
+            ),
+            active_policy_id="with_payload_gate",
+        )
+
+        self.assertTrue(library.validate().valid)
+
+    def test_logic_gate_rejects_malformed_payload_input(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),),
+            policies=(
+                PolicyDefinition(
+                    "bad_payload_gate",
+                    "Bad payload gate",
+                    bindings=(PolicyRuleBinding("source", "input_rail"),),
+                    components=(
+                        PolicyComponent(
+                            "gate",
+                            "logic_gate",
+                            "input_rail",
+                            config={"inputs": ["source.", "source?"]},
+                        ),
+                    ),
+                ),
+            ),
+            active_policy_id="bad_payload_gate",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertTrue(any("invalid logic gate input" in error for error in validation.fatal_errors))
+
     def test_policy_component_compiles_as_runtime_logic_gate(self):
         library = PolicyLibrary(
             rules=(RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),),

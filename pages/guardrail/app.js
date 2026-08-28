@@ -834,9 +834,15 @@ const inputRedirectTemplates = new Set([
 const componentDefinitions = {
   logic_gate: {
     label: "逻辑门",
-    description: "组合当前策略内其他节点的执行结果，形成 all / any 逻辑判断。",
+    description: "组合当前策略内节点结果；带 payload 字段的输入还可按顺序汇集首个值或拼接文本。",
     rails: new Set(policyGraphSteps.map((step) => step.rail)),
-    defaultConfig: () => ({ gate: "all", invert: false, inputs: [] }),
+    defaultConfig: () => ({
+      gate: "all",
+      invert: false,
+      inputs: [],
+      value_item_template: "${value}",
+      value_separator: "\n",
+    }),
   },
   length_anomaly_detector: {
     label: "长度异常检测器",
@@ -929,10 +935,15 @@ const policyGraphStepByRail = new Map(
 function parsePolicyGraphReference(value) {
   const raw = String(value || "").trim();
   if (!raw) return { raw, targetId: "", mode: "none" };
-  if (raw.startsWith("!")) return { raw, targetId: raw.slice(1).trim(), mode: "not_matched" };
-  if (raw.startsWith("?")) return { raw, targetId: raw.slice(1).trim(), mode: "executed" };
-  if (raw.startsWith("~")) return { raw, targetId: raw.slice(1).trim(), mode: "failed" };
-  return { raw, targetId: raw, mode: "matched" };
+  const prefix = raw[0] === "!" || raw[0] === "?" || raw[0] === "~" ? raw[0] : "";
+  const mode = { "!": "not_matched", "?": "executed", "~": "failed" }[prefix] || "matched";
+  let targetAndPath = prefix ? raw.slice(1).trim() : raw;
+  const dot = targetAndPath.indexOf(".");
+  const allowEmptyString = dot >= 0 && targetAndPath.endsWith("?");
+  if (allowEmptyString) targetAndPath = targetAndPath.slice(0, -1);
+  const targetId = dot < 0 ? targetAndPath : targetAndPath.slice(0, dot);
+  const payloadPath = dot < 0 ? "" : targetAndPath.slice(dot + 1);
+  return { raw, targetId, mode, payloadPath, allowEmptyString };
 }
 function graphNodeInputs(node) {
   const inputs = node?.component?.config?.inputs || node?.rule?.template_config?.inputs;
@@ -2087,7 +2098,7 @@ function renderPolicyGraphNodeEditor(node) {
     componentGrid.append(createPolicyGraphEditorField("结果取反", "开启后反转逻辑门的计算结果。", invert));
     const inputs = document.createElement("textarea");
     inputs.rows = 3;
-    inputs.placeholder = "每行一个策略节点 ID；可用 !id 或 ?id 表示条件。";
+    inputs.placeholder = "每行一个：[!|?|~]节点 ID[.payload 字段[?]]";
     inputs.value = graphNodeInputs(node).join("\n");
     inputs.addEventListener("change", () => updatePolicyComponentConfig(
       node.id,
@@ -2096,8 +2107,38 @@ function renderPolicyGraphNodeEditor(node) {
     ));
     componentGrid.append(createPolicyGraphEditorField(
       "逻辑门输入",
-      "引用当前策略中的节点 ID；这些连接仅属于当前策略。",
+      "每行一个：[!|?|~]节点 ID[.payload 字段[?]]，裸节点只参与布尔判断；带 .字段 的输入在前缀条件成立后读取 payload。尾随 ? 只允许已存在的空字符串。",
       inputs,
+      true,
+    ));
+    const valueItemTemplate = document.createElement("textarea");
+    valueItemTemplate.rows = 2;
+    valueItemTemplate.value = String(node.component?.config?.value_item_template ?? "${value}");
+    valueItemTemplate.placeholder = "${value}";
+    valueItemTemplate.addEventListener("change", () => updatePolicyComponentConfig(
+      node.id,
+      "value_item_template",
+      valueItemTemplate.value,
+    ));
+    componentGrid.append(createPolicyGraphEditorField(
+      "payload 项模板",
+      "仅用于 joined_string；只允许 ${value}（字段值）与 ${source}（来源节点 ID）。",
+      valueItemTemplate,
+      true,
+    ));
+    const valueSeparator = document.createElement("textarea");
+    valueSeparator.rows = 2;
+    valueSeparator.value = String(node.component?.config?.value_separator ?? "\n");
+    valueSeparator.placeholder = "默认换行";
+    valueSeparator.addEventListener("change", () => updatePolicyComponentConfig(
+      node.id,
+      "value_separator",
+      valueSeparator.value,
+    ));
+    componentGrid.append(createPolicyGraphEditorField(
+      "payload 拼接分隔符",
+      "仅用于 joined_string；默认是换行，可以留空以直接拼接。",
+      valueSeparator,
       true,
     ));
     editor.append(componentGrid);

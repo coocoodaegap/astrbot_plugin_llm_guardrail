@@ -95,6 +95,11 @@ DEFAULT_BLACKLIST_MESSAGE = (
     "用户 ${user_id} 已因多次触发风险规则被临时限制使用，请稍后再试。"
 )
 LOGIC_GATES = {"all", "any"}
+LOGIC_GATE_INPUT_PATTERN = re.compile(
+    r"^[!?~]?(?:[a-z][a-z0-9_]{0,63}|__[a-z][a-z0-9_]{0,63})"
+    r"(?:\.[a-z][a-z0-9_]{0,63}\??)?$"
+)
+LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN = re.compile(r"\$\{([^}]*)\}")
 INSERTION_TARGETS = {
     "system_prefix",
     "system_suffix",
@@ -636,9 +641,43 @@ def _normalize_logic_gate(
         warnings.append(f"{rule_id}.gate is invalid; fallback to all")
         gate = "all"
     config["gate"] = gate
-    config["inputs"] = _clean_string_list(config.get("inputs", []))
+    raw_inputs = config.get("inputs", [])
+    config["inputs"] = (
+        [str(item).strip() for item in raw_inputs if str(item).strip()]
+        if isinstance(raw_inputs, list)
+        else []
+    )
+    invalid_inputs = [
+        value for value in config["inputs"]
+        if LOGIC_GATE_INPUT_PATTERN.fullmatch(value) is None
+    ]
+    if invalid_inputs:
+        warnings.append(
+            f"{rule_id}.inputs has invalid logic-gate reference(s): "
+            + ", ".join(invalid_inputs)
+        )
+        config["__invalid_logic_inputs"] = invalid_inputs
+    else:
+        config.pop("__invalid_logic_inputs", None)
+    value_item_template = _as_str(config.get("value_item_template", "${value}"))
+    if not _logic_gate_value_template_is_valid(value_item_template):
+        warnings.append(
+            f"{rule_id}.value_item_template only supports ${{value}} and ${{source}}; "
+            "fallback to ${value}"
+        )
+        value_item_template = "${value}"
+    config["value_item_template"] = value_item_template
+    config["value_separator"] = _as_str(config.get("value_separator", "\n"))
     config["invert"] = _as_bool(config.get("invert", False), False)
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _logic_gate_value_template_is_valid(value: str) -> bool:
+    matches = list(LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN.finditer(value))
+    if any(match.group(1) not in {"value", "source"} for match in matches):
+        return False
+    consumed = LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN.sub("", value)
+    return "${" not in consumed
 
 
 def _normalize_input_detector(
@@ -839,10 +878,22 @@ def _validate_cross_references(
                 rail.warnings.append(message)
                 warnings.append(message)
                 continue
+            invalid_inputs = rule.config.get("__invalid_logic_inputs", [])
+            if invalid_inputs:
+                message = (
+                    f"{rule.rule_id}.inputs has invalid logic-gate reference(s): "
+                    + ", ".join(str(item) for item in invalid_inputs)
+                )
+                rule.valid = False
+                rule.enabled = False
+                rule.warnings.append(message)
+                rail.warnings.append(message)
+                warnings.append(message)
+                continue
             unavailable = [
-                f"{item} ({_reference_problem(_dependency_target(item), rule_index)})"
+                f"{item} ({_reference_problem(_logic_gate_input_target(item), rule_index)})"
                 for item in inputs
-                if _dependency_target(item) not in stable_ids
+                if _logic_gate_input_target(item) not in stable_ids
             ]
             if unavailable:
                 message = (
@@ -1067,6 +1118,17 @@ def _dependency_target(value: str) -> str:
     if stripped[0] in {"!", "?", "~"}:
         return stripped[1:].strip()
     return stripped
+
+
+def _logic_gate_input_target(value: str) -> str:
+    """Extract the source node ID from a validated logic-gate input."""
+
+    stripped = value.strip()
+    if stripped[:1] in {"!", "?", "~"}:
+        stripped = stripped[1:]
+    if stripped.endswith("?"):
+        stripped = stripped[:-1]
+    return stripped.partition(".")[0]
 
 
 def _config_get(config: Any, key: str, default: Any = None) -> Any:

@@ -20,6 +20,10 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 RULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 POLICY_ID_PATTERN = re.compile(r"^(?:_default|[a-z][a-z0-9_]{0,63})$")
+LOGIC_GATE_INPUT_PATTERN = re.compile(
+    r"^[!?~]?[a-z][a-z0-9_]{0,63}"
+    r"(?:\.[a-z][a-z0-9_]{0,63}\??)?$"
+)
 LEGACY_DEFAULT_POLICY_ID = "_default"
 STEP_BY_RAIL = {
     "input_rail": 1,
@@ -599,6 +603,16 @@ class PolicyLibrary:
                         fatal_errors.append(
                             f"component {component.component_id} has no logic gate inputs"
                         )
+                    invalid_inputs = [
+                        value
+                        for value in _clean_string_list(component_config.get("inputs"))
+                        if LOGIC_GATE_INPUT_PATTERN.fullmatch(value) is None
+                    ]
+                    if invalid_inputs:
+                        fatal_errors.append(
+                            f"component {component.component_id} has invalid logic gate input(s): "
+                            + ", ".join(invalid_inputs)
+                        )
                 if _is_sanitize_action(component.action_on_hit):
                     fatal_errors.append(
                         f"component {component.component_id} uses sanitize, which is only available "
@@ -799,6 +813,17 @@ def _dependency_target(value: Any) -> str:
     return text
 
 
+def _logic_gate_input_target(value: Any) -> str:
+    """Extract the node ID from ``[!|?|~]node_id[.field][?]``."""
+
+    text = str(value or "").strip()
+    if text[:1] in {"!", "?", "~"}:
+        text = text[1:].strip()
+    if text.endswith("?"):
+        text = text[:-1]
+    return text.partition(".")[0]
+
+
 def _policy_dependency_references(
     policy: PolicyDefinition,
     rule_by_id: Mapping[str, RuleDefinition],
@@ -845,7 +870,11 @@ def _validate_policy_dependency_graph(
     for dependent_id, raw_reference, source_kind in _policy_dependency_references(
         policy, rule_by_id
     ):
-        target_id = _dependency_target(raw_reference)
+        target_id = (
+            _logic_gate_input_target(raw_reference)
+            if source_kind == "logic input"
+            else _dependency_target(raw_reference)
+        )
         if not target_id:
             errors.append(
                 f"policy {policy.policy_id} node {dependent_id} has an empty {source_kind} reference"

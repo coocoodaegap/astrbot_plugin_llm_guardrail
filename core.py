@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import inspect
 import heapq
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -744,6 +745,23 @@ class DependSpec:
         return _depend_result_matches(self.mode, result)
 
 
+@dataclass(frozen=True)
+class LogicGateInputSpec:
+    """One ordered logic-gate input and its optional payload field reference."""
+
+    target: str
+    mode: str
+    payload_path: str = ""
+    allow_empty_string: bool = False
+    raw: str = ""
+
+
+_LOGIC_GATE_INPUT_PATTERN = re.compile(
+    r"^(?P<prefix>[!?~]?)(?P<target>(?:[a-z][a-z0-9_]{0,63}|__[a-z][a-z0-9_]{0,63}))"
+    r"(?:\.(?P<payload_path>[a-z][a-z0-9_]{0,63})(?P<allow_empty>\?)?)?$"
+)
+
+
 def parse_depend_on(value: str) -> DependSpec:
     return parse_rule_ref(value)
 
@@ -767,22 +785,77 @@ def logic_gate_inputs(rule: NormalizedRule) -> list[str]:
     return [item.target for item in logic_gate_input_specs(rule)]
 
 
-def logic_gate_input_specs(rule: NormalizedRule) -> list[DependSpec]:
+def parse_logic_gate_input(value: str) -> LogicGateInputSpec:
+    """Parse ``[!|?|~]node_id[.payload_path[?]]`` without evaluating it.
+
+    This syntax is intentionally narrower than normal templates: payloads are
+    flat, declared fields, and a trailing ``?`` only makes an existing empty
+    string usable.  Invalid inputs are rejected during configuration
+    validation; retaining an empty target here keeps direct runtime callers
+    safe as well.
+    """
+
+    raw = (value or "").strip()
+    match = _LOGIC_GATE_INPUT_PATTERN.fullmatch(raw)
+    if match is None:
+        return LogicGateInputSpec(target="", mode="none", raw=raw)
+    mode = {
+        "": "matched",
+        "!": "not_matched",
+        "?": "executed",
+        "~": "failed",
+    }[match.group("prefix")]
+    return LogicGateInputSpec(
+        target=match.group("target"),
+        mode=mode,
+        payload_path=match.group("payload_path") or "",
+        allow_empty_string=bool(match.group("allow_empty")),
+        raw=raw,
+    )
+
+
+def logic_gate_input_specs(rule: NormalizedRule) -> list[LogicGateInputSpec]:
     if rule.template_key != "logic_gate":
         return []
     inputs = rule.config.get("inputs", [])
     if not isinstance(inputs, list):
         return []
-    result: list[DependSpec] = []
+    result: list[LogicGateInputSpec] = []
     for item in inputs:
-        spec = parse_rule_ref(str(item).strip())
+        spec = parse_logic_gate_input(str(item).strip())
         if spec.target:
             result.append(spec)
     return result
 
 
-def logic_input_value(spec: DependSpec, result: RuleResult) -> bool:
-    return _depend_result_matches(spec.mode, result)
+def logic_gate_payload_value(spec: LogicGateInputSpec, result: RuleResult) -> Any | None:
+    """Return a usable payload value for one dotted logic-gate input.
+
+    ``None`` represents missing or unavailable data.  It is deliberately
+    distinct from falsey scalar values such as ``False`` and ``0``, which are
+    valid declared payload values.  Empty strings need an explicit trailing
+    ``?`` marker to become usable.
+    """
+
+    if not spec.payload_path or not _depend_result_matches(spec.mode, result):
+        return None
+    payload = result.signal.payload if result.signal is not None else None
+    if not isinstance(payload, Mapping) or spec.payload_path not in payload:
+        return None
+    value = payload[spec.payload_path]
+    if value is None:
+        return None
+    if isinstance(value, str) and not value and not spec.allow_empty_string:
+        return None
+    return value
+
+
+def logic_input_value(spec: LogicGateInputSpec, result: RuleResult) -> bool:
+    if not _depend_result_matches(spec.mode, result):
+        return False
+    if not spec.payload_path:
+        return True
+    return logic_gate_payload_value(spec, result) is not None
 
 
 def _depend_result_matches(mode: str, result: RuleResult) -> bool:

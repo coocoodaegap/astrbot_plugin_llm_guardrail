@@ -10,7 +10,7 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from config import normalize_config
 from components import evaluate_logic_gate
-from core import RailContext, RuleScheduler, build_graph_index, make_result
+from core import NodeSignal, RailContext, RuleScheduler, build_graph_index, make_result
 from rules import evaluate_text_rule
 
 
@@ -426,6 +426,104 @@ class SchedulerTests(unittest.TestCase):
 
         self.assertTrue(ctx.results["gate"].matched)
         self.assertEqual(ctx.results["gate"].metadata["inputs"], {"~boom": True})
+
+    def test_logic_gate_dotted_inputs_collect_first_and_joined_payload_values(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {"__template_key": "plain_keywords", "rule_id": "first"},
+                        {"__template_key": "plain_keywords", "rule_id": "second"},
+                        {"__template_key": "plain_keywords", "rule_id": "third"},
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "gate",
+                            "gate": "all",
+                            "inputs": ["first.sanitized?", "second.category", "!third.note"],
+                            "value_item_template": "${source}=${value}",
+                            "value_separator": " | ",
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+        source_results = {
+            "first": (True, {"sanitized": ""}),
+            "second": (True, {"category": "review"}),
+            "third": (False, {"note": "fallback"}),
+        }
+
+        def execute(rule, context):
+            if rule.template_key == "logic_gate":
+                return evaluate_logic_gate(rule, context)
+            matched, payload = source_results[rule.rule_id]
+            return make_result(
+                rule,
+                matched=matched,
+                signal=NodeSignal(value=matched, truthy=matched, payload=payload),
+            )
+
+        RuleScheduler(build_graph_index(cfg)).run(rail, ctx, execute)
+
+        result = ctx.results["gate"]
+        self.assertTrue(result.matched)
+        self.assertEqual(
+            result.metadata["inputs"],
+            {"first.sanitized?": True, "second.category": True, "!third.note": True},
+        )
+        self.assertEqual(result.signal.payload["first_value"], "")
+        self.assertEqual(
+            result.signal.payload["joined_string"],
+            "first= | second=review | third=fallback",
+        )
+        self.assertNotIn("values", result.signal.payload)
+
+    def test_logic_gate_dotted_input_rejects_missing_null_and_unmarked_empty_values(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {"__template_key": "plain_keywords", "rule_id": "empty"},
+                        {"__template_key": "plain_keywords", "rule_id": "null_value"},
+                        {"__template_key": "plain_keywords", "rule_id": "missing"},
+                        {
+                            "__template_key": "logic_gate",
+                            "rule_id": "gate",
+                            "gate": "any",
+                            "inputs": ["empty.value", "null_value.value", "missing.value"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+        source_results = {
+            "empty": {"value": ""},
+            "null_value": {"value": None},
+            "missing": {},
+        }
+
+        def execute(rule, context):
+            if rule.template_key == "logic_gate":
+                return evaluate_logic_gate(rule, context)
+            return make_result(
+                rule,
+                matched=True,
+                signal=NodeSignal(value=True, truthy=True, payload=source_results[rule.rule_id]),
+            )
+
+        RuleScheduler(build_graph_index(cfg)).run(rail, ctx, execute)
+
+        result = ctx.results["gate"]
+        self.assertFalse(result.matched)
+        self.assertEqual(
+            result.metadata["inputs"],
+            {"empty.value": False, "null_value.value": False, "missing.value": False},
+        )
+        self.assertEqual(result.signal.payload, {})
 
     def test_current_step_dependency_on_future_step_expires(self):
         cfg = normalize_config(

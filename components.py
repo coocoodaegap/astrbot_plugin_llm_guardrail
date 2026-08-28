@@ -15,6 +15,7 @@ try:
         RailContext,
         logic_gate_input_specs,
         logic_input_value,
+        logic_gate_payload_value,
         make_node_result,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
@@ -25,35 +26,65 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         RailContext,
         logic_gate_input_specs,
         logic_input_value,
+        logic_gate_payload_value,
         make_node_result,
     )
 
 
 def evaluate_logic_gate(node: NormalizedNode, context: RailContext):
-    """Evaluate the P1 boolean logic-gate component."""
+    """Evaluate a boolean gate and its restricted, ordered payload outputs."""
 
     specs = logic_gate_input_specs(node)
-    values = [
-        logic_input_value(spec, context.results[spec.target])
-        for spec in specs
-    ]
+    input_states: dict[str, bool] = {}
+    payload_values: list[tuple[str, object]] = []
+    values: list[bool] = []
+    for spec in specs:
+        result = context.results[spec.target]
+        is_satisfied = logic_input_value(spec, result)
+        values.append(is_satisfied)
+        input_states[spec.raw or spec.target] = is_satisfied
+        if not is_satisfied or not spec.payload_path:
+            continue
+        value = logic_gate_payload_value(spec, result)
+        if value is not None:
+            payload_values.append((spec.target, value))
     gate = str(node.config.get("gate", "all"))
     matched = all(values) if gate == "all" else any(values)
     if bool(node.config.get("invert", False)):
         matched = not matched
-    payload = {
-        "inputs": {
-            spec.raw or spec.target: value
-            for spec, value in zip(specs, values, strict=False)
-        }
-    }
+    payload: dict[str, object] = {}
+    if matched:
+        payload["first_value"] = payload_values[0][1] if payload_values else None
+        payload["joined_string"] = _join_logic_gate_payload_values(node, payload_values)
+    metadata = {"inputs": input_states}
     return make_node_result(
         node,
         matched=matched,
         action_on_hit=str(node.config.get("action_on_hit", "default")),
-        metadata=payload,
+        metadata=metadata,
         signal=NodeSignal(value=matched, truthy=matched, payload=payload),
     )
+
+
+def _join_logic_gate_payload_values(
+    node: NormalizedNode, payload_values: list[tuple[str, object]],
+) -> str:
+    if not payload_values:
+        return ""
+    item_template = str(node.config.get("value_item_template", "${value}"))
+    separator = str(node.config.get("value_separator", "\n"))
+    return separator.join(
+        item_template
+        .replace("${value}", _logic_gate_value_to_text(value))
+        .replace("${source}", source)
+        for source, value in payload_values
+    )
+
+
+def _logic_gate_value_to_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 INPUT_DETECTOR_TEMPLATES = {
