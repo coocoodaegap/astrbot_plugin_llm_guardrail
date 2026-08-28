@@ -86,6 +86,10 @@ const status = $("status"),
   policySaveIssuesList = $("policy-save-issues-list"),
   closePolicySaveIssues = $("close-policy-save-issues"),
   ruleLibraryPanel = $("rule-library-panel"),
+  ruleLibraryRulesSection = $("rule-library-rules-section"),
+  systemConstantsPanel = $("system-constants-panel"),
+  showRuleLibraryRules = $("show-rule-library-rules"),
+  showSystemConstants = $("show-system-constants"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationDialog = $("rule-creation-dialog"),
   templateOptions = $("template-options"),
@@ -421,6 +425,15 @@ function switchTab(name) {
     showRagExperienceList();
     if (bridge) void refreshRagExperiences();
   }
+}
+function switchRuleLibrarySection(section) {
+  const showRules = section !== "constants";
+  ruleLibraryRulesSection.hidden = !showRules;
+  systemConstantsPanel.hidden = showRules;
+  showRuleLibraryRules.classList.toggle("is-active", showRules);
+  showRuleLibraryRules.setAttribute("aria-selected", String(showRules));
+  showSystemConstants.classList.toggle("is-active", !showRules);
+  showSystemConstants.setAttribute("aria-selected", String(!showRules));
 }
 document
   .querySelectorAll("[data-tab]")
@@ -2076,6 +2089,7 @@ function renderPolicyRuleBusinessSummary(rule) {
   openRuleButton.textContent = "打开规则本体";
   openRuleButton.addEventListener("click", () => {
     switchTab("rules");
+    switchRuleLibrarySection("rules");
     openRule(rule.rule_id);
     renderRuleList();
   });
@@ -4441,6 +4455,8 @@ if (window.ResizeObserver) {
 }
 window.addEventListener("resize", schedulePolicyGraphRender);
 document.addEventListener("visibilitychange", updatePolicyGraphAnimation);
+showRuleLibraryRules.addEventListener("click", () => switchRuleLibrarySection("rules"));
+showSystemConstants.addEventListener("click", () => switchRuleLibrarySection("constants"));
 newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);

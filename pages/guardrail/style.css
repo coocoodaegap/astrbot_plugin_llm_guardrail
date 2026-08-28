@@ -231,6 +231,26 @@ button:disabled {
     margin-bottom: 12px
 }
 
+.rule-library-sections {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e2e8f0
+}
+
+.rule-library-sections button {
+    color: #475569;
+    background: #f1f5f9;
+    border: 1px solid #d8e0ea
+}
+
+.rule-library-sections button.is-active {
+    color: #164fc4;
+    background: #e3edff;
+    border-color: #a9c7ff
+}
+
 .rule-workspace {
     display: grid;
     grid-template-columns: minmax(230px, .7fr) minmax(0, 1.5fr);
@@ -3283,6 +3303,32 @@ textarea,
 
 .system-settings {
     gap: 14px;
+}
+
+.rule-library-sections {
+    gap: 7px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom-color: var(--edge)
+}
+
+.rule-library-sections button {
+    color: #98ada7;
+    background: #10211e;
+    border-color: #294a42;
+    box-shadow: none
+}
+
+.rule-library-sections button:hover {
+    color: #d9eee6;
+    background: #18332e;
+    border-color: #47796b
+}
+
+.rule-library-sections button.is-active {
+    color: #eafff8;
+    background: var(--signal-dim);
+    border-color: #3b7e6b
 }
 
 .system-constants-library {
