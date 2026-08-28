@@ -100,6 +100,7 @@ class GuardrailPagesApiMixin:
                 "revision": snapshot.revision,
                 "settings": {
                     "fallback_policy_settings": dict(config.fallback_policy_settings),
+                    "system_constants": dict(config.system_constants),
                     "session_control": {
                         key: list(value) if isinstance(value, list) else value
                         for key, value in config.session_control.items()
@@ -192,6 +193,7 @@ class GuardrailPagesApiMixin:
             key: copy.deepcopy(config.get(key))
             for key in (
                 "fallback_policy_settings",
+                "system_constants",
                 "session_control",
                 "access_control",
                 "session_policy_state",
@@ -834,6 +836,7 @@ def _load_system_settings_schema() -> dict[str, Any]:
         key: raw_schema[key]
         for key in (
             "fallback_policy_settings",
+            "system_constants",
             "session_control",
             "access_control",
             "session_policy_state",
@@ -851,6 +854,7 @@ def _validate_system_settings_payload(
     diagnostics: list[str] = []
     expected_groups = {
         "fallback_policy_settings",
+        "system_constants",
         "session_control",
         "access_control",
         "session_policy_state",
@@ -864,6 +868,18 @@ def _validate_system_settings_payload(
         group_settings = settings.get(group_key)
         if not isinstance(group_schema, dict) or not isinstance(group_settings, dict):
             diagnostics.append(f"{group_key} must be an object")
+            continue
+        if group_key == "system_constants":
+            for name, value in group_settings.items():
+                if (
+                    not isinstance(name, str)
+                    or re.fullmatch(r"[A-Z0-9_]{1,64}", name) is None
+                ):
+                    diagnostics.append(
+                        "system_constants keys must use 1-64 uppercase letters, digits, or underscores"
+                    )
+                if not isinstance(value, str):
+                    diagnostics.append(f"system_constants.{name} must be a string")
             continue
         expected_fields = group_schema.get("items")
         if not isinstance(expected_fields, dict):

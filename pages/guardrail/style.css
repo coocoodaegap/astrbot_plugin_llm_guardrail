@@ -1403,6 +1403,65 @@ textarea {
     background: #fafbfd
 }
 
+.system-constants-editor {
+    display: grid;
+    gap: 12px;
+    padding: 14px 18px 18px
+}
+
+.system-constants-rows {
+    display: grid;
+    gap: 10px
+}
+
+.system-constant-row {
+    display: grid;
+    grid-template-columns: minmax(150px, .6fr) minmax(0, 1.4fr) auto;
+    gap: 12px;
+    align-items: end;
+    padding: 14px;
+    border: 1px solid #e5eaf2;
+    border-radius: 7px;
+    background: #fafcff
+}
+
+.system-constant-row label {
+    display: grid;
+    gap: 7px;
+    color: #475569;
+    font-size: .82rem;
+    font-weight: 600
+}
+
+.system-constant-row textarea {
+    min-height: 84px
+}
+
+.system-constants-validation {
+    margin: 0;
+    padding: 10px 12px;
+    color: #b42318;
+    border: 1px solid #f5b7b1;
+    border-radius: 6px;
+    background: #fff4f2;
+    font-size: .84rem;
+    line-height: 1.45
+}
+
+.system-constant-row.is-invalid {
+    border-color: #dc2626;
+    background: #fff8f7
+}
+
+.system-constant-row input.is-invalid {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgb(220 38 38 / 12%)
+}
+
+.system-constant-remove {
+    white-space: nowrap
+}
+
 .setting-meta {
     display: flex;
     gap: 8px;
@@ -3236,6 +3295,36 @@ textarea,
     opacity: .84;
 }
 
+.system-constants-editor {
+    padding: 12px 20px 20px
+}
+
+.system-constant-row {
+    border-color: #1f3a34;
+    border-radius: 5px;
+    background: #0a1715
+}
+
+.system-constant-row label {
+    color: var(--text-soft)
+}
+
+.system-constants-validation {
+    color: #ffc3b7;
+    border-color: #7a3029;
+    background: #271514
+}
+
+.system-constant-row.is-invalid {
+    border-color: #9c3b32;
+    background: #211513
+}
+
+.system-constant-row input.is-invalid {
+    border-color: #d56a5c;
+    box-shadow: 0 0 0 3px rgb(213 106 92 / 14%)
+}
+
 .setting-meta {
     gap: 7px;
 }
@@ -3608,6 +3697,11 @@ textarea,
     .setting-row:nth-child(odd),
     .setting-row:nth-child(even) {
         border-left: 1px solid #1f3a34;
+    }
+
+    .system-constant-row {
+        grid-template-columns: 1fr;
+        align-items: stretch;
     }
 
     .policy-graph-stage {

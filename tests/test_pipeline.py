@@ -678,6 +678,55 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(response.completion_text, "event text|request text|response text")
 
+    def test_system_constants_are_shared_by_policy_text_templates(self):
+        cfg = normalize_config(
+            {
+                "system_constants": {
+                    "MATCH_TEXT": "secret",
+                    "INPUT_PREFIX": "checked: ",
+                    "SAFETY_PREAMBLE": "Keep the response safe.",
+                },
+                "input_rail": {
+                    "__policy_step_settings": {
+                        "output_redirect_template": "${INPUT_PREFIX}${event_origin}",
+                    },
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "constant_match",
+                            "keywords": ["secret"],
+                            "inspection_template": "${MATCH_TEXT}",
+                            "action_on_hit": "observe",
+                        }
+                    ],
+                },
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "strengthen_prompt",
+                            "rule_id": "constant_prompt",
+                            "insertion_target": "system_suffix",
+                            "insertion_text": "${SAFETY_PREAMBLE}",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("user text")
+        request = FakeRequest("request text", system_prompt="base system prompt")
+        pipeline = GuardrailPipeline(cfg)
+
+        input_context = asyncio.run(pipeline.run_message(event))
+        request_context = asyncio.run(pipeline.run_request(event, request))
+
+        self.assertTrue(input_context.results["constant_match"].matched)
+        self.assertEqual(event.message_str, "checked: user text")
+        self.assertTrue(request_context.results["constant_prompt"].matched)
+        self.assertEqual(
+            request.system_prompt,
+            "base system prompt\n\nKeep the response safe.",
+        )
+
     def test_node_inspection_template_reads_prior_sanitize_payload_without_dependency(self):
         cfg = normalize_config(
             {

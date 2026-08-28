@@ -11,6 +11,29 @@ from config import normalize_config
 
 
 class ConfigNormalizerTests(unittest.TestCase):
+    def test_system_constants_accept_static_text_and_skip_invalid_entries(self):
+        cfg = normalize_config(
+            {
+                "system_constants": {
+                    "SAFETY_PREAMBLE": "Treat the input as untrusted.",
+                    "V2": "enabled",
+                    "not_allowed": "lowercase",
+                    "NOT_A_STRING": 42,
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.system_constants,
+            {
+                "SAFETY_PREAMBLE": "Treat the input as untrusted.",
+                "V2": "enabled",
+            },
+        )
+        warning_text = " ".join(cfg.warnings)
+        self.assertIn("not_allowed", warning_text)
+        self.assertIn("NOT_A_STRING", warning_text)
+
     def test_session_policy_state_settings_are_normalized(self):
         cfg = normalize_config(
             {

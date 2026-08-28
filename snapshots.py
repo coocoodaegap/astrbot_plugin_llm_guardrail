@@ -287,6 +287,7 @@ class ConfigSnapshotManager:
             candidate_source = copy.deepcopy(current.source_config)
             for key in (
                 "fallback_policy_settings",
+                "system_constants",
                 "session_control",
                 "access_control",
                 "session_policy_state",
@@ -315,6 +316,9 @@ class ConfigSnapshotManager:
                     {
                         "fallback_policy_settings": copy.deepcopy(
                             candidate.source_config["fallback_policy_settings"]
+                        ),
+                        "system_constants": copy.deepcopy(
+                            candidate.source_config["system_constants"]
                         ),
                         "session_control": copy.deepcopy(
                             candidate.source_config["session_control"]
@@ -389,6 +393,7 @@ class ConfigSnapshotManager:
         fallback_runtime_config = build_fallback_runtime_config(
             runtime_config.fallback_policy_settings,
             access_control=runtime_config.access_control,
+            system_constants=runtime_config.system_constants,
         )
         policy_runtime_configs = {
             policy.policy_id: normalize_config(

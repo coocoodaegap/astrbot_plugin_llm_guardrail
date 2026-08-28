@@ -293,6 +293,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
             settings["fallback_policy_settings"]["max_text_chars"] = 321
             settings["fallback_policy_settings"]["max_retries"] = 2
+            settings["system_constants"] = {"SAFETY_PREAMBLE": "Keep replies safe."}
             settings["session_control"]["group_chat_mode"] = "all_pass"
             settings["session_policy_state"]["state_ttl_seconds"] = 7200
             settings["debug_settings"]["logging"] = True
@@ -307,6 +308,10 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(plugin.config.save_count, 1)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_text_chars"], 321)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_retries"], 2)
+        self.assertEqual(
+            plugin.config["system_constants"],
+            {"SAFETY_PREAMBLE": "Keep replies safe."},
+        )
         self.assertEqual(
             plugin.snapshot_manager.current.runtime_config.rails["output_rail"].settings["max_retries"],
             2,
@@ -332,6 +337,20 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(result[1], 400)
         self.assertEqual(plugin.config.save_count, 0)
 
+    def test_system_settings_rejects_invalid_system_constant_name(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
+            settings["system_constants"] = {"not_allowed": "value"}
+            with patch(
+                "pages_api.request",
+                _Request({"expected_revision": 0, "settings": settings}),
+            ):
+                result = asyncio.run(plugin._pages_save_system_settings())
+
+        self.assertEqual(result[1], 400)
+        self.assertIn("uppercase letters", result[0]["detail"])
+
     def test_system_settings_returns_active_schema_and_normalized_values(self):
         plugin = _Plugin()
         plugin.context.providers = [_Provider("openai/test", "Test OpenAI")]
@@ -342,6 +361,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             set(result["settings"]),
             {
                 "fallback_policy_settings",
+                "system_constants",
                 "session_control",
                 "access_control",
                 "session_policy_state",
@@ -350,6 +370,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         )
         self.assertEqual(set(result["schema"]), set(result["settings"]))
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
+        self.assertEqual(result["settings"]["system_constants"], {})
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
         self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
         self.assertEqual(

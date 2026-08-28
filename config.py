@@ -100,6 +100,7 @@ LOGIC_GATE_INPUT_PATTERN = re.compile(
     r"(?:\.[a-z][a-z0-9_]{0,63}\??)?$"
 )
 LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN = re.compile(r"\$\{([^}]*)\}")
+SYSTEM_CONSTANT_NAME_PATTERN = re.compile(r"^[A-Z0-9_]{1,64}$")
 INSERTION_TARGETS = {
     "system_prefix",
     "system_suffix",
@@ -173,6 +174,7 @@ NormalizedRule = NormalizedNode
 class NormalizedConfig:
     schema_version: str
     fallback_policy_settings: dict[str, Any]
+    system_constants: dict[str, str]
     session_control: dict[str, Any]
     access_control: dict[str, Any]
     session_policy_state: dict[str, Any]
@@ -188,6 +190,10 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     schema_version = "0.3.0"
     fallback_policy_settings = _normalize_fallback_policy_settings(
         _as_dict(_config_get(raw_config, "fallback_policy_settings", {})),
+        warnings,
+    )
+    system_constants = _normalize_system_constants(
+        _config_get(raw_config, "system_constants", {}),
         warnings,
     )
 
@@ -227,6 +233,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     return NormalizedConfig(
         schema_version=schema_version,
         fallback_policy_settings=fallback_policy_settings,
+        system_constants=system_constants,
         session_control=session_control,
         access_control=access_control,
         session_policy_state=session_policy_state,
@@ -986,6 +993,31 @@ def _normalize_fallback_policy_settings(
     ):
         settings[key] = _as_bool(raw_settings.get(key), True)
     return settings
+
+
+def _normalize_system_constants(raw_constants: Any, warnings: list[str]) -> dict[str, str]:
+    """Accept the global static-text table shared by every policy snapshot."""
+
+    if raw_constants is None:
+        return {}
+    if not isinstance(raw_constants, dict):
+        warnings.append("system_constants is not an object; no constants loaded")
+        return {}
+
+    constants: dict[str, str] = {}
+    for name, value in raw_constants.items():
+        if not isinstance(name, str) or SYSTEM_CONSTANT_NAME_PATTERN.fullmatch(name) is None:
+            warnings.append(
+                f"system_constants.{name!r} has an invalid name; entry skipped"
+            )
+            continue
+        if not isinstance(value, str):
+            warnings.append(
+                f"system_constants.{name} must be a string; entry skipped"
+            )
+            continue
+        constants[name] = value
+    return constants
 
 
 def _normalize_debug_settings(

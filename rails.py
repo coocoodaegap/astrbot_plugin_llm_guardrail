@@ -733,6 +733,9 @@ class GuardrailPipeline:
             reference = match.group(1).strip()
             if reference in origins:
                 return origins[reference]
+            constant = self.config.system_constants.get(reference)
+            if constant is not None:
+                return constant
             node_id, separator, field = reference.partition(".")
             if not separator or not node_id or not field:
                 return ""
@@ -744,6 +747,20 @@ class GuardrailPipeline:
             if value is None:
                 return ""
             return str(value)
+
+        return re.sub(r"\$\{([^{}]+)\}", resolve, template)
+
+    def _render_system_constants(self, template: str) -> str:
+        """Resolve static system constants without enabling other template inputs."""
+
+        def resolve(match: re.Match[str]) -> str:
+            reference = match.group(1).strip()
+            constant = self.config.system_constants.get(reference)
+            if constant is not None:
+                return constant
+            if re.fullmatch(r"[A-Z0-9_]{1,64}", reference):
+                return ""
+            return match.group(0)
 
         return re.sub(r"\$\{([^{}]+)\}", resolve, template)
 
@@ -825,7 +842,9 @@ class GuardrailPipeline:
     def _execute_strengthen_prompt(
         self, rule: NormalizedRule, context: RailContext
     ) -> RuleResult:
-        insertion_text = str(rule.config.get("insertion_text", ""))
+        insertion_text = self._render_system_constants(
+            str(rule.config.get("insertion_text", ""))
+        )
         if not insertion_text:
             context.warnings.append(f"{rule.rule_id}.insertion_text is empty")
             return make_result(rule, matched=False, metadata={"reason": "empty_text"})

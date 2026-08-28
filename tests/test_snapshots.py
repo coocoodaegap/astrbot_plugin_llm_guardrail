@@ -70,6 +70,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             manager.publish_system_settings(
                 {
                     "fallback_policy_settings": {"max_text_chars": 2},
+                    "system_constants": {"SAFETY_PREAMBLE": "always be safe"},
                     "session_control": {},
                     "access_control": {
                         "auto_blacklist_enabled": True,
@@ -92,9 +93,17 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(saved_settings[0]["fallback_policy_settings"]["max_text_chars"], 2)
+        self.assertEqual(
+            saved_settings[0]["system_constants"]["SAFETY_PREAMBLE"],
+            "always be safe",
+        )
         self.assertTrue(saved_settings[0]["debug_settings"]["logging"])
         self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 2)
         self.assertTrue(manager.current.runtime_config.debug_settings["logging"])
+        self.assertEqual(
+            manager.current.runtime_config.system_constants["SAFETY_PREAMBLE"],
+            "always be safe",
+        )
         self.assertTrue(manager.current.runtime_config.access_control["auto_blacklist_enabled"])
         self.assertEqual(
             manager.current.runtime_config.session_policy_state["state_ttl_seconds"],
@@ -149,6 +158,36 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertTrue(fallback.access_control["auto_blacklist_enabled"])
         self.assertEqual(fallback.access_control["blacklist_duration_minutes"], -1)
         self.assertEqual(fallback.access_control["blacklist_max_violations"], 7)
+
+    def test_system_constants_are_available_to_compiled_policies_and_fallback(self):
+        manager = ConfigSnapshotManager(
+            {"system_constants": {"SAFETY_PREAMBLE": "Keep replies safe."}}
+        )
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("risk", "plain_keywords", {"keywords": ["secret"]}),
+            ),
+            policies=(
+                PolicyDefinition(
+                    "policy_a",
+                    "Policy A",
+                    bindings=(PolicyRuleBinding("risk", "input_rail"),),
+                ),
+            ),
+            active_policy_id="policy_a",
+        )
+
+        published = asyncio.run(manager.publish_policy_library(library, 0))
+
+        self.assertTrue(published.success)
+        self.assertEqual(
+            published.snapshot.policy_runtime_configs["policy_a"].system_constants,
+            {"SAFETY_PREAMBLE": "Keep replies safe."},
+        )
+        self.assertEqual(
+            published.snapshot.fallback_runtime_config.system_constants,
+            {"SAFETY_PREAMBLE": "Keep replies safe."},
+        )
 
     def test_fallback_llm_review_is_controlled_by_system_settings_and_snapshot_safe(self):
         manager = ConfigSnapshotManager(

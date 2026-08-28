@@ -187,6 +187,7 @@ const systemSettingHintOverrides = {
   blacklist_message_interval_minutes: "同一已封禁用户的提示间隔。0 表示每次提示；-1 表示静默；其他负数无效。",
 };
 const multilineSystemSettingKeys = new Set(["block_message", "blacklist_message"]);
+const systemConstantNamePattern = /^[A-Z0-9_]{1,64}$/;
 const templates = [
     "plain_keywords",
     "regex_pattern",
@@ -585,6 +586,138 @@ function createSystemSettingControl(groupKey, fieldKey, field, value) {
   input.value = String(value ?? "");
   return input;
 }
+function createSystemConstantRow(name = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "system-constant-row";
+  row.dataset.systemConstantRow = "true";
+
+  const nameField = document.createElement("label");
+  nameField.className = "system-constant-name-field";
+  nameField.textContent = "名称";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.value = name;
+  nameInput.placeholder = "SAFETY_PREAMBLE";
+  nameInput.pattern = "[A-Z0-9_]{1,64}";
+  nameInput.maxLength = 64;
+  nameInput.dataset.systemConstantName = "true";
+  nameInput.addEventListener("input", clearSystemConstantValidation);
+  nameField.append(nameInput);
+
+  const valueField = document.createElement("label");
+  valueField.className = "system-constant-value-field";
+  valueField.textContent = "文本值";
+  const valueInput = document.createElement("textarea");
+  valueInput.rows = 3;
+  valueInput.value = value;
+  valueInput.placeholder = "可在策略文本模板中通过 ${SAFETY_PREAMBLE} 复用";
+  valueInput.dataset.systemConstantValue = "true";
+  valueInput.addEventListener("input", clearSystemConstantValidation);
+  valueField.append(valueInput);
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "button-secondary system-constant-remove";
+  remove.textContent = "删除";
+  remove.addEventListener("click", () => row.remove());
+
+  row.append(nameField, valueField, remove);
+  return row;
+}
+function renderSystemConstantsEditor(constants) {
+  const editor = document.createElement("div");
+  editor.className = "system-constants-editor";
+  editor.dataset.systemConstantsEditor = "true";
+  const rows = document.createElement("div");
+  rows.className = "system-constants-rows";
+  const values = constants && typeof constants === "object" && !Array.isArray(constants)
+    ? constants
+    : {};
+  for (const [name, value] of Object.entries(values)) {
+    rows.append(createSystemConstantRow(name, String(value ?? "")));
+  }
+  const validation = document.createElement("p");
+  validation.className = "system-constants-validation";
+  validation.dataset.systemConstantsValidation = "true";
+  validation.hidden = true;
+  validation.setAttribute("role", "alert");
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "button-secondary system-constant-add";
+  add.textContent = "添加常量";
+  add.addEventListener("click", () => {
+    const row = createSystemConstantRow();
+    rows.append(row);
+    row.querySelector("[data-system-constant-name]")?.focus();
+  });
+  editor.append(rows, validation, add);
+  return editor;
+}
+function clearSystemConstantValidation() {
+  const validation = systemSettings.querySelector("[data-system-constants-validation]");
+  if (validation) {
+    validation.textContent = "";
+    validation.hidden = true;
+  }
+  for (const row of systemSettings.querySelectorAll("[data-system-constant-row].is-invalid")) {
+    row.classList.remove("is-invalid");
+  }
+  for (const control of systemSettings.querySelectorAll("[data-system-constant-name].is-invalid")) {
+    control.classList.remove("is-invalid");
+    control.removeAttribute("aria-invalid");
+  }
+}
+function systemConstantValidationError(message, control, relatedControl = null) {
+  const validation = systemSettings.querySelector("[data-system-constants-validation]");
+  if (validation) {
+    validation.textContent = message;
+    validation.hidden = false;
+  }
+  for (const candidate of [control, relatedControl]) {
+    if (!candidate) continue;
+    candidate.classList.add("is-invalid");
+    candidate.setAttribute("aria-invalid", "true");
+    candidate.closest("[data-system-constant-row]")?.classList.add("is-invalid");
+  }
+  control?.focus();
+  return new Error(message);
+}
+function collectSystemConstants() {
+  clearSystemConstantValidation();
+  const constants = {};
+  const names = new Map();
+  const rows = systemSettings.querySelectorAll("[data-system-constant-row]");
+  for (const row of rows) {
+    const nameControl = row.querySelector("[data-system-constant-name]");
+    const name = nameControl?.value.trim() || "";
+    const value = row.querySelector("[data-system-constant-value]")?.value ?? "";
+    if (!name) {
+      if (value) {
+        throw systemConstantValidationError(
+          "系统常量填写了文本值，但没有填写名称。",
+          nameControl,
+        );
+      }
+      continue;
+    }
+    if (!systemConstantNamePattern.test(name)) {
+      throw systemConstantValidationError(
+        `系统常量名称“${name}”只能使用 1 至 64 个大写字母、数字和下划线。`,
+        nameControl,
+      );
+    }
+    if (Object.hasOwn(constants, name)) {
+      throw systemConstantValidationError(
+        `系统常量名称“${name}”重复。`,
+        nameControl,
+        names.get(name),
+      );
+    }
+    constants[name] = value;
+    names.set(name, nameControl);
+  }
+  return constants;
+}
 function renderSystemSettings(payload) {
   systemSettings.replaceChildren();
   systemSettingsSchema = payload.schema || {};
@@ -607,6 +740,11 @@ function renderSystemSettings(payload) {
     header.append(title, description);
     const grid = document.createElement("div");
     grid.className = "setting-grid";
+    if (groupKey === "system_constants") {
+      group.append(header, renderSystemConstantsEditor(payload.settings?.system_constants));
+      systemSettings.append(group);
+      continue;
+    }
     for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
       const row = document.createElement("div");
       row.className = "setting-row";
@@ -650,6 +788,10 @@ function renderSystemSettings(payload) {
 function collectSystemSettings() {
   const settings = {};
   for (const [groupKey, groupSchema] of Object.entries(systemSettingsSchema)) {
+    if (groupKey === "system_constants") {
+      settings[groupKey] = collectSystemConstants();
+      continue;
+    }
     const groupSettings = {};
     for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
       const selector = `[data-system-setting-group="${groupKey}"][data-system-setting-key="${fieldKey}"]`;

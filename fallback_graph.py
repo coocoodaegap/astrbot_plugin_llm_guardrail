@@ -77,6 +77,7 @@ def build_fallback_runtime_config(
     fallback_policy_settings: Mapping[str, Any],
     *,
     access_control: Mapping[str, Any] | None = None,
+    system_constants: Mapping[str, str] | None = None,
     implemented_detectors: tuple[FallbackDetectorSpec, ...] = IMPLEMENTED_FALLBACK_DETECTORS,
 ) -> NormalizedConfig:
     """Create the immutable fallback graph's normalized runtime configuration.
@@ -142,6 +143,7 @@ def build_fallback_runtime_config(
 
     raw_config = {
         "fallback_policy_settings": settings,
+        "system_constants": dict(system_constants or {}),
         # Access control is system-owned and must remain active when the
         # policy library falls back to this code-owned graph.
         "access_control": dict(access_control or {}),
