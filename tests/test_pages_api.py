@@ -308,10 +308,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(plugin.config.save_count, 1)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_text_chars"], 321)
         self.assertEqual(plugin.config["fallback_policy_settings"]["max_retries"], 2)
-        self.assertEqual(
-            plugin.config["system_constants"],
-            {"SAFETY_PREAMBLE": "Keep replies safe."},
-        )
+        self.assertNotIn("system_constants", plugin.config)
         self.assertEqual(
             plugin.snapshot_manager.current.runtime_config.rails["output_rail"].settings["max_retries"],
             2,

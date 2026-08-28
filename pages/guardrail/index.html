@@ -68,6 +68,17 @@
         <p>规则本体可复用于多个策略；Rail、依赖与命中动作在“策略编排”中配置。</p>
       </div>
       <p id="rule-library-status" class="muted" aria-live="polite"></p>
+      <section class="card system-constants-library" aria-labelledby="system-constants-heading">
+        <header>
+          <div>
+            <p class="eyebrow">SYSTEM CONSTANTS</p>
+            <h3 id="system-constants-heading">系统常量</h3>
+            <p>可被所有策略与系统兜底图复用的静态文本。它们不属于规则或元件，不进入 Canvas、调度、依赖、逻辑门或 NodeSignal。</p>
+          </div>
+          <button id="save-system-constants" type="button">保存系统常量</button>
+        </header>
+        <div id="system-constants" aria-live="polite"></div>
+      </section>
       <div id="rule-workspace" class="rule-workspace">
         <aside class="rule-list-panel" aria-label="规则列表">
           <div class="list-heading"><strong>全部规则</strong><span id="rule-count" class="count-badge">0</span></div>

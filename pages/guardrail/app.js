@@ -6,6 +6,8 @@ const status = $("status"),
   systemSettings = $("system-settings"),
   systemSettingsStatus = $("system-settings-status"),
   saveSystemSettings = $("save-system-settings"),
+  systemConstants = $("system-constants"),
+  saveSystemConstants = $("save-system-constants"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
@@ -342,6 +344,7 @@ let currentRevision = null,
   pendingRuleDeletionId = null,
   selectedNewTemplate = null,
   systemSettingsSchema = {},
+  systemSettingsDraft = {},
   registeredProviders = [],
   policyGraphState = {
     model: null,
@@ -654,6 +657,7 @@ function createSystemConstantRow(name = "", value = "") {
   return row;
 }
 function renderSystemConstantsEditor(constants) {
+  systemConstants.replaceChildren();
   const editor = document.createElement("div");
   editor.className = "system-constants-editor";
   editor.dataset.systemConstantsEditor = "true";
@@ -680,24 +684,24 @@ function renderSystemConstantsEditor(constants) {
     row.querySelector("[data-system-constant-name]")?.focus();
   });
   editor.append(rows, validation, add);
-  return editor;
+  systemConstants.append(editor);
 }
 function clearSystemConstantValidation() {
-  const validation = systemSettings.querySelector("[data-system-constants-validation]");
+  const validation = systemConstants.querySelector("[data-system-constants-validation]");
   if (validation) {
     validation.textContent = "";
     validation.hidden = true;
   }
-  for (const row of systemSettings.querySelectorAll("[data-system-constant-row].is-invalid")) {
+  for (const row of systemConstants.querySelectorAll("[data-system-constant-row].is-invalid")) {
     row.classList.remove("is-invalid");
   }
-  for (const control of systemSettings.querySelectorAll("[data-system-constant-name].is-invalid")) {
+  for (const control of systemConstants.querySelectorAll("[data-system-constant-name].is-invalid")) {
     control.classList.remove("is-invalid");
     control.removeAttribute("aria-invalid");
   }
 }
 function systemConstantValidationError(message, control, relatedControl = null) {
-  const validation = systemSettings.querySelector("[data-system-constants-validation]");
+  const validation = systemConstants.querySelector("[data-system-constants-validation]");
   if (validation) {
     validation.textContent = message;
     validation.hidden = false;
@@ -715,7 +719,7 @@ function collectSystemConstants() {
   clearSystemConstantValidation();
   const constants = {};
   const names = new Map();
-  const rows = systemSettings.querySelectorAll("[data-system-constant-row]");
+  const rows = systemConstants.querySelectorAll("[data-system-constant-row]");
   for (const row of rows) {
     const nameControl = row.querySelector("[data-system-constant-name]");
     const name = nameControl?.value.trim() || "";
@@ -750,6 +754,8 @@ function collectSystemConstants() {
 function renderSystemSettings(payload) {
   systemSettings.replaceChildren();
   systemSettingsSchema = payload.schema || {};
+  systemSettingsDraft = structuredClone(payload.settings || {});
+  renderSystemConstantsEditor(payload.settings?.system_constants);
   registeredProviders = Array.isArray(payload.providers)
     ? payload.providers.filter(
         (provider) =>
@@ -769,11 +775,7 @@ function renderSystemSettings(payload) {
     header.append(title, description);
     const grid = document.createElement("div");
     grid.className = "setting-grid";
-    if (groupKey === "system_constants") {
-      group.append(header, renderSystemConstantsEditor(payload.settings?.system_constants));
-      systemSettings.append(group);
-      continue;
-    }
+    if (groupKey === "system_constants") continue;
     for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
       const row = document.createElement("div");
       row.className = "setting-row";
@@ -818,7 +820,7 @@ function collectSystemSettings() {
   const settings = {};
   for (const [groupKey, groupSchema] of Object.entries(systemSettingsSchema)) {
     if (groupKey === "system_constants") {
-      settings[groupKey] = collectSystemConstants();
+      settings[groupKey] = structuredClone(systemSettingsDraft.system_constants || {});
       continue;
     }
     const groupSettings = {};
@@ -4475,6 +4477,42 @@ saveRuleLibrary.addEventListener("click", async () => {
   if (!saved) return;
   [...openRuleEditors.children].forEach((editor) => editor.classList.remove("is-dirty"));
   renderRuleList();
+});
+saveSystemConstants.addEventListener("click", async () => {
+  if (!Number.isInteger(currentRevision)) {
+    publishReport("尚未加载当前配置，无法保存系统常量。", { tone: "warning" });
+    return;
+  }
+  let constants;
+  try {
+    constants = collectSystemConstants();
+  } catch (error) {
+    publishReport(`无法保存系统常量：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
+    return;
+  }
+  const settings = structuredClone(systemSettingsDraft);
+  if (!settings || typeof settings !== "object") {
+    publishReport("系统设置快照不可用，无法保存系统常量。", { tone: "error" });
+    return;
+  }
+  settings.system_constants = constants;
+  saveSystemConstants.disabled = true;
+  try {
+    const result = await bridge.apiPost("save_system_settings", {
+      expected_revision: currentRevision,
+      settings,
+    });
+    if (!result.success) {
+      publishReport(result.detail || result.error || "保存系统常量失败。", { tone: "error" });
+      return;
+    }
+    await refresh();
+    publishReport(`系统常量已发布为 revision ${result.revision}。`);
+  } catch (error) {
+    publishReport(`保存系统常量失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
+  } finally {
+    saveSystemConstants.disabled = false;
+  }
 });
 saveSystemSettings.addEventListener("click", async () => {
   if (!Number.isInteger(currentRevision)) {

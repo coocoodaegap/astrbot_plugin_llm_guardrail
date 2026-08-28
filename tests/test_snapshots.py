@@ -189,6 +189,35 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             {"SAFETY_PREAMBLE": "Keep replies safe."},
         )
 
+    def test_system_constants_survive_restart_via_plugin_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config_snapshot.json"
+            manager = ConfigSnapshotManager({}, path)
+            saved = asyncio.run(
+                manager.publish_system_settings(
+                    {
+                        "fallback_policy_settings": {},
+                        "system_constants": {
+                            "SAFETY_PREAMBLE": "Keep replies safe."
+                        },
+                        "session_control": {},
+                        "access_control": {},
+                        "session_policy_state": {},
+                        "debug_settings": {},
+                    },
+                    expected_revision=0,
+                    persist_settings=lambda _settings: None,
+                )
+            )
+            restarted = ConfigSnapshotManager({}, path)
+
+        self.assertTrue(saved.success)
+        self.assertEqual(restarted.current.revision, 1)
+        self.assertEqual(
+            restarted.current.runtime_config.system_constants,
+            {"SAFETY_PREAMBLE": "Keep replies safe."},
+        )
+
     def test_fallback_llm_review_is_controlled_by_system_settings_and_snapshot_safe(self):
         manager = ConfigSnapshotManager(
             {"fallback_policy_settings": {"enable_llm_review_in_fallback_policy": False}}

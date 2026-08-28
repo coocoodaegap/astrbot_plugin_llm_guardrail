@@ -1365,6 +1365,30 @@ textarea {
     gap: 16px
 }
 
+.system-constants-library {
+    margin: 16px 0;
+    padding: 0
+}
+
+.system-constants-library > header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 18px 18px 0
+}
+
+.system-constants-library > header h3 {
+    margin: 0
+}
+
+.system-constants-library > header p:last-child {
+    margin: 7px 0 0;
+    color: #64748b;
+    font-size: .84rem;
+    line-height: 1.5
+}
+
 .setting-group {
     padding: 0
 }
@@ -3261,6 +3285,24 @@ textarea,
     gap: 14px;
 }
 
+.system-constants-library {
+    margin: 14px 0;
+    overflow: hidden
+}
+
+.system-constants-library::before {
+    background: var(--signal)
+}
+
+.system-constants-library > header {
+    padding: 19px 20px 13px;
+    border-bottom: 1px solid var(--edge-soft)
+}
+
+.system-constants-library > header p:last-child {
+    color: var(--muted)
+}
+
 .setting-group {
     padding: 0;
     overflow: hidden;
@@ -3809,6 +3851,11 @@ textarea,
     .system-constant-row {
         grid-template-columns: 1fr;
         align-items: stretch;
+    }
+
+    .system-constants-library > header {
+        align-items: stretch;
+        flex-direction: column;
     }
 
     .policy-graph-stage {

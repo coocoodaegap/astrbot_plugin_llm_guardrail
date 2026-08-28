@@ -94,6 +94,10 @@ class ConfigSnapshotManager:
         system_config = _copy_config(raw_config)
         if persisted is not None and isinstance(persisted.get("policy_library"), Mapping):
             system_config["policy_library"] = copy.deepcopy(persisted["policy_library"])
+        if persisted is not None and isinstance(persisted.get("system_constants"), Mapping):
+            system_config["system_constants"] = copy.deepcopy(
+                persisted["system_constants"]
+            )
         self._current = self._build_snapshot(
             system_config,
             revision=self._load_persisted_revision() if persisted is not None else 0,
@@ -266,10 +270,11 @@ class ConfigSnapshotManager:
         expected_revision: int | None,
         persist_settings: Callable[[dict[str, Any]], None],
     ) -> SnapshotPublishResult:
-        """Persist AstrBot-owned settings before publishing their runtime snapshot.
+        """Persist system settings and publish their runtime snapshot.
 
         Pages-owned policy libraries intentionally remain in the plugin JSON snapshot.
-        System settings instead use AstrBotConfig as their durable source of truth.
+        Dynamic system constants likewise use that plugin-owned snapshot because
+        AstrBot's schema persistence cannot safely represent an open-ended map.
         """
 
         async with self._publish_lock:
@@ -338,6 +343,13 @@ class ConfigSnapshotManager:
                 return SnapshotPublishResult(
                     success=False,
                     diagnostics=(f"failed to save AstrBot system settings: {exc}",),
+                )
+            try:
+                await asyncio.to_thread(self._persist_snapshot, candidate)
+            except (OSError, TypeError, ValueError) as exc:
+                return SnapshotPublishResult(
+                    success=False,
+                    diagnostics=(f"failed to save plugin system constants: {exc}",),
                 )
 
             self._current = candidate
@@ -477,6 +489,9 @@ class ConfigSnapshotManager:
             "saved_at": snapshot.saved_at,
             "config_source": {
                 "policy_library": snapshot.policy_library.to_dict(),
+                "system_constants": copy.deepcopy(
+                    snapshot.runtime_config.system_constants
+                ),
             },
         }
         try:

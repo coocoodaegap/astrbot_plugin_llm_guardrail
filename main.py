@@ -137,7 +137,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def guardrail_access_gate(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """访问闸门：在其他等待阶段插件之前拦截被封禁主体。"""
+        """在其他等待阶段插件之前拦截被封禁主体。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         try:
@@ -161,7 +161,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def guardrail_waiting_rails(
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
-        """等待请求阶段：在同一低优先级临界区依次执行输入分析和模型路由。"""
+        """在同一低优先级临界区依次执行输入分析和模型路由。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         if self.adapter.get_event_extra(event, ACCESS_GATE_BLOCKED_EXTRA, False):
@@ -207,7 +207,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest, *_args, **_kwargs
     ) -> None:
-        """模型请求阶段：主模型调用前执行最终请求检查与提示词变更。"""
+        """主模型调用前执行最终请求检查与提示词变更。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         if self._is_internal_request(req):
@@ -230,7 +230,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     async def on_llm_response(
         self, event: AstrMessageEvent, resp: LLMResponse, *_args, **_kwargs
     ) -> None:
-        """模型响应阶段：在模型回复发送前执行输出护栏。"""
+        """在模型回复发送前执行输出护栏。"""
         if not self or not getattr(self, "normalized_config", None):
             return
         try:

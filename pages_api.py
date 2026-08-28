@@ -5,9 +5,15 @@ from __future__ import annotations
 import copy
 import inspect
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
+
+try:
+    from astrbot.api import logger
+except ImportError:  # pragma: no cover - fallback for isolated unit tests.
+    logger = logging.getLogger(__name__)
 
 try:
     from quart import jsonify, request
@@ -183,7 +189,12 @@ class GuardrailPagesApiMixin:
         return self._pages_publish_response(result, "System settings")
 
     def _pages_persist_system_settings(self, settings: dict[str, Any]) -> None:
-        """Write the validated groups through AstrBotConfig with in-memory rollback."""
+        """Write AstrBot-owned setting groups with in-memory rollback.
+
+        ``system_constants`` is intentionally excluded: its dynamic map is
+        persisted by the plugin snapshot manager, rather than AstrBot's
+        fixed-schema configuration serializer.
+        """
 
         config = getattr(self, "config", None)
         save_config = getattr(config, "save_config", None)
@@ -193,7 +204,6 @@ class GuardrailPagesApiMixin:
             key: copy.deepcopy(config.get(key))
             for key in (
                 "fallback_policy_settings",
-                "system_constants",
                 "session_control",
                 "access_control",
                 "session_policy_state",
@@ -202,6 +212,8 @@ class GuardrailPagesApiMixin:
         }
         try:
             for key, value in settings.items():
+                if key == "system_constants":
+                    continue
                 config[key] = copy.deepcopy(value)
             save_config()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
