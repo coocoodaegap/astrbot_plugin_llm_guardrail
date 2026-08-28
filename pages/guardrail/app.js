@@ -5,12 +5,10 @@ const status = $("status"),
   diagnostics = $("diagnostics"),
   systemSettings = $("system-settings"),
   systemSettingsStatus = $("system-settings-status"),
-  systemSaveStatus = $("system-save-status"),
   saveSystemSettings = $("save-system-settings"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
-  ruleSaveStatus = $("rule-save-status"),
   policyListPanel = $("policy-list-panel"),
   policyDetailPanel = $("policy-detail-panel"),
   policyList = $("policy-list"),
@@ -29,7 +27,6 @@ const status = $("status"),
   policyGraphStatus = $("policy-graph-status"),
   policyGraphEditor = $("policy-graph-editor"),
   policyGraphEditorStatus = $("policy-graph-editor-status"),
-  policySaveStatus = $("policy-save-status"),
   savePolicy = $("save-policy"),
   policyUmoList = $("policy-umo-list"),
   setDefaultPolicy = $("set-default-policy"),
@@ -117,7 +114,6 @@ const status = $("status"),
   accessDurationMinutes = $("access-duration-minutes"),
   accessReasonCode = $("access-reason-code"),
   accessFormStatus = $("access-form-status"),
-  accessSaveStatus = $("access-save-status"),
   saveAccessDecision = $("save-access-decision"),
   resetAccessForm = $("reset-access-form"),
   accessRecordCount = $("access-record-count"),
@@ -176,6 +172,39 @@ const status = $("status"),
   confirmRagExperienceDeleteMessage = $("confirm-rag-experience-delete-message"),
   cancelRagExperienceDelete = $("cancel-rag-experience-delete"),
   confirmRagExperienceDelete = $("confirm-rag-experience-delete");
+const reportStack = $("report-stack");
+
+function publishReport(message, { tone = "success", duration } = {}) {
+  const text = String(message || "").trim();
+  if (!text || !reportStack) return;
+  const item = document.createElement("article");
+  item.className = "report-message is-" + tone;
+  item.setAttribute("role", tone === "error" ? "alert" : "status");
+  const content = document.createElement("span");
+  content.className = "report-message-content";
+  content.textContent = text;
+  const dismissButton = document.createElement("button");
+  dismissButton.type = "button";
+  dismissButton.className = "report-message-dismiss";
+  dismissButton.setAttribute("aria-label", "关闭此消息");
+  dismissButton.textContent = "×";
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    item.classList.remove("is-visible");
+    item.classList.add("is-leaving");
+    window.setTimeout(() => item.remove(), 180);
+  };
+  dismissButton.addEventListener("click", dismiss);
+  item.append(content, dismissButton);
+  reportStack.append(item);
+  while (reportStack.childElementCount > 4) reportStack.firstElementChild?.remove();
+  window.requestAnimationFrame(() => item.classList.add("is-visible"));
+  const lifetime = duration ?? (tone === "error" ? 0 : tone === "warning" ? 6200 : 4200);
+  if (lifetime > 0) window.setTimeout(dismiss, lifetime);
+}
+
 const systemSettingHintOverrides = {
   default_action_on_hit: "规则命中风险时采用的默认处理方式。",
   default_action_on_error: "规则执行出错时采用的默认处理方式。",
@@ -2682,7 +2711,6 @@ function renderPolicyDetail(policy) {
   policyNameInput.value = policy.name || "";
   policyDescriptionInput.value = policy.description || "";
   policyBasicStatus.textContent = "";
-  policySaveStatus.textContent = "";
   const bindings = Array.isArray(policy.bindings) ? policy.bindings : [];
   const components = Array.isArray(policy.components) ? policy.components : [];
   policyDetailMeta.replaceChildren(
@@ -2761,16 +2789,20 @@ async function persistPolicyLibrary(successMessage, { showIssues = false, operat
       policy_library: policyLibrary,
     });
     if (!result.success) {
-      policyLibraryStatus.textContent = result.detail || result.error || "保存策略失败。";
+      const message = result.detail || result.error || "保存策略失败。";
+      policyLibraryStatus.textContent = "";
+      publishReport(message, { tone: "error" });
       if (showIssues) showPolicySaveIssues(`${operation}失败`, policySaveFailureMessages(result));
       return false;
     }
     currentRevision = result.revision;
-    policyLibraryStatus.textContent = successMessage(result.revision);
+    policyLibraryStatus.textContent = "";
+    publishReport(successMessage(result.revision));
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    policyLibraryStatus.textContent = `保存策略失败：${message}`;
+    policyLibraryStatus.textContent = "";
+    publishReport(`保存策略失败：${message}`, { tone: "error" });
     if (showIssues) showPolicySaveIssues(`${operation}失败`, [...currentPolicyGraphIssues(), message]);
     return false;
   }
@@ -2807,11 +2839,6 @@ async function saveCurrentPolicy(makeDefault = false, clearDefault = false) {
   }
   renderPolicyList();
   renderPolicyDetail(policy);
-  policySaveStatus.textContent = makeDefault
-    ? "默认策略已更新。"
-    : clearDefault
-      ? "已取消默认策略；未匹配到合法策略的请求将使用系统 fallback 图。"
-      : "策略的所有修改已保存。";
   return true;
 }
 function openCreatePolicyDialog() {
@@ -2916,7 +2943,6 @@ async function savePolicyAsCopy() {
   savePolicyAsDialog.close();
   renderPolicyList();
   showPolicyDetail(id);
-  policySaveStatus.textContent = `策略“${name}”已另存为并保存。`;
 }
 function requestPolicyDeletion() {
   const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
@@ -3147,15 +3173,17 @@ async function persistRuleLibrary(successMessage) {
       rule_library: ruleLibrary,
     });
     if (!result.success) {
-      ruleStatus.textContent = result.detail || result.error || "保存失败。";
+      ruleStatus.textContent = "";
+      publishReport(result.detail || result.error || "保存失败。", { tone: "error" });
       return false;
     }
     currentRevision = result.revision;
     ruleStatus.textContent = "";
-    ruleSaveStatus.textContent = successMessage(result.revision);
+    publishReport(successMessage(result.revision));
     return true;
   } catch (error) {
-    ruleStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+    ruleStatus.textContent = "";
+    publishReport(`保存失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
     return false;
   }
 }
@@ -3483,7 +3511,7 @@ async function saveAccessDecisionMutation() {
     accessFormStatus.textContent = "";
     resetAccessFormState();
     await refreshAccessControl();
-    accessSaveStatus.textContent = "访问决定已保存。";
+    publishReport("访问决定已保存。");
   } catch (error) {
     accessFormStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
@@ -4450,14 +4478,16 @@ saveRuleLibrary.addEventListener("click", async () => {
 });
 saveSystemSettings.addEventListener("click", async () => {
   if (!Number.isInteger(currentRevision)) {
-    systemSettingsStatus.textContent = "尚未加载当前配置，无法保存。";
+    systemSettingsStatus.textContent = "";
+    publishReport("尚未加载当前配置，无法保存。", { tone: "warning" });
     return;
   }
   let settings;
   try {
     settings = collectSystemSettings();
   } catch (error) {
-    systemSettingsStatus.textContent = `无法保存：${error instanceof Error ? error.message : String(error)}`;
+    systemSettingsStatus.textContent = "";
+    publishReport(`无法保存：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
     return;
   }
   saveSystemSettings.disabled = true;
@@ -4467,15 +4497,17 @@ saveSystemSettings.addEventListener("click", async () => {
       settings,
     });
     if (!result.success) {
-      systemSettingsStatus.textContent = result.detail || result.error || "保存失败。";
+      systemSettingsStatus.textContent = "";
+      publishReport(result.detail || result.error || "保存失败。", { tone: "error" });
       return;
     }
     const successMessage = `系统设置已发布为 revision ${result.revision}。`;
     systemSettingsStatus.textContent = "";
     await refresh();
-    systemSaveStatus.textContent = successMessage;
+    publishReport(successMessage);
   } catch (error) {
-    systemSettingsStatus.textContent = `保存失败：${error instanceof Error ? error.message : String(error)}`;
+    systemSettingsStatus.textContent = "";
+    publishReport(`保存失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
   } finally {
     saveSystemSettings.disabled = false;
   }

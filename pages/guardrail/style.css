@@ -3418,21 +3418,6 @@ textarea,
     letter-spacing: .15em;
 }
 
-.floating-save-status {
-    margin: 0;
-    padding: 7px 8px;
-    color: #d9fff0;
-    background: #12362c;
-    border: 1px solid #3d826c;
-    border-radius: 5px;
-    font-size: .74rem;
-    line-height: 1.45;
-}
-
-.floating-save-status:empty {
-    display: none;
-}
-
 .floating-action-group button {
     width: 100%;
     background: var(--signal);
@@ -3466,6 +3451,128 @@ textarea,
 .floating-action-group .button-danger:hover {
     background: #58252e;
     border-color: #ff7b85;
+}
+
+.report-stack {
+    position: fixed;
+    z-index: 70;
+    bottom: 28px;
+    left: 50%;
+    display: flex;
+    width: min(540px, calc(100vw - 48px));
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+    pointer-events: none;
+    transform: translateX(-50%);
+}
+
+.report-message {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    gap: 11px;
+    align-items: center;
+    min-height: 48px;
+    padding: 10px 10px 10px 14px;
+    color: #dffbf0;
+    background: rgb(10 28 23 / 96%);
+    border: 1px solid #397b66;
+    border-radius: 8px;
+    box-shadow: 0 18px 38px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(230 255 245 / 5%);
+    opacity: 0;
+    pointer-events: auto;
+    transform: translateY(14px);
+    transition: opacity .18s ease, transform .18s ease, border-color .18s ease;
+}
+
+.report-message::before {
+    width: 7px;
+    height: 7px;
+    content: "";
+    border-radius: 50%;
+    background: var(--signal);
+    box-shadow: 0 0 12px rgb(100 220 182 / 74%);
+}
+
+.report-message.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.report-message.is-leaving {
+    opacity: 0;
+    transform: translateY(8px);
+}
+
+.report-message-content {
+    min-width: 0;
+    color: inherit;
+    font-size: .83rem;
+    line-height: 1.48;
+    overflow-wrap: anywhere;
+}
+
+.report-message-dismiss {
+    display: grid;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    place-items: center;
+    padding: 0;
+    color: #a9c6bc;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    box-shadow: none;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.report-message-dismiss:hover {
+    color: #ecfff8;
+    background: #1b4136;
+    border-color: #477f6e;
+    box-shadow: none;
+    transform: none;
+}
+
+.report-message.is-warning {
+    color: #ffe3a7;
+    background: rgb(48 36 18 / 97%);
+    border-color: #9c7430;
+}
+
+.report-message.is-warning::before {
+    background: var(--amber);
+    box-shadow: 0 0 12px rgb(255 199 95 / 72%);
+}
+
+.report-message.is-error {
+    color: #ffd9dd;
+    background: rgb(52 23 29 / 97%);
+    border-color: #a64855;
+}
+
+.report-message.is-error::before {
+    background: var(--danger);
+    box-shadow: 0 0 12px rgb(255 114 125 / 78%);
+}
+
+@media (max-width: 860px) {
+    .report-stack {
+        top: 112px;
+        bottom: auto;
+        width: min(540px, calc(100vw - 28px));
+    }
+
+    .report-message {
+        transform: translateY(-14px);
+    }
+
+    .report-message.is-leaving {
+        transform: translateY(-8px);
+    }
 }
 
 .save-rule-as-dialog,
