@@ -14,8 +14,8 @@ const status = $("status"),
   systemSettings = $("system-settings"),
   systemSettingsStatus = $("system-settings-status"),
   saveSystemSettings = $("save-system-settings"),
-  systemConstants = $("system-constants"),
-  saveSystemConstants = $("save-system-constants"),
+  sharedConstants = $("shared-constants"),
+  saveSharedConstants = $("save-shared-constants"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
   ruleStatus = $("rule-library-status"),
@@ -95,9 +95,9 @@ const status = $("status"),
   closePolicySaveIssues = $("close-policy-save-issues"),
   ruleLibraryPanel = $("rule-library-panel"),
   ruleLibraryRulesSection = $("rule-library-rules-section"),
-  systemConstantsPanel = $("system-constants-panel"),
+  sharedConstantsPanel = $("shared-constants-panel"),
   showRuleLibraryRules = $("show-rule-library-rules"),
-  showSystemConstants = $("show-system-constants"),
+  showSharedConstants = $("show-shared-constants"),
   ruleWorkspace = $("rule-workspace"),
   ruleCreationDialog = $("rule-creation-dialog"),
   templateOptions = $("template-options"),
@@ -345,6 +345,11 @@ const systemOptionDescriptions = {
 let currentRevision = null,
   latestOverview = null,
   latestDiagnostics = [],
+  activeTabName = "overview",
+  tabLoadEpoch = 0,
+  pendingOverviewPolicyId = null,
+  systemSettingsDirty = false,
+  sharedConstantsDirty = false,
   ruleLibrary = { rules: [] },
   policyLibrary = { policies: [], active_policy_id: "", umo_policy_selections: {} },
   openRuleIds = [],
@@ -418,6 +423,7 @@ function ensureOption(select, value) {
   }
 }
 function switchTab(name) {
+  activeTabName = name;
   document.querySelectorAll("[data-tab]").forEach((tab) => {
     const active = tab.dataset.tab === name;
     tab.classList.toggle("is-active", active);
@@ -429,21 +435,20 @@ function switchTab(name) {
   updatePolicyGraphAnimation();
   if (name === "session") {
     showSessionPolicyStateList();
-    if (bridge) void refreshSessionPolicyStates();
   }
   if (name === "knowledge") {
     showRagExperienceList();
-    if (bridge) void refreshRagExperiences();
   }
+  if (bridge) void loadTabData(name);
 }
 function switchRuleLibrarySection(section) {
   const showRules = section !== "constants";
   ruleLibraryRulesSection.hidden = !showRules;
-  systemConstantsPanel.hidden = showRules;
+  sharedConstantsPanel.hidden = showRules;
   showRuleLibraryRules.classList.toggle("is-active", showRules);
   showRuleLibraryRules.setAttribute("aria-selected", String(showRules));
-  showSystemConstants.classList.toggle("is-active", !showRules);
-  showSystemConstants.setAttribute("aria-selected", String(!showRules));
+  showSharedConstants.classList.toggle("is-active", !showRules);
+  showSharedConstants.setAttribute("aria-selected", String(!showRules));
 }
 document
   .querySelectorAll("[data-tab]")
@@ -507,24 +512,25 @@ function overviewPolicyById(policyId) {
   return policyLibrary.policies.find((policy) => policy.policy_id === policyId) || null;
 }
 function showOverviewPolicyPath(policyId) {
+  pendingOverviewPolicyId = String(policyId || "").trim() || null;
   switchTab("policies");
-  if (policyId && overviewPolicyById(policyId)) showPolicyDetail(policyId);
 }
 function renderOverviewDefaultPolicyPath(overview) {
   overviewDefaultPolicyPath.replaceChildren();
   const policyId = String(overview.effective_policy_id || "").trim();
   const policy = overviewPolicyById(policyId);
-  const mappingCount = Object.keys(policyLibrary.umo_policy_selections || {}).length;
-  const fallbackSettings = systemSettingsDraft.fallback_policy_settings || {};
-  const llmReviewEnabled = Boolean(fallbackSettings.enable_llm_review_in_fallback_policy);
+  const mappingCount = overviewCount(overview.umo_policy_selection_count);
+  const llmReviewEnabled = Boolean(overview.fallback_llm_review_enabled);
   const identity = document.createElement("div");
   const title = document.createElement("strong");
   const description = document.createElement("p");
   const details = document.createElement("div");
   const action = document.createElement("button");
-  title.textContent = policy ? (policy.name || policy.policy_id) : "系统 fallback 图";
-  if (policy) {
-    description.textContent = "默认策略 · " + policy.policy_id;
+  title.textContent = policyId
+    ? (policy?.name || overview.effective_policy_name || policyId)
+    : "系统 fallback 图";
+  if (policyId) {
+    description.textContent = "默认策略 · " + policyId;
     appendOverviewLine(
       details,
       "会话指定",
@@ -532,7 +538,7 @@ function renderOverviewDefaultPolicyPath(overview) {
     );
     appendOverviewLine(details, "失效回退", "系统 fallback 图");
     action.textContent = "策略详情";
-    action.addEventListener("click", () => showOverviewPolicyPath(policy.policy_id));
+    action.addEventListener("click", () => showOverviewPolicyPath(policyId));
   } else {
     description.textContent = "尚未指定默认策略";
     appendOverviewLine(details, "请求路径", "找不到合法策略时使用 fallback");
@@ -561,7 +567,7 @@ function renderOverviewPriority(overview) {
       detail: "请先确认诊断是否会使节点降级或使保存失败。",
     });
   }
-  if (!String(policyLibrary.active_policy_id || overview.active_policy_id || "").trim()) {
+  if (!String(overview.effective_policy_id || "").trim()) {
     messages.push({
       tone: "is-attention",
       title: "未指定默认策略",
@@ -631,12 +637,11 @@ function renderOverviewRails(overview) {
 function renderOverviewAssets(overview) {
   overviewAssets.replaceChildren();
   const componentTypeCount = Object.keys(componentDefinitions).length;
-  const constantCount = Object.keys(systemSettingsDraft.system_constants || {}).length;
   overviewAssets.append(
-    createOverviewMetric("规则", ruleLibrary.rules.length, "可复用规则本体"),
-    createOverviewMetric("策略", policyLibrary.policies.length, "策略图与默认路径"),
+    createOverviewMetric("规则", overviewCount(overview.rule_library_count), "可复用规则本体"),
+    createOverviewMetric("策略", overviewCount(overview.policy_library_count), "策略图与默认路径"),
     createOverviewMetric("可用元件", componentTypeCount, "当前可放置的元件种类"),
-    createOverviewMetric("常量", constantCount, "系统共享配置值"),
+    createOverviewMetric("公用常量", overviewCount(overview.system_constant_count), "策略与 fallback 共用文本"),
   );
 }
 function renderOverviewBoundary() {
@@ -894,8 +899,8 @@ function createSystemConstantRow(name = "", value = "") {
   row.append(nameField, valueField, remove);
   return row;
 }
-function renderSystemConstantsEditor(constants) {
-  systemConstants.replaceChildren();
+function renderSharedConstantsEditor(constants) {
+  sharedConstants.replaceChildren();
   const editor = document.createElement("div");
   editor.className = "system-constants-editor";
   editor.dataset.systemConstantsEditor = "true";
@@ -922,24 +927,24 @@ function renderSystemConstantsEditor(constants) {
     row.querySelector("[data-system-constant-name]")?.focus();
   });
   editor.append(rows, validation, add);
-  systemConstants.append(editor);
+  sharedConstants.append(editor);
 }
 function clearSystemConstantValidation() {
-  const validation = systemConstants.querySelector("[data-system-constants-validation]");
+  const validation = sharedConstants.querySelector("[data-system-constants-validation]");
   if (validation) {
     validation.textContent = "";
     validation.hidden = true;
   }
-  for (const row of systemConstants.querySelectorAll("[data-system-constant-row].is-invalid")) {
+  for (const row of sharedConstants.querySelectorAll("[data-system-constant-row].is-invalid")) {
     row.classList.remove("is-invalid");
   }
-  for (const control of systemConstants.querySelectorAll("[data-system-constant-name].is-invalid")) {
+  for (const control of sharedConstants.querySelectorAll("[data-system-constant-name].is-invalid")) {
     control.classList.remove("is-invalid");
     control.removeAttribute("aria-invalid");
   }
 }
 function systemConstantValidationError(message, control, relatedControl = null) {
-  const validation = systemConstants.querySelector("[data-system-constants-validation]");
+  const validation = sharedConstants.querySelector("[data-system-constants-validation]");
   if (validation) {
     validation.textContent = message;
     validation.hidden = false;
@@ -953,11 +958,11 @@ function systemConstantValidationError(message, control, relatedControl = null) 
   control?.focus();
   return new Error(message);
 }
-function collectSystemConstants() {
+function collectSharedConstants() {
   clearSystemConstantValidation();
   const constants = {};
   const names = new Map();
-  const rows = systemConstants.querySelectorAll("[data-system-constant-row]");
+  const rows = sharedConstants.querySelectorAll("[data-system-constant-row]");
   for (const row of rows) {
     const nameControl = row.querySelector("[data-system-constant-name]");
     const name = nameControl?.value.trim() || "";
@@ -965,7 +970,7 @@ function collectSystemConstants() {
     if (!name) {
       if (value) {
         throw systemConstantValidationError(
-          "系统常量填写了文本值，但没有填写名称。",
+          "公用常量填写了文本值，但没有填写名称。",
           nameControl,
         );
       }
@@ -973,13 +978,13 @@ function collectSystemConstants() {
     }
     if (!systemConstantNamePattern.test(name)) {
       throw systemConstantValidationError(
-        `系统常量名称“${name}”只能使用 1 至 64 个大写字母、数字和下划线。`,
+        `公用常量名称“${name}”只能使用 1 至 64 个大写字母、数字和下划线。`,
         nameControl,
       );
     }
     if (Object.hasOwn(constants, name)) {
       throw systemConstantValidationError(
-        `系统常量名称“${name}”重复。`,
+        `公用常量名称“${name}”重复。`,
         nameControl,
         names.get(name),
       );
@@ -993,7 +998,6 @@ function renderSystemSettings(payload) {
   systemSettings.replaceChildren();
   systemSettingsSchema = payload.schema || {};
   systemSettingsDraft = structuredClone(payload.settings || {});
-  renderSystemConstantsEditor(payload.settings?.system_constants);
   registeredProviders = Array.isArray(payload.providers)
     ? payload.providers.filter(
         (provider) =>
@@ -1013,7 +1017,6 @@ function renderSystemSettings(payload) {
     header.append(title, description);
     const grid = document.createElement("div");
     grid.className = "setting-grid";
-    if (groupKey === "system_constants") continue;
     for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
       const row = document.createElement("div");
       row.className = "setting-row";
@@ -1057,10 +1060,6 @@ function renderSystemSettings(payload) {
 function collectSystemSettings() {
   const settings = {};
   for (const [groupKey, groupSchema] of Object.entries(systemSettingsSchema)) {
-    if (groupKey === "system_constants") {
-      settings[groupKey] = structuredClone(systemSettingsDraft.system_constants || {});
-      continue;
-    }
     const groupSettings = {};
     for (const [fieldKey, field] of Object.entries(groupSchema.items || {})) {
       const selector = `[data-system-setting-group="${groupKey}"][data-system-setting-key="${fieldKey}"]`;
@@ -4537,76 +4536,170 @@ async function deleteCurrentRagExperience() {
     setRagExperienceMutationBusy(false);
   }
 }
-async function refresh() {
-  const [overviewResult, diagnosticsResult, ruleResult, policyResult, systemSettingsResult] =
-    await Promise.all([
-    bridge.apiGet("get_overview"),
-    bridge.apiGet("get_diagnostics"),
-    bridge.apiGet("get_rule_library"),
-    bridge.apiGet("get_policy_library"),
-    bridge.apiGet("get_system_settings"),
-  ]);
-  currentRevision = overviewResult.overview.revision;
-  latestOverview = overviewResult.overview;
-  latestDiagnostics = Array.isArray(diagnosticsResult.diagnostics)
-    ? diagnosticsResult.diagnostics
-    : [];
-  renderDiagnostics(latestDiagnostics);
-  renderSystemSettings(systemSettingsResult);
-  systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
-  await refreshAccessControl();
-  await refreshSessionPolicyStates();
-  await refreshRagExperiences();
+function applyOverviewPayload(payload) {
+  if (!payload?.success || !payload.overview) {
+    throw new Error(payload?.error || "无法读取配置快照。");
+  }
+  latestOverview = payload.overview;
+  currentRevision = payload.overview.revision;
+}
+function hasUnsavedRuleDrafts() {
+  return [...openRuleEditors.children].some((editor) => editor.classList.contains("is-dirty"));
+}
+function applyRuleLibraryPayload(payload) {
+  if (!payload?.success) throw new Error(payload?.error || "无法读取规则库。");
+  if (hasUnsavedRuleDrafts()) {
+    ruleStatus.textContent = "检测到未保存的规则草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    return false;
+  }
   const previousOpenRuleIds = [...openRuleIds];
   ruleLibrary = {
-    rules: Array.isArray(ruleResult.rule_library?.rules)
-      ? ruleResult.rule_library.rules
-      : [],
+    rules: Array.isArray(payload.rule_library?.rules) ? payload.rule_library.rules : [],
   };
-  policyLibrary = {
-    policies: Array.isArray(policyResult.policy_library?.policies)
-      ? policyResult.policy_library.policies
-      : [],
-    active_policy_id: String(policyResult.policy_library?.active_policy_id || ""),
-    umo_policy_selections: policyResult.policy_library?.umo_policy_selections
-      && typeof policyResult.policy_library.umo_policy_selections === "object"
-      ? policyResult.policy_library.umo_policy_selections
-      : {},
-  };
-  renderOverview(latestOverview);
   openRuleEditors.replaceChildren();
   openRuleIds = [];
   for (const ruleId of previousOpenRuleIds) openRule(ruleId);
   ruleEmptyState.hidden = openRuleIds.length > 0;
   renderRuleList();
-  if (selectedPolicyId && policyLibrary.policies.some((policy) => policy.policy_id === selectedPolicyId)) {
-    renderPolicyDetail(policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId));
-  } else {
+  const validation = payload.validation || { warnings: [], fatal_errors: [] };
+  const messages = [...(validation.fatal_errors || []), ...(validation.warnings || [])];
+  ruleStatus.textContent = messages.length
+    ? `revision ${payload.revision}: ${messages.join("; ")}`
+    : `已加载规则库 revision ${payload.revision}。`;
+  return true;
+}
+function hasUnsavedPolicyDraft() {
+  const policy = policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId);
+  if (!policy || policyDetailPanel.hidden || !policyGraphState.draft) return false;
+  const draft = getPolicyGraphDraft(policy);
+  const sameGraph = JSON.stringify({
+    bindings: draft.bindings || [], components: draft.components || [],
+    node_order: draft.node_order || [], rail_settings: draft.rail_settings || {},
+  }) === JSON.stringify({
+    bindings: policy.bindings || [], components: policy.components || [],
+    node_order: policy.node_order || [], rail_settings: policy.rail_settings || {},
+  });
+  return !sameGraph
+    || policyNameInput.value.trim() !== String(policy.name || "")
+    || policyDescriptionInput.value.trim() !== String(policy.description || "")
+    || JSON.stringify(parseUmoList(policyUmoList.umoEditor?.value)) !== JSON.stringify(policy.umo_list || []);
+}
+function applyPolicyLibraryPayload(payload) {
+  if (!payload?.success) throw new Error(payload?.error || "无法读取策略库。");
+  if (hasUnsavedPolicyDraft()) {
+    policyLibraryStatus.textContent = "检测到未保存的策略草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    return false;
+  }
+  policyLibrary = {
+    policies: Array.isArray(payload.policy_library?.policies) ? payload.policy_library.policies : [],
+    active_policy_id: String(payload.policy_library?.active_policy_id || ""),
+    umo_policy_selections: payload.policy_library?.umo_policy_selections
+      && typeof payload.policy_library.umo_policy_selections === "object"
+      ? payload.policy_library.umo_policy_selections : {},
+  };
+  const policy = selectedPolicyId
+    ? policyLibrary.policies.find((item) => item.policy_id === selectedPolicyId) : null;
+  if (policy) renderPolicyDetail(policy);
+  else {
     selectedPolicyId = null;
     policyDetailPanel.hidden = true;
     policyListPanel.hidden = false;
     renderPolicyList();
   }
-  const policyValidation = policyResult.validation || { warnings: [], fatal_errors: [] };
-  const policyMessages = [
-    ...(policyValidation.fatal_errors || []),
-    ...(policyValidation.warnings || []),
-  ];
-  policyLibraryStatus.textContent = policyMessages.length
-    ? policyMessages.join(" · ")
-    : `已加载 ${customPolicies().length} 条策略，revision ${policyResult.revision}。`;
-  const validation = ruleResult.validation || {
-      warnings: [],
-      fatal_errors: [],
-    },
-    messages = [
-      ...(validation.fatal_errors || []),
-      ...(validation.warnings || []),
-    ];
-  ruleStatus.textContent = messages.length
-    ? `revision ${ruleResult.revision}: ${messages.join("; ")}`
-    : `已加载规则库 revision ${ruleResult.revision}。`;
-  status.textContent = `已加载配置快照 revision ${currentRevision}`;
+  if (pendingOverviewPolicyId) {
+    const pending = policyLibrary.policies.find((item) => item.policy_id === pendingOverviewPolicyId);
+    if (pending) showPolicyDetail(pending.policy_id);
+    pendingOverviewPolicyId = null;
+  }
+  const validation = payload.validation || { warnings: [], fatal_errors: [] };
+  const messages = [...(validation.fatal_errors || []), ...(validation.warnings || [])];
+  policyLibraryStatus.textContent = messages.length
+    ? messages.join(" · ")
+    : `已加载 ${customPolicies().length} 条策略，revision ${payload.revision}。`;
+  return true;
+}
+function applySystemSettingsPayload(payload) {
+  if (!payload?.success) throw new Error(payload?.error || "无法读取系统设置。");
+  if (systemSettingsDirty) {
+    systemSettingsStatus.textContent = "检测到未保存的系统设置草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    return false;
+  }
+  renderSystemSettings(payload);
+  systemSettingsStatus.textContent = `已加载系统设置 revision ${payload.revision}。`;
+  return true;
+}
+function applyProviderOptionsPayload(payload) {
+  if (!payload?.success) throw new Error(payload?.error || "无法读取已注册 Provider 列表。");
+  registeredProviders = Array.isArray(payload.providers)
+    ? payload.providers.filter(
+      (provider) => provider && typeof provider.id === "string" && typeof provider.name === "string",
+    ) : [];
+}
+function applySharedConstantsPayload(payload) {
+  if (!payload?.success) throw new Error(payload?.error || "无法读取公用常量。");
+  if (sharedConstantsDirty) {
+    ruleStatus.textContent = "检测到未保存的公用常量草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    return false;
+  }
+  renderSharedConstantsEditor(payload.constants);
+  return true;
+}
+async function loadTabData(name) {
+  if (!bridge) return;
+  const epoch = ++tabLoadEpoch;
+  const isCurrent = () => epoch === tabLoadEpoch && activeTabName === name;
+  status.textContent = `正在刷新${({ overview: "总览", rules: "规则库", policies: "策略编排", access: "访问控制", knowledge: "知识库经验", session: "会话策略监控", system: "系统设置" })[name] || "页面"}…`;
+  try {
+    if (name === "overview") {
+      const [overviewResult, diagnosticsResult] = await Promise.all([
+        bridge.apiGet("get_overview"), bridge.apiGet("get_diagnostics"),
+      ]);
+      if (!isCurrent()) return;
+      applyOverviewPayload(overviewResult);
+      latestDiagnostics = Array.isArray(diagnosticsResult?.diagnostics) ? diagnosticsResult.diagnostics : [];
+      renderDiagnostics(latestDiagnostics);
+      renderOverview(latestOverview);
+      await Promise.all([refreshAccessControl(), refreshSessionPolicyStates(), refreshRagExperiences()]);
+    } else if (name === "rules") {
+      const [overviewResult, ruleResult, constantsResult, providersResult] = await Promise.all([
+        bridge.apiGet("get_overview"), bridge.apiGet("get_rule_library"), bridge.apiGet("get_shared_constants"), bridge.apiGet("get_registered_providers"),
+      ]);
+      if (!isCurrent()) return;
+      applyOverviewPayload(overviewResult);
+      applyProviderOptionsPayload(providersResult);
+      applyRuleLibraryPayload(ruleResult);
+      applySharedConstantsPayload(constantsResult);
+    } else if (name === "policies") {
+      const [overviewResult, ruleResult, policyResult, providersResult] = await Promise.all([
+        bridge.apiGet("get_overview"), bridge.apiGet("get_rule_library"), bridge.apiGet("get_policy_library"), bridge.apiGet("get_registered_providers"),
+      ]);
+      if (!isCurrent()) return;
+      applyOverviewPayload(overviewResult);
+      applyProviderOptionsPayload(providersResult);
+      applyRuleLibraryPayload(ruleResult);
+      applyPolicyLibraryPayload(policyResult);
+    } else if (name === "system") {
+      const [overviewResult, systemResult] = await Promise.all([
+        bridge.apiGet("get_overview"), bridge.apiGet("get_system_settings"),
+      ]);
+      if (!isCurrent()) return;
+      applyOverviewPayload(overviewResult);
+      applySystemSettingsPayload(systemResult);
+    } else if (name === "access") {
+      await refreshAccessControl();
+    } else if (name === "session") {
+      const overviewResult = await bridge.apiGet("get_overview");
+      if (!isCurrent()) return;
+      applyOverviewPayload(overviewResult);
+      await refreshSessionPolicyStates();
+    } else if (name === "knowledge") {
+      await refreshRagExperiences();
+    }
+    if (isCurrent()) status.textContent = Number.isInteger(currentRevision)
+      ? `已加载配置快照 revision ${currentRevision}` : "页面数据已刷新";
+  } catch (error) {
+    if (isCurrent()) status.textContent = `无法刷新页面数据：${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 policyGraphCanvas.addEventListener("click", (event) => {
   const node = policyGraphNodeAt(event.clientX, event.clientY);
@@ -4690,7 +4783,7 @@ if (window.ResizeObserver) {
 window.addEventListener("resize", schedulePolicyGraphRender);
 document.addEventListener("visibilitychange", updatePolicyGraphAnimation);
 showRuleLibraryRules.addEventListener("click", () => switchRuleLibrarySection("rules"));
-showSystemConstants.addEventListener("click", () => switchRuleLibrarySection("constants"));
+showSharedConstants.addEventListener("click", () => switchRuleLibrarySection("constants"));
 newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
@@ -4728,40 +4821,35 @@ saveRuleLibrary.addEventListener("click", async () => {
   [...openRuleEditors.children].forEach((editor) => editor.classList.remove("is-dirty"));
   renderRuleList();
 });
-saveSystemConstants.addEventListener("click", async () => {
+saveSharedConstants.addEventListener("click", async () => {
   if (!Number.isInteger(currentRevision)) {
-    publishReport("尚未加载当前配置，无法保存系统常量。", { tone: "warning" });
+    publishReport("尚未加载当前配置，无法保存公用常量。", { tone: "warning" });
     return;
   }
   let constants;
   try {
-    constants = collectSystemConstants();
+    constants = collectSharedConstants();
   } catch (error) {
-    publishReport(`无法保存系统常量：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
+    publishReport(`无法保存公用常量：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
     return;
   }
-  const settings = structuredClone(systemSettingsDraft);
-  if (!settings || typeof settings !== "object") {
-    publishReport("系统设置快照不可用，无法保存系统常量。", { tone: "error" });
-    return;
-  }
-  settings.system_constants = constants;
-  saveSystemConstants.disabled = true;
+  saveSharedConstants.disabled = true;
   try {
-    const result = await bridge.apiPost("save_system_settings", {
+    const result = await bridge.apiPost("save_shared_constants", {
       expected_revision: currentRevision,
-      settings,
+      constants,
     });
     if (!result.success) {
-      publishReport(result.detail || result.error || "保存系统常量失败。", { tone: "error" });
+      publishReport(result.detail || result.error || "保存公用常量失败。", { tone: "error" });
       return;
     }
-    await refresh();
-    publishReport(`系统常量已发布为 revision ${result.revision}。`);
+    sharedConstantsDirty = false;
+    await loadTabData("rules");
+    publishReport(`公用常量已发布为 revision ${result.revision}。`);
   } catch (error) {
-    publishReport(`保存系统常量失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
+    publishReport(`保存公用常量失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
   } finally {
-    saveSystemConstants.disabled = false;
+    saveSharedConstants.disabled = false;
   }
 });
 saveSystemSettings.addEventListener("click", async () => {
@@ -4791,7 +4879,8 @@ saveSystemSettings.addEventListener("click", async () => {
     }
     const successMessage = `系统设置已发布为 revision ${result.revision}。`;
     systemSettingsStatus.textContent = "";
-    await refresh();
+    systemSettingsDirty = false;
+    await loadTabData("system");
     publishReport(successMessage);
   } catch (error) {
     systemSettingsStatus.textContent = "";
@@ -4887,12 +4976,16 @@ confirmRagExperienceDelete.addEventListener("click", () => {
 });
 resetAccessFormState();
 updateRagExperienceActionState();
+systemSettings.addEventListener("input", () => { systemSettingsDirty = true; });
+systemSettings.addEventListener("change", () => { systemSettingsDirty = true; });
+sharedConstants.addEventListener("input", () => { sharedConstantsDirty = true; });
+sharedConstants.addEventListener("change", () => { sharedConstantsDirty = true; });
 if (!bridge) {
   status.textContent = "当前不在 AstrBot Pages 环境中，无法读取或保存配置。";
 } else {
   try {
     await bridge.ready();
-    await refresh();
+    await loadTabData("overview");
   } catch (error) {
     status.textContent = `无法读取 Guardrail 状态：${error instanceof Error ? error.message : String(error)}`;
   }

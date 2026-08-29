@@ -211,6 +211,28 @@ class ConfigSnapshotManager:
         )
         return await self.publish_policy_library(library, expected_revision)
 
+    async def publish_shared_constants(
+        self,
+        constants: Mapping[str, str],
+        expected_revision: int | None,
+    ) -> SnapshotPublishResult:
+        """Publish the plugin-owned shared constant library only.
+
+        Constants remain part of each immutable runtime snapshot so rules,
+        policies, and the fallback graph resolve the same values per request.
+        They are not an AstrBot system-setting group and are never written via
+        AstrBot's fixed-schema configuration persistence.
+        """
+
+        if not isinstance(constants, Mapping):
+            return SnapshotPublishResult(
+                success=False,
+                diagnostics=("shared constants payload must be an object",),
+            )
+        raw_config = copy.deepcopy(self._current.source_config)
+        raw_config["system_constants"] = copy.deepcopy(dict(constants))
+        return await self.publish(raw_config, expected_revision)
+
     async def publish_policy_collection(
         self,
         policies: tuple[PolicyDefinition, ...],
@@ -272,9 +294,9 @@ class ConfigSnapshotManager:
     ) -> SnapshotPublishResult:
         """Persist system settings and publish their runtime snapshot.
 
-        Pages-owned policy libraries intentionally remain in the plugin JSON snapshot.
-        Dynamic system constants likewise use that plugin-owned snapshot because
-        AstrBot's schema persistence cannot safely represent an open-ended map.
+        Pages-owned policy libraries and shared constants remain in the plugin
+        JSON snapshot. Shared constants are published through their own method;
+        AstrBot's fixed-schema persistence never receives their open-ended map.
         """
 
         async with self._publish_lock:
@@ -292,7 +314,6 @@ class ConfigSnapshotManager:
             candidate_source = copy.deepcopy(current.source_config)
             for key in (
                 "fallback_policy_settings",
-                "system_constants",
                 "session_control",
                 "access_control",
                 "session_policy_state",
@@ -321,9 +342,6 @@ class ConfigSnapshotManager:
                     {
                         "fallback_policy_settings": copy.deepcopy(
                             candidate.source_config["fallback_policy_settings"]
-                        ),
-                        "system_constants": copy.deepcopy(
-                            candidate.source_config["system_constants"]
                         ),
                         "session_control": copy.deepcopy(
                             candidate.source_config["session_control"]
@@ -379,6 +397,7 @@ class ConfigSnapshotManager:
             config = snapshot.fallback_runtime_config
             defence_source = "system_fallback"
             effective_policy_id = ""
+        effective_policy = snapshot.policy_library.get_policy(effective_policy_id)
         rails = {}
         for name, rail in config.rails.items():
             enabled_nodes = sum(1 for node in rail.nodes if node.enabled and node.valid)
@@ -398,9 +417,21 @@ class ConfigSnapshotManager:
             "warning_count": len(snapshot.diagnostics),
             "rule_library_count": len(snapshot.policy_library.rules),
             "policy_library_count": len(snapshot.policy_library.policies),
+            "system_constant_count": len(config.system_constants),
+            "umo_policy_selection_count": len(
+                snapshot.policy_library.umo_policy_selections
+            ),
             "active_policy_id": snapshot.policy_library.active_policy_id,
             "defence_source": defence_source,
             "effective_policy_id": effective_policy_id,
+            "effective_policy_name": (
+                effective_policy.name if effective_policy is not None else ""
+            ),
+            "fallback_llm_review_enabled": bool(
+                snapshot.fallback_runtime_config.fallback_policy_settings.get(
+                    "enable_llm_review_in_fallback_policy", False
+                )
+            ),
             "rails": rails,
             "graph": {
                 "node_count": snapshot.graph.metrics.node_count,

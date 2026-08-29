@@ -70,7 +70,6 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             manager.publish_system_settings(
                 {
                     "fallback_policy_settings": {"max_text_chars": 2},
-                    "system_constants": {"SAFETY_PREAMBLE": "always be safe"},
                     "session_control": {},
                     "access_control": {
                         "auto_blacklist_enabled": True,
@@ -93,17 +92,9 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(saved_settings[0]["fallback_policy_settings"]["max_text_chars"], 2)
-        self.assertEqual(
-            saved_settings[0]["system_constants"]["SAFETY_PREAMBLE"],
-            "always be safe",
-        )
         self.assertTrue(saved_settings[0]["debug_settings"]["logging"])
         self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 2)
         self.assertTrue(manager.current.runtime_config.debug_settings["logging"])
-        self.assertEqual(
-            manager.current.runtime_config.system_constants["SAFETY_PREAMBLE"],
-            "always be safe",
-        )
         self.assertTrue(manager.current.runtime_config.access_control["auto_blacklist_enabled"])
         self.assertEqual(
             manager.current.runtime_config.session_policy_state["state_ttl_seconds"],
@@ -111,6 +102,17 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         )
         self.assertIs(manager.bind_event(_Adapter(), event), old_snapshot)
         self.assertEqual(old_snapshot.runtime_config.fallback_policy_settings["max_text_chars"], 1)
+
+        constants = asyncio.run(
+            manager.publish_shared_constants(
+                {"SAFETY_PREAMBLE": "always be safe"}, expected_revision=1
+            )
+        )
+        self.assertTrue(constants.success)
+        self.assertEqual(
+            manager.current.runtime_config.system_constants["SAFETY_PREAMBLE"],
+            "always be safe",
+        )
 
     def test_fallback_graph_has_fixed_steps_and_registered_detectors(self):
         manager = ConfigSnapshotManager({})
@@ -208,19 +210,9 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             path = Path(temp_dir) / "config_snapshot.json"
             manager = ConfigSnapshotManager({}, path)
             saved = asyncio.run(
-                manager.publish_system_settings(
-                    {
-                        "fallback_policy_settings": {},
-                        "system_constants": {
-                            "SAFETY_PREAMBLE": "Keep replies safe."
-                        },
-                        "session_control": {},
-                        "access_control": {},
-                        "session_policy_state": {},
-                        "debug_settings": {},
-                    },
+                manager.publish_shared_constants(
+                    {"SAFETY_PREAMBLE": "Keep replies safe."},
                     expected_revision=0,
-                    persist_settings=lambda _settings: None,
                 )
             )
             restarted = ConfigSnapshotManager({}, path)
@@ -369,6 +361,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         self.assertNotIn("runtime_config", overview)
         self.assertEqual(overview["defence_source"], "system_fallback")
+        self.assertEqual(overview["effective_policy_name"], "")
+        self.assertEqual(overview["rule_library_count"], 0)
+        self.assertEqual(overview["policy_library_count"], 0)
+        self.assertEqual(overview["system_constant_count"], 0)
         self.assertEqual(overview["rails"]["input_rail"]["enabled_rules"], 5)
 
     def test_legacy_rule_list_is_not_a_configuration_source(self):

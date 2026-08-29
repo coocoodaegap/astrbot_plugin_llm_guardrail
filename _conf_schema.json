@@ -154,13 +154,6 @@
       }
     }
   },
-  "system_constants": {
-    "type": "object",
-    "description": "系统常量",
-    "hint": "所有策略与系统兜底图共享的静态文本表。常量不是规则或元件，不进入 Canvas、调度、依赖、逻辑门或 NodeSignal。名称只能使用 1 至 64 个大写字母、数字和下划线；在策略文本模板中以 ${常量名} 引用，如果命名格式错误则无法被解析为可用常量。",
-    "items": {},
-    "default": {}
-  },
   "session_control": {
     "type": "object",
     "description": "生效会话控制",

@@ -123,7 +123,7 @@
       </div>
       <nav class="rule-library-sections" aria-label="规则库内容">
         <button id="show-rule-library-rules" type="button" class="is-active" aria-selected="true">规则</button>
-        <button id="show-system-constants" type="button" aria-selected="false">系统常量</button>
+        <button id="show-shared-constants" type="button" aria-selected="false">公用常量</button>
       </nav>
       <section id="rule-library-rules-section">
       <p id="rule-library-status" class="muted" aria-live="polite"></p>
@@ -142,17 +142,17 @@
         <button id="save-rule-library" type="button">保存所有打开规则</button>
       </div>
       </section>
-      <section id="system-constants-panel" hidden>
-      <section class="card system-constants-library" aria-labelledby="system-constants-heading">
+      <section id="shared-constants-panel" hidden>
+      <section class="card system-constants-library" aria-labelledby="shared-constants-heading">
         <header>
           <div>
-            <p class="eyebrow">SYSTEM CONSTANTS</p>
-            <h3 id="system-constants-heading">系统常量</h3>
-            <p>可被所有策略与系统兜底图复用的静态文本。它们不属于规则或元件，不进入 Canvas、调度、依赖、逻辑门或 NodeSignal。</p>
+            <p class="eyebrow">SHARED CONSTANTS</p>
+            <h3 id="shared-constants-heading">公用常量</h3>
+            <p>由 Guardrail 管理、可被所有策略与系统 fallback 图复用的静态文本。它们不属于规则、元件或系统设置，不进入 Canvas、调度、依赖、逻辑门或 NodeSignal。</p>
           </div>
-          <button id="save-system-constants" type="button">保存系统常量</button>
+          <button id="save-shared-constants" type="button">保存公用常量</button>
         </header>
-        <div id="system-constants" aria-live="polite"></div>
+        <div id="shared-constants" aria-live="polite"></div>
       </section>
       </section>
       </div>

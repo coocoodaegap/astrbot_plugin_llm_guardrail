@@ -56,6 +56,9 @@ class GuardrailPagesApiMixin:
             ("get_diagnostics", self._pages_get_diagnostics, ["GET"], "Get guardrail diagnostics"),
             ("get_system_settings", self._pages_get_system_settings, ["GET"], "Get normalized system settings"),
             ("save_system_settings", self._pages_save_system_settings, ["POST"], "Save and publish system settings"),
+            ("get_registered_providers", self._pages_get_registered_providers, ["GET"], "List registered chat providers"),
+            ("get_shared_constants", self._pages_get_shared_constants, ["GET"], "Get shared constants"),
+            ("save_shared_constants", self._pages_save_shared_constants, ["POST"], "Save shared constants"),
             ("get_access_control_records", self._pages_get_access_control_records, ["GET"], "List active input access-control records"),
             ("set_access_control_decision", self._pages_set_access_control_decision, ["POST"], "Create or replace an input access-control decision"),
             ("clear_access_control_decision", self._pages_clear_access_control_decision, ["POST"], "Clear an input access-control decision"),
@@ -106,7 +109,6 @@ class GuardrailPagesApiMixin:
                 "revision": snapshot.revision,
                 "settings": {
                     "fallback_policy_settings": dict(config.fallback_policy_settings),
-                    "system_constants": dict(config.system_constants),
                     "session_control": {
                         key: list(value) if isinstance(value, list) else value
                         for key, value in config.session_control.items()
@@ -116,6 +118,24 @@ class GuardrailPagesApiMixin:
                     "debug_settings": dict(config.debug_settings),
                 },
                 "schema": _load_system_settings_schema(),
+                "providers": self._pages_registered_chat_providers(),
+            }
+        )
+
+    async def _pages_get_shared_constants(self):
+        snapshot = self.snapshot_manager.current
+        return jsonify(
+            {
+                "success": True,
+                "revision": snapshot.revision,
+                "constants": dict(snapshot.runtime_config.system_constants),
+            }
+        )
+
+    async def _pages_get_registered_providers(self):
+        return jsonify(
+            {
+                "success": True,
                 "providers": self._pages_registered_chat_providers(),
             }
         )
@@ -188,12 +208,33 @@ class GuardrailPagesApiMixin:
             self.normalized_config = result.snapshot.runtime_config
         return self._pages_publish_response(result, "System settings")
 
+    async def _pages_save_shared_constants(self):
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        constants = payload.get("constants")
+        expected_revision = payload.get("expected_revision")
+        if not isinstance(constants, dict):
+            return self._pages_error("constants must be an object")
+        if not isinstance(expected_revision, int):
+            return self._pages_error("expected_revision must be an integer")
+        diagnostics = _validate_shared_constants(constants)
+        if diagnostics:
+            return self._pages_error(
+                "Shared constants are invalid.", 400, "\n".join(diagnostics)
+            )
+        result = await self.snapshot_manager.publish_shared_constants(
+            constants, expected_revision
+        )
+        if result.success and result.snapshot is not None:
+            self.normalized_config = result.snapshot.runtime_config
+        return self._pages_publish_response(result, "Shared constants")
+
     def _pages_persist_system_settings(self, settings: dict[str, Any]) -> None:
         """Write AstrBot-owned setting groups with in-memory rollback.
 
-        ``system_constants`` is intentionally excluded: its dynamic map is
-        persisted by the plugin snapshot manager, rather than AstrBot's
-        fixed-schema configuration serializer.
+        Shared constants are deliberately absent from this path: their dynamic
+        map is plugin-owned and persists through its dedicated Pages endpoint.
         """
 
         config = getattr(self, "config", None)
@@ -212,8 +253,6 @@ class GuardrailPagesApiMixin:
         }
         try:
             for key, value in settings.items():
-                if key == "system_constants":
-                    continue
                 config[key] = copy.deepcopy(value)
             save_config()
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
@@ -848,7 +887,6 @@ def _load_system_settings_schema() -> dict[str, Any]:
         key: raw_schema[key]
         for key in (
             "fallback_policy_settings",
-            "system_constants",
             "session_control",
             "access_control",
             "session_policy_state",
@@ -866,7 +904,6 @@ def _validate_system_settings_payload(
     diagnostics: list[str] = []
     expected_groups = {
         "fallback_policy_settings",
-        "system_constants",
         "session_control",
         "access_control",
         "session_policy_state",
@@ -880,18 +917,6 @@ def _validate_system_settings_payload(
         group_settings = settings.get(group_key)
         if not isinstance(group_schema, dict) or not isinstance(group_settings, dict):
             diagnostics.append(f"{group_key} must be an object")
-            continue
-        if group_key == "system_constants":
-            for name, value in group_settings.items():
-                if (
-                    not isinstance(name, str)
-                    or re.fullmatch(r"[A-Z0-9_]{1,64}", name) is None
-                ):
-                    diagnostics.append(
-                        "system_constants keys must use 1-64 uppercase letters, digits, or underscores"
-                    )
-                if not isinstance(value, str):
-                    diagnostics.append(f"system_constants.{name} must be a string")
             continue
         expected_fields = group_schema.get("items")
         if not isinstance(expected_fields, dict):
@@ -953,4 +978,16 @@ def _validate_system_settings_payload(
                 not isinstance(value, int) or isinstance(value, bool) or value < 1
             ):
                 diagnostics.append(f"{label} must be a positive integer")
+    return diagnostics
+
+
+def _validate_shared_constants(constants: dict[str, Any]) -> list[str]:
+    diagnostics: list[str] = []
+    for name, value in constants.items():
+        if not isinstance(name, str) or re.fullmatch(r"[A-Z0-9_]{1,64}", name) is None:
+            diagnostics.append(
+                "shared constant keys must use 1-64 uppercase letters, digits, or underscores"
+            )
+        if not isinstance(value, str):
+            diagnostics.append(f"shared constant {name!r} must be a string")
     return diagnostics

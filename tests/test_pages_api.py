@@ -134,6 +134,9 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/get_diagnostics",
             "/astrbot_plugin_llm_guardrail/get_system_settings",
             "/astrbot_plugin_llm_guardrail/save_system_settings",
+            "/astrbot_plugin_llm_guardrail/get_registered_providers",
+            "/astrbot_plugin_llm_guardrail/get_shared_constants",
+            "/astrbot_plugin_llm_guardrail/save_shared_constants",
             "/astrbot_plugin_llm_guardrail/get_access_control_records",
             "/astrbot_plugin_llm_guardrail/set_access_control_decision",
             "/astrbot_plugin_llm_guardrail/clear_access_control_decision",
@@ -293,7 +296,6 @@ class GuardrailPagesApiTests(unittest.TestCase):
             settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
             settings["fallback_policy_settings"]["max_text_chars"] = 321
             settings["fallback_policy_settings"]["max_retries"] = 2
-            settings["system_constants"] = {"SAFETY_PREAMBLE": "Keep replies safe."}
             settings["session_control"]["group_chat_mode"] = "all_pass"
             settings["session_policy_state"]["state_ttl_seconds"] = 7200
             settings["debug_settings"]["logging"] = True
@@ -334,16 +336,14 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(result[1], 400)
         self.assertEqual(plugin.config.save_count, 0)
 
-    def test_system_settings_rejects_invalid_system_constant_name(self):
+    def test_shared_constants_reject_invalid_name(self):
         plugin = _Plugin()
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):
-            settings = asyncio.run(plugin._pages_get_system_settings())["settings"]
-            settings["system_constants"] = {"not_allowed": "value"}
             with patch(
                 "pages_api.request",
-                _Request({"expected_revision": 0, "settings": settings}),
+                _Request({"expected_revision": 0, "constants": {"not_allowed": "value"}}),
             ):
-                result = asyncio.run(plugin._pages_save_system_settings())
+                result = asyncio.run(plugin._pages_save_shared_constants())
 
         self.assertEqual(result[1], 400)
         self.assertIn("uppercase letters", result[0]["detail"])
@@ -358,7 +358,6 @@ class GuardrailPagesApiTests(unittest.TestCase):
             set(result["settings"]),
             {
                 "fallback_policy_settings",
-                "system_constants",
                 "session_control",
                 "access_control",
                 "session_policy_state",
@@ -367,7 +366,6 @@ class GuardrailPagesApiTests(unittest.TestCase):
         )
         self.assertEqual(set(result["schema"]), set(result["settings"]))
         self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
-        self.assertEqual(result["settings"]["system_constants"], {})
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
         self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
         self.assertEqual(
@@ -378,6 +376,29 @@ class GuardrailPagesApiTests(unittest.TestCase):
         self.assertEqual(result["settings"]["session_policy_state"]["state_ttl_seconds"], 604800)
         self.assertFalse(result["settings"]["debug_settings"]["logging"])
         self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])
+
+    def test_shared_constants_return_and_publish_without_astrbot_config_write(self):
+        plugin = _Plugin()
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            listed = asyncio.run(plugin._pages_get_shared_constants())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "expected_revision": listed["revision"],
+                        "constants": {"SAFETY_PREAMBLE": "Keep replies safe."},
+                    }
+                ),
+            ):
+                saved = asyncio.run(plugin._pages_save_shared_constants())
+
+        self.assertEqual(listed["constants"], {})
+        self.assertTrue(saved["success"])
+        self.assertEqual(plugin.config.save_count, 0)
+        self.assertEqual(
+            plugin.snapshot_manager.current.runtime_config.system_constants,
+            {"SAFETY_PREAMBLE": "Keep replies safe."},
+        )
 
     def test_system_settings_rejects_invalid_access_control_duration(self):
         plugin = _Plugin()
