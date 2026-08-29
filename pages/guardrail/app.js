@@ -3450,7 +3450,8 @@ function deleteRule(ruleId) {
   openRuleIds = openRuleIds.filter((id) => id !== ruleId);
   openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`)?.remove();
   ruleEmptyState.hidden = openRuleIds.length > 0;
-  ruleStatus.textContent = "已从待保存的规则库移除规则。若策略仍绑定此规则，后端会拒绝保存。";
+  ruleStatus.textContent = "";
+  publishReport("规则已从待保存规则库移除；若策略仍绑定它，保存会被拒绝。", { tone: "warning" });
   renderRuleList();
 }
 function openSaveAsDialog(ruleId) {
@@ -3545,7 +3546,8 @@ function createRule() {
     default_action_on_hit: "default",
     default_action_on_error: "default",
   });
-  ruleStatus.textContent = "已新建规则，保存后才会发布。";
+  ruleStatus.textContent = "";
+  publishReport("已新建规则，保存后才会发布。", { tone: "warning" });
   cancelNewRuleCreation();
   openRule(id);
   renderRuleList();
@@ -3704,14 +3706,16 @@ async function refreshAccessControl() {
     const payload = await bridge.apiGet("get_access_control_records");
     if (epoch !== accessRefreshEpoch) return;
     if (!payload?.success) {
-      accessRecordsStatus.textContent = payload?.error || "无法读取访问控制状态。";
+      accessRecordsStatus.textContent = "";
+      publishReport(payload?.error || "无法读取访问控制状态。", { tone: "error" });
       return;
     }
     applyAccessRecordsPayload(payload);
-    accessRecordsStatus.textContent = `已加载 ${accessRecords.length} 条有效访问决定。`;
+    accessRecordsStatus.textContent = "";
   } catch (error) {
     if (epoch === accessRefreshEpoch) {
-      accessRecordsStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+      accessRecordsStatus.textContent = "";
+      publishReport(`读取访问控制状态失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
     }
   } finally {
     if (epoch === accessRefreshEpoch && !accessMutationInFlight) {
@@ -3764,7 +3768,7 @@ async function saveAccessDecisionMutation() {
 async function clearAccessDecision(record) {
   if (!bridge || accessMutationInFlight) return;
   setAccessMutationBusy(true);
-  accessRecordsStatus.textContent = `正在解除 ${record.principal_id} 的${record.decision === "pardon" ? "赦免" : "封禁"}…`;
+  accessRecordsStatus.textContent = "";
   try {
     const result = await bridge.apiPost("clear_access_control_decision", {
       platform_id: record.platform_id,
@@ -3773,14 +3777,14 @@ async function clearAccessDecision(record) {
       expected_record_revision: record.record_revision,
     });
     if (!result?.success) {
-      accessRecordsStatus.textContent = result?.error || "访问决定解除失败。";
+      publishReport(result?.error || "访问决定解除失败。", { tone: "error" });
       if (result?.conflict) await refreshAccessControl();
       return;
     }
-    accessRecordsStatus.textContent = "访问决定已解除。";
     await refreshAccessControl();
+    publishReport("访问决定已解除。");
   } catch (error) {
-    accessRecordsStatus.textContent = `解除失败：${error instanceof Error ? error.message : String(error)}`;
+    publishReport(`解除访问决定失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
   } finally {
     setAccessMutationBusy(false);
   }
@@ -4201,7 +4205,8 @@ async function refreshSessionPolicyStates(resetPage = false) {
     });
     if (epoch !== sessionPolicyStateRefreshEpoch) return;
     if (!payload?.success) {
-      sessionPolicyStateStatus.textContent = payload?.error || "无法读取会话策略状态。";
+      sessionPolicyStateStatus.textContent = "";
+      publishReport(payload?.error || "无法读取会话策略状态。", { tone: "error" });
       return;
     }
     sessionPolicyStateItems = Array.isArray(payload.items) ? payload.items : [];
@@ -4216,12 +4221,11 @@ async function refreshSessionPolicyStates(resetPage = false) {
     sessionPolicyMonitoringEnabled = Boolean(payload.monitoring_enabled);
     renderSessionPolicyStateList();
     rerenderOverviewIfReady();
-    sessionPolicyStateStatus.textContent = sessionPolicyMonitoringEnabled
-      ? `已加载 ${sessionPolicyStateTotal} 个 UMO 状态；P2-A 仅观察，不参与路由。`
-      : `状态采集当前已关闭；请在“系统设置 → 会话策略状态监控”启用后再发送请求。已加载 ${sessionPolicyStateTotal} 条历史状态。`;
+    sessionPolicyStateStatus.textContent = "";
   } catch (error) {
     if (epoch === sessionPolicyStateRefreshEpoch) {
-      sessionPolicyStateStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+      sessionPolicyStateStatus.textContent = "";
+      publishReport(`读取会话策略状态失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
     }
   } finally {
     if (epoch === sessionPolicyStateRefreshEpoch) {
@@ -4409,7 +4413,8 @@ async function refreshRagExperiences(resetPage = false) {
     });
     if (epoch !== ragExperienceRefreshEpoch) return;
     if (!payload?.success) {
-      ragExperienceStatus.textContent = payload?.error || "无法读取 RAG 经验记录。";
+      ragExperienceStatus.textContent = "";
+      publishReport(payload?.error || "无法读取 RAG 经验记录。", { tone: "error" });
       return;
     }
     ragExperienceItems = Array.isArray(payload.items) ? payload.items : [];
@@ -4423,10 +4428,11 @@ async function refreshRagExperiences(resetPage = false) {
     ragExperienceTotal = Number.isInteger(pagination.total) ? pagination.total : 0;
     renderRagExperienceList();
     rerenderOverviewIfReady();
-    ragExperienceStatus.textContent = `已加载 ${ragExperienceTotal} 条 RAG 命中经验记录。`;
+    ragExperienceStatus.textContent = "";
   } catch (error) {
     if (epoch === ragExperienceRefreshEpoch) {
-      ragExperienceStatus.textContent = `读取失败：${error instanceof Error ? error.message : String(error)}`;
+      ragExperienceStatus.textContent = "";
+      publishReport(`读取 RAG 经验记录失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
     }
   } finally {
     if (epoch === ragExperienceRefreshEpoch) {
@@ -4529,7 +4535,8 @@ async function deleteCurrentRagExperience() {
     }
     showRagExperienceList();
     await refreshRagExperiences();
-    ragExperienceStatus.textContent = "本地 RAG 经验记录已删除；AstrBot 知识库文档未受影响。";
+    ragExperienceStatus.textContent = "";
+    publishReport("本地 RAG 经验记录已删除；AstrBot 知识库文档未受影响。");
   } catch (error) {
     ragExperienceDetailStatus.textContent = `删除失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
@@ -4549,7 +4556,8 @@ function hasUnsavedRuleDrafts() {
 function applyRuleLibraryPayload(payload) {
   if (!payload?.success) throw new Error(payload?.error || "无法读取规则库。");
   if (hasUnsavedRuleDrafts()) {
-    ruleStatus.textContent = "检测到未保存的规则草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    ruleStatus.textContent = "";
+    publishReport("检测到未保存的规则草稿，已保留本地编辑内容；未用远端数据覆盖。", { tone: "warning" });
     return false;
   }
   const previousOpenRuleIds = [...openRuleIds];
@@ -4563,9 +4571,8 @@ function applyRuleLibraryPayload(payload) {
   renderRuleList();
   const validation = payload.validation || { warnings: [], fatal_errors: [] };
   const messages = [...(validation.fatal_errors || []), ...(validation.warnings || [])];
-  ruleStatus.textContent = messages.length
-    ? `revision ${payload.revision}: ${messages.join("; ")}`
-    : `已加载规则库 revision ${payload.revision}。`;
+  ruleStatus.textContent = "";
+  if (messages.length) publishReport(messages.join("；"), { tone: "warning" });
   return true;
 }
 function hasUnsavedPolicyDraft() {
@@ -4587,7 +4594,8 @@ function hasUnsavedPolicyDraft() {
 function applyPolicyLibraryPayload(payload) {
   if (!payload?.success) throw new Error(payload?.error || "无法读取策略库。");
   if (hasUnsavedPolicyDraft()) {
-    policyLibraryStatus.textContent = "检测到未保存的策略草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    policyLibraryStatus.textContent = "";
+    publishReport("检测到未保存的策略草稿，已保留本地编辑内容；未用远端数据覆盖。", { tone: "warning" });
     return false;
   }
   policyLibrary = {
@@ -4613,19 +4621,19 @@ function applyPolicyLibraryPayload(payload) {
   }
   const validation = payload.validation || { warnings: [], fatal_errors: [] };
   const messages = [...(validation.fatal_errors || []), ...(validation.warnings || [])];
-  policyLibraryStatus.textContent = messages.length
-    ? messages.join(" · ")
-    : `已加载 ${customPolicies().length} 条策略，revision ${payload.revision}。`;
+  policyLibraryStatus.textContent = "";
+  if (messages.length) publishReport(messages.join("；"), { tone: "warning" });
   return true;
 }
 function applySystemSettingsPayload(payload) {
   if (!payload?.success) throw new Error(payload?.error || "无法读取系统设置。");
   if (systemSettingsDirty) {
-    systemSettingsStatus.textContent = "检测到未保存的系统设置草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    systemSettingsStatus.textContent = "";
+    publishReport("检测到未保存的系统设置草稿，已保留本地编辑内容；未用远端数据覆盖。", { tone: "warning" });
     return false;
   }
   renderSystemSettings(payload);
-  systemSettingsStatus.textContent = `已加载系统设置 revision ${payload.revision}。`;
+  systemSettingsStatus.textContent = "";
   return true;
 }
 function applyProviderOptionsPayload(payload) {
@@ -4638,7 +4646,8 @@ function applyProviderOptionsPayload(payload) {
 function applySharedConstantsPayload(payload) {
   if (!payload?.success) throw new Error(payload?.error || "无法读取公用常量。");
   if (sharedConstantsDirty) {
-    ruleStatus.textContent = "检测到未保存的公用常量草稿，已保留本地编辑内容；未用远端数据覆盖。";
+    ruleStatus.textContent = "";
+    publishReport("检测到未保存的公用常量草稿，已保留本地编辑内容；未用远端数据覆盖。", { tone: "warning" });
     return false;
   }
   renderSharedConstantsEditor(payload.constants);
@@ -4695,10 +4704,12 @@ async function loadTabData(name) {
     } else if (name === "knowledge") {
       await refreshRagExperiences();
     }
-    if (isCurrent()) status.textContent = Number.isInteger(currentRevision)
-      ? `已加载配置快照 revision ${currentRevision}` : "页面数据已刷新";
+    if (isCurrent()) status.textContent = "";
   } catch (error) {
-    if (isCurrent()) status.textContent = `无法刷新页面数据：${error instanceof Error ? error.message : String(error)}`;
+    if (isCurrent()) {
+      status.textContent = "";
+      publishReport(`刷新页面数据失败：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
+    }
   }
 }
 policyGraphCanvas.addEventListener("click", (event) => {
