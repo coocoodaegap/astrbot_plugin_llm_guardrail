@@ -361,6 +361,7 @@ let currentRevision = null,
   selectedNewComponentType = null,
   saveAsSourceRuleId = null,
   pendingRuleDeletionId = null,
+  pendingRuleDeletionIds = new Set(),
   selectedNewTemplate = null,
   systemSettingsSchema = {},
   systemSettingsDraft = {},
@@ -1106,13 +1107,26 @@ function renderRuleList() {
     item.type = "button";
     item.className = "rule-card";
     item.classList.toggle("is-selected", openRuleIds.includes(rule.rule_id));
+    item.classList.toggle("is-pending-deletion", pendingRuleDeletionIds.has(rule.rule_id));
     title.textContent = rule.rule_id || "未命名规则";
     summaryText.textContent = ruleSummary(rule);
     chip.className = "template-chip";
     chip.textContent =
       templateDescriptions[rule.template_key] || rule.template_key || "未选择模板";
     item.append(title, summaryText, chip);
+    if (pendingRuleDeletionIds.has(rule.rule_id)) {
+      const pendingMarker = document.createElement("span");
+      pendingMarker.className = "rule-pending-deletion-marker";
+      pendingMarker.textContent = "待删除 · 点击取消";
+      item.append(pendingMarker);
+    }
     item.addEventListener("click", () => {
+      if (pendingRuleDeletionIds.has(rule.rule_id)) {
+        pendingRuleDeletionIds.delete(rule.rule_id);
+        publishReport(`已取消删除规则“${rule.rule_id}”。`);
+        renderRuleList();
+        return;
+      }
       openRule(rule.rule_id);
       renderRuleList();
     });
@@ -2642,7 +2656,8 @@ function availableRulesForPolicyRail(rail) {
   const supportedTemplates = supportedTemplatesByRail[rail] || new Set();
   const boundRuleIds = new Set((draft?.bindings || []).map((binding) => binding.rule_id));
   return ruleLibrary.rules.filter((rule) => (
-    supportedTemplates.has(rule.template_key) && !boundRuleIds.has(rule.rule_id)
+    !pendingRuleDeletionIds.has(rule.rule_id)
+    && supportedTemplates.has(rule.template_key) && !boundRuleIds.has(rule.rule_id)
   ));
 }
 function renderPolicyRulePicker(rail) {
@@ -3408,10 +3423,15 @@ function closeRuleEditor(ruleId) {
 }
 async function persistRuleLibrary(successMessage) {
   if (!Number.isInteger(currentRevision)) return false;
+  const deletedRuleIds = new Set(pendingRuleDeletionIds);
+  const savedRuleLibrary = {
+    ...ruleLibrary,
+    rules: ruleLibrary.rules.filter((rule) => !deletedRuleIds.has(rule.rule_id)),
+  };
   try {
     const result = await bridge.apiPost("save_rule_library", {
       expected_revision: currentRevision,
-      rule_library: ruleLibrary,
+      rule_library: savedRuleLibrary,
     });
     if (!result.success) {
       ruleStatus.textContent = "";
@@ -3419,6 +3439,15 @@ async function persistRuleLibrary(successMessage) {
       return false;
     }
     currentRevision = result.revision;
+    if (deletedRuleIds.size) {
+      ruleLibrary.rules = savedRuleLibrary.rules;
+      for (const ruleId of deletedRuleIds) {
+        openRuleIds = openRuleIds.filter((id) => id !== ruleId);
+        openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`)?.remove();
+        pendingRuleDeletionIds.delete(ruleId);
+      }
+      ruleEmptyState.hidden = openRuleIds.length > 0;
+    }
     ruleStatus.textContent = "";
     publishReport(successMessage(result.revision));
     rerenderOverviewIfReady();
@@ -3442,16 +3471,16 @@ async function saveRuleEditor(ruleId) {
 }
 function requestRuleDeletion(ruleId) {
   pendingRuleDeletionId = ruleId;
-  confirmRuleDeleteMessage.textContent = `规则“${ruleId}”会从待保存规则库中移除；若策略仍绑定它，保存会被拒绝。`;
+  confirmRuleDeleteMessage.textContent = `规则“${ruleId}”会标记为待删除；保存规则库时才会真正移除。若策略仍绑定它，保存会被拒绝。`;
   confirmRuleDeleteDialog.showModal();
 }
 function deleteRule(ruleId) {
-  ruleLibrary.rules = ruleLibrary.rules.filter((rule) => rule.rule_id !== ruleId);
   openRuleIds = openRuleIds.filter((id) => id !== ruleId);
   openRuleEditors.querySelector(`[data-rule-id="${ruleId}"]`)?.remove();
   ruleEmptyState.hidden = openRuleIds.length > 0;
+  pendingRuleDeletionIds.add(ruleId);
   ruleStatus.textContent = "";
-  publishReport("规则已从待保存规则库移除；若策略仍绑定它，保存会被拒绝。", { tone: "warning" });
+  publishReport("规则已标记为待删除；再次点击该卡片可取消，保存规则库时才会真正移除。", { tone: "warning" });
   renderRuleList();
 }
 function openSaveAsDialog(ruleId) {
@@ -4551,7 +4580,8 @@ function applyOverviewPayload(payload) {
   currentRevision = payload.overview.revision;
 }
 function hasUnsavedRuleDrafts() {
-  return [...openRuleEditors.children].some((editor) => editor.classList.contains("is-dirty"));
+  return pendingRuleDeletionIds.size > 0
+    || [...openRuleEditors.children].some((editor) => editor.classList.contains("is-dirty"));
 }
 function applyRuleLibraryPayload(payload) {
   if (!payload?.success) throw new Error(payload?.error || "无法读取规则库。");

@@ -2662,6 +2662,35 @@ button:disabled {
     box-shadow: 0 0 9px var(--signal);
 }
 
+.rule-card.is-pending-deletion,
+.rule-card.is-pending-deletion:hover,
+.rule-card.is-pending-deletion.is-selected {
+    color: #ffe7e5;
+    background: #3a1518;
+    border-color: #f06b71;
+    border-style: dashed;
+    box-shadow: inset 0 0 0 1px rgb(255 114 120 / 18%);
+}
+
+.rule-card.is-pending-deletion::before,
+.rule-card.is-pending-deletion.is-selected::before {
+    background: #ff737a;
+    box-shadow: 0 0 9px rgb(255 91 100 / 70%);
+}
+
+.rule-card.is-pending-deletion small {
+    color: #f3b9b8;
+}
+
+.rule-pending-deletion-marker {
+    display: block;
+    margin-top: 7px;
+    color: #ff9d9f;
+    font-family: var(--font-display);
+    font-size: .66rem;
+    letter-spacing: .03em;
+}
+
 .rule-card small,
 .policy-list-item small,
 .policy-list-item span {
