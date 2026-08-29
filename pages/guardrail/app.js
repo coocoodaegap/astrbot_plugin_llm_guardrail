@@ -36,7 +36,6 @@ const status = $("status"),
   policyGraphCanvas = $("policy-graph-canvas"),
   policyGraphStatus = $("policy-graph-status"),
   policyGraphEditor = $("policy-graph-editor"),
-  policyGraphEditorStatus = $("policy-graph-editor-status"),
   savePolicy = $("save-policy"),
   policyUmoList = $("policy-umo-list"),
   setDefaultPolicy = $("set-default-policy"),
@@ -2024,6 +2023,19 @@ function requestPolicyBindingRemoval(ruleId) {
   confirmPolicyBindingRemoveMessage.textContent = `将仅从当前策略移除节点“${ruleId}”。该节点自身的依赖会一并移除。${dependentNote}`;
   confirmPolicyBindingRemoveDialog.showModal();
 }
+function clearPolicyGraphNodeDependency(nodeId) {
+  const draft = getPolicyGraphDraft();
+  const currentNode = findPolicyGraphDraftNode(nodeId, draft);
+  if (!currentNode?.data?.depend_on) {
+    setPolicyGraphEditorStatus("当前节点没有可解除的依赖项。", true);
+    return;
+  }
+  delete currentNode.data.depend_on;
+  markPolicyGraphNodeDirty(nodeId);
+  renderPolicyGraph(draft);
+  renderPolicyGraphEditor();
+  setPolicyGraphEditorStatus("已暂存解除依赖项；点击“保存策略”后写入快照。");
+}
 function removePolicyBinding() {
   const ruleId = pendingPolicyBindingRemovalId;
   const draft = getPolicyGraphDraft();
@@ -2267,8 +2279,7 @@ function policyStepDefinition(rail) {
   return policyStepDefinitions.find((definition) => definition.rail === rail) || null;
 }
 function setPolicyGraphEditorStatus(message = "", isError = false) {
-  policyGraphEditorStatus.textContent = message;
-  policyGraphEditorStatus.classList.toggle("is-error", isError);
+  if (message) publishReport(message, { tone: isError ? "error" : "success" });
 }
 function createPolicyGraphEditorField(labelText, hintText, control, fullWidth = false) {
   const label = document.createElement("label");
@@ -2613,7 +2624,7 @@ function renderPolicyGraphNodeEditor(node) {
   selectDependencyButton.type = "button";
   selectDependencyButton.className = "button-secondary policy-graph-editor-action";
   const selectingDependency = policyGraphState.dependencySelection?.dependentId === node.id;
-  selectDependencyButton.textContent = selectingDependency ? "取消选择依赖项" : "选择依赖项";
+  selectDependencyButton.textContent = selectingDependency ? "取消选择依赖项 · D" : "选择依赖项 · D";
   selectDependencyButton.addEventListener("click", () => {
     if (selectingDependency) cancelPolicyDependencySelection("已取消依赖项选择。");
     else beginPolicyDependencySelection(node.id);
@@ -2623,24 +2634,15 @@ function renderPolicyGraphNodeEditor(node) {
     const clearDependencyButton = document.createElement("button");
     clearDependencyButton.type = "button";
     clearDependencyButton.className = "button-secondary policy-graph-editor-action";
-    clearDependencyButton.textContent = "移除依赖";
-    clearDependencyButton.addEventListener("click", () => {
-      const draft = getPolicyGraphDraft();
-      const currentNode = findPolicyGraphDraftNode(node.id, draft);
-      if (!currentNode) return;
-      delete currentNode.data.depend_on;
-      markPolicyGraphNodeDirty(node.id);
-      renderPolicyGraph(draft);
-      renderPolicyGraphEditor();
-      setPolicyGraphEditorStatus("已暂存移除依赖；点击“保存策略”后写入快照。");
-    });
+    clearDependencyButton.textContent = "解除依赖项 · ⇧D";
+    clearDependencyButton.addEventListener("click", () => clearPolicyGraphNodeDependency(node.id));
     dependencyActions.append(clearDependencyButton);
   }
   editor.append(dependencyActions);
   const removeBindingButton = document.createElement("button");
   removeBindingButton.type = "button";
   removeBindingButton.className = "danger-button policy-graph-editor-action";
-  removeBindingButton.textContent = "从当前策略移除";
+  removeBindingButton.textContent = "从当前策略移除 · ⇧Del";
   removeBindingButton.addEventListener("click", () => requestPolicyBindingRemoval(node.id));
   editor.append(removeBindingButton);
   if (node.issues.length) {
@@ -4742,6 +4744,43 @@ async function loadTabData(name) {
     }
   }
 }
+function isPolicyGraphShortcutEditableTarget(target) {
+  return target instanceof Element
+    && Boolean(target.closest("input, textarea, select, button, [contenteditable='true']"));
+}
+function handlePolicyGraphShortcut(event) {
+  if (
+    activeTabName !== "policies"
+    || policyDetailPanel.hidden
+    || event.isComposing
+    || event.altKey
+    || event.ctrlKey
+    || event.metaKey
+    || isPolicyGraphShortcutEditableTarget(event.target)
+    || document.querySelector("dialog[open]")
+  ) return;
+  const nodeId = policyGraphState.selectedNodeId;
+  const node = nodeId ? policyGraphState.model?.nodeById.get(nodeId) : null;
+  if (!node) return;
+  const key = event.key.toLowerCase();
+  if (key === "d" && !event.shiftKey) {
+    event.preventDefault();
+    if (policyGraphState.dependencySelection?.dependentId === nodeId) {
+      cancelPolicyDependencySelection("已取消依赖项选择。");
+    } else beginPolicyDependencySelection(nodeId);
+    return;
+  }
+  if (key === "d" && event.shiftKey) {
+    event.preventDefault();
+    clearPolicyGraphNodeDependency(nodeId);
+    return;
+  }
+  if (event.key === "Delete" && event.shiftKey) {
+    event.preventDefault();
+    requestPolicyBindingRemoval(nodeId);
+  }
+}
+document.addEventListener("keydown", handlePolicyGraphShortcut);
 policyGraphCanvas.addEventListener("click", (event) => {
   const node = policyGraphNodeAt(event.clientX, event.clientY);
   const dependencySelection = policyGraphState.dependencySelection;

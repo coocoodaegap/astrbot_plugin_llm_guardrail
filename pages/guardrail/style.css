@@ -720,25 +720,6 @@ button:disabled {
     text-align: center
 }
 
-.policy-graph-editor-status {
-    min-height: 20px;
-    margin: 9px 0 0;
-    color: #64748b;
-    font-size: .84rem
-}
-
-.policy-graph-editor-status:empty {
-    display: none
-}
-
-.policy-graph-editor-status.is-error {
-    padding: 8px 10px;
-    color: #b42318;
-    background: #fef3f2;
-    border: 1px solid #fecdca;
-    border-radius: 6px
-}
-
 .policy-session-assignment h3 {
     margin: 0 0 8px;
     color: #26334a;
@@ -3045,11 +3026,6 @@ button:disabled {
     color: var(--muted);
 }
 
-.policy-graph-editor-status {
-    color: var(--muted);
-}
-
-.policy-graph-editor-status.is-error,
 .form-status,
 .danger-notice {
     color: #ffd7da;
