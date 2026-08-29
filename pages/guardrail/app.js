@@ -512,7 +512,7 @@ function showOverviewPolicyPath(policyId) {
 }
 function renderOverviewDefaultPolicyPath(overview) {
   overviewDefaultPolicyPath.replaceChildren();
-  const policyId = String(policyLibrary.active_policy_id || overview.active_policy_id || "").trim();
+  const policyId = String(overview.effective_policy_id || "").trim();
   const policy = overviewPolicyById(policyId);
   const mappingCount = Object.keys(policyLibrary.umo_policy_selections || {}).length;
   const fallbackSettings = systemSettingsDraft.fallback_policy_settings || {};
@@ -531,7 +531,7 @@ function renderOverviewDefaultPolicyPath(overview) {
       mappingCount ? String(mappingCount) + " 项 UMO 显式选择" : "未设置显式选择",
     );
     appendOverviewLine(details, "失效回退", "系统 fallback 图");
-    action.textContent = "查看策略";
+    action.textContent = "策略详情";
     action.addEventListener("click", () => showOverviewPolicyPath(policy.policy_id));
   } else {
     description.textContent = "尚未指定默认策略";
@@ -541,8 +541,8 @@ function renderOverviewDefaultPolicyPath(overview) {
       "LLM 旁审",
       llmReviewEnabled ? "fallback 中已开启" : "fallback 中未开启",
     );
-    action.textContent = "策略编排";
-    action.addEventListener("click", () => showOverviewPolicyPath(""));
+    action.textContent = "策略详情";
+    action.disabled = true;
   }
   identity.className = "overview-default-policy-identity";
   identity.append(title, description);
@@ -598,7 +598,7 @@ function renderOverviewRails(overview) {
   let enabledCount = 0;
   let enabledNodes = 0;
   let totalNodes = 0;
-  const activePolicyId = String(policyLibrary.active_policy_id || overview.active_policy_id || "").trim();
+  const activePolicyId = String(overview.effective_policy_id || "").trim();
   for (const definition of overviewRailDefinitions) {
     const rail = overview.rails?.[definition.rail] || {};
     const enabled = rail.enabled !== false;

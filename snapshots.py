@@ -356,10 +356,29 @@ class ConfigSnapshotManager:
             return SnapshotPublishResult(success=True, snapshot=candidate)
 
     def overview(self) -> dict[str, Any]:
-        """Return a safe, small Pages overview without raw user configuration."""
+        """Return the effective default defence summary without raw configuration.
+
+        The Pages overview describes the graph used for requests that do not
+        resolve to a UMO-specific policy.  It must therefore use the compiled
+        default policy when available, or the code-owned fallback graph when
+        no usable default policy exists.
+        """
 
         snapshot = self._current
-        config = snapshot.runtime_config
+        default_policy_id = snapshot.policy_library.active_policy_id
+        default_config = snapshot.policy_runtime_configs.get(default_policy_id)
+        if (
+            default_policy_id
+            and snapshot.policy_library.is_policy_usable(default_policy_id)
+            and default_config is not None
+        ):
+            config = default_config
+            defence_source = "default_policy"
+            effective_policy_id = default_policy_id
+        else:
+            config = snapshot.fallback_runtime_config
+            defence_source = "system_fallback"
+            effective_policy_id = ""
         rails = {}
         for name, rail in config.rails.items():
             enabled_nodes = sum(1 for node in rail.nodes if node.enabled and node.valid)
@@ -380,6 +399,8 @@ class ConfigSnapshotManager:
             "rule_library_count": len(snapshot.policy_library.rules),
             "policy_library_count": len(snapshot.policy_library.policies),
             "active_policy_id": snapshot.policy_library.active_policy_id,
+            "defence_source": defence_source,
+            "effective_policy_id": effective_policy_id,
             "rails": rails,
             "graph": {
                 "node_count": snapshot.graph.metrics.node_count,

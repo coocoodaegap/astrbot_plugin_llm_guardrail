@@ -4119,7 +4119,7 @@ textarea,
 
 .overview-default-policy-path {
     display: grid;
-    grid-template-columns: minmax(180px, .9fr) minmax(220px, 1.3fr) auto;
+    grid-template-columns: minmax(180px, 1fr) max-content auto;
     gap: 16px;
     align-items: center;
     margin-top: 14px;
@@ -4157,10 +4157,11 @@ textarea,
 }
 
 .overview-default-policy-path > div:not(.overview-default-policy-identity) > div {
-    display: flex;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: max-content max-content;
+    column-gap: 9px;
     align-items: baseline;
-    justify-content: space-between;
+    justify-content: start;
     min-width: 0;
 }
 
@@ -4175,7 +4176,7 @@ textarea,
     font-family: var(--font-display);
     font-size: .68rem;
     font-weight: 600;
-    text-align: right;
+    text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
 }

@@ -322,6 +322,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn("function renderOverviewDefaultPolicyPath", javascript)
+        self.assertIn("overview.effective_policy_id", javascript)
         self.assertIn("function renderOverviewRails", javascript)
         self.assertIn("function renderOverviewAssets", javascript)
         self.assertIn("Object.keys(componentDefinitions).length", javascript)
@@ -332,6 +333,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("ragExperienceTotal", javascript)
         self.assertIn(".overview-status-grid", stylesheet)
         self.assertIn(".overview-default-policy-path", stylesheet)
+        self.assertIn("grid-template-columns: minmax(180px, 1fr) max-content auto", stylesheet)
         self.assertIn(".overview-rail-coverage", stylesheet)
         self.assertIn(".overview-metric-grid", stylesheet)
         self.assertIn("#diagnostics.overview-diagnostics-list", stylesheet)

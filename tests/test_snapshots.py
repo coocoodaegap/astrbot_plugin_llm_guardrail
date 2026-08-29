@@ -141,6 +141,20 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertNotIn("inputs is empty", " ".join(config.warnings))
         self.assertFalse(config.rails["output_rail"].nodes)
 
+    def test_overview_uses_fallback_graph_when_no_default_policy_exists(self):
+        overview = ConfigSnapshotManager({}).overview()
+
+        self.assertEqual(overview["defence_source"], "system_fallback")
+        self.assertEqual(overview["effective_policy_id"], "")
+        self.assertTrue(overview["rails"]["input_rail"]["enabled"])
+        self.assertEqual(overview["rails"]["input_rail"]["enabled_nodes"], 5)
+        self.assertEqual(overview["rails"]["input_rail"]["total_nodes"], 5)
+        self.assertFalse(overview["rails"]["routing_rail"]["enabled"])
+        self.assertFalse(overview["rails"]["request_rail"]["enabled"])
+        self.assertFalse(overview["rails"]["prompt_rail"]["enabled"])
+        self.assertTrue(overview["rails"]["output_rail"]["enabled"])
+        self.assertEqual(overview["rails"]["output_rail"]["total_nodes"], 0)
+
     def test_fallback_graph_keeps_access_control_system_settings(self):
         manager = ConfigSnapshotManager(
             {
@@ -354,7 +368,8 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         overview = manager.overview()
 
         self.assertNotIn("runtime_config", overview)
-        self.assertEqual(overview["rails"]["input_rail"]["enabled_rules"], 0)
+        self.assertEqual(overview["defence_source"], "system_fallback")
+        self.assertEqual(overview["rails"]["input_rail"]["enabled_rules"], 5)
 
     def test_legacy_rule_list_is_not_a_configuration_source(self):
         manager = ConfigSnapshotManager(
