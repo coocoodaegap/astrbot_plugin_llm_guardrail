@@ -47,17 +47,71 @@
       <div class="page-section-heading">
         <p class="eyebrow">RUNTIME OVERVIEW</p>
         <h2>总览</h2>
-        <p>查看当前快照、策略防线与需要优先处理的运行诊断。</p>
+        <p>查看当前快照、生效防线与需要优先处理的配置诊断。</p>
       </div>
-      <div class="overview-grid">
-        <section class="card">
-          <h2>配置快照</h2>
-          <dl id="snapshot-summary"></dl>
+      <div class="overview-status-grid">
+        <section class="card overview-health-card" aria-labelledby="overview-health-heading">
+          <header class="overview-card-heading">
+            <div>
+              <p class="eyebrow">SNAPSHOT HEALTH</p>
+              <h3 id="overview-health-heading">配置快照</h3>
+            </div>
+            <span id="overview-health-state" class="overview-state-pill">正在读取</span>
+          </header>
+          <dl id="snapshot-summary" class="overview-snapshot-data"></dl>
+        </section>
+        <section class="card overview-priority-card" aria-labelledby="overview-priority-heading">
+          <header class="overview-card-heading">
+            <div>
+              <p class="eyebrow">PRIORITY QUEUE</p>
+              <h3 id="overview-priority-heading">优先处理</h3>
+            </div>
+          </header>
+          <div id="overview-priority-summary" class="overview-priority-summary"></div>
         </section>
       </div>
-      <section class="card">
-        <h2>诊断</h2>
-        <ul id="diagnostics"></ul>
+      <section class="card overview-rail-section" aria-labelledby="overview-rails-heading">
+        <header class="overview-section-heading">
+          <div>
+            <p class="eyebrow">DEFAULT POLICY DEFENCE</p>
+            <h3 id="overview-rails-heading">默认策略防线</h3>
+            <p>展示默认策略或系统 fallback 图，以及其中每个 Step 的开关与有效节点覆盖；点击可进入策略编排。</p>
+          </div>
+          <p id="overview-rail-summary" class="overview-section-meta"></p>
+        </header>
+        <div id="overview-default-policy-path" class="overview-default-policy-path"></div>
+        <div id="overview-rail-coverage" class="overview-rail-coverage" aria-live="polite"></div>
+      </section>
+      <div class="overview-secondary-grid">
+        <section class="card overview-assets-card" aria-labelledby="overview-assets-heading">
+          <header class="overview-section-heading">
+            <div>
+              <p class="eyebrow">CONFIGURATION ASSETS</p>
+              <h3 id="overview-assets-heading">策略与资产</h3>
+            </div>
+          </header>
+          <div id="overview-assets" class="overview-metric-grid" aria-live="polite"></div>
+        </section>
+        <section class="card overview-boundary-card" aria-labelledby="overview-boundary-heading">
+          <header class="overview-section-heading">
+            <div>
+              <p class="eyebrow">PROTECTION BOUNDARY</p>
+              <h3 id="overview-boundary-heading">防护边界</h3>
+            </div>
+          </header>
+          <div id="overview-boundary" class="overview-metric-grid" aria-live="polite"></div>
+        </section>
+      </div>
+      <section class="card overview-diagnostics-card" aria-labelledby="overview-diagnostics-heading">
+        <header class="overview-section-heading">
+          <div>
+            <p class="eyebrow">ACTIONABLE DIAGNOSTICS</p>
+            <h3 id="overview-diagnostics-heading">配置诊断</h3>
+            <p>诊断来自当前已发布快照；修复并保存后，新请求才会读取更新后的配置。</p>
+          </div>
+          <button id="overview-open-system-settings" type="button" class="button-secondary">打开系统设置</button>
+        </header>
+        <ul id="diagnostics" class="overview-diagnostics-list"></ul>
       </section>
     </section>
     <section class="tab-panel" id="panel-rules" role="tabpanel" aria-labelledby="tab-rules" data-panel="rules" hidden>

@@ -305,6 +305,38 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("setSessionPolicyStateView(false);", session_list_view)
         self.assertIn("setSessionPolicyStateView(true);", session_detail_view)
 
+    def test_overview_surfaces_default_policy_defence_and_bounded_counts(self):
+        html = (PAGES_DIR / "index.html").read_text(encoding="utf-8")
+        javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")
+        stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
+
+        for element_id in (
+            "overview-health-state",
+            "overview-default-policy-path",
+            "overview-priority-summary",
+            "overview-rail-summary",
+            "overview-rail-coverage",
+            "overview-assets",
+            "overview-boundary",
+            "overview-open-system-settings",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("function renderOverviewDefaultPolicyPath", javascript)
+        self.assertIn("function renderOverviewRails", javascript)
+        self.assertIn("function renderOverviewAssets", javascript)
+        self.assertIn("Object.keys(componentDefinitions).length", javascript)
+        self.assertIn("function renderOverviewBoundary", javascript)
+        self.assertIn("function rerenderOverviewIfReady", javascript)
+        self.assertIn('switchTab("system")', javascript)
+        self.assertIn("sessionPolicyStateTotal", javascript)
+        self.assertIn("ragExperienceTotal", javascript)
+        self.assertIn(".overview-status-grid", stylesheet)
+        self.assertIn(".overview-default-policy-path", stylesheet)
+        self.assertIn(".overview-rail-coverage", stylesheet)
+        self.assertIn(".overview-metric-grid", stylesheet)
+        self.assertIn("#diagnostics.overview-diagnostics-list", stylesheet)
+        self.assertIn(".overview-diagnostics-list", stylesheet)
+
 
 if __name__ == "__main__":
     unittest.main()

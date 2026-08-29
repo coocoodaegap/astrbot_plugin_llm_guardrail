@@ -3,6 +3,14 @@ const $ = (id) => document.getElementById(id);
 const status = $("status"),
   summary = $("snapshot-summary"),
   diagnostics = $("diagnostics"),
+  overviewHealthState = $("overview-health-state"),
+  overviewDefaultPolicyPath = $("overview-default-policy-path"),
+  overviewPrioritySummary = $("overview-priority-summary"),
+  overviewRailSummary = $("overview-rail-summary"),
+  overviewRailCoverage = $("overview-rail-coverage"),
+  overviewAssets = $("overview-assets"),
+  overviewBoundary = $("overview-boundary"),
+  overviewOpenSystemSettings = $("overview-open-system-settings"),
   systemSettings = $("system-settings"),
   systemSettingsStatus = $("system-settings-status"),
   saveSystemSettings = $("save-system-settings"),
@@ -335,6 +343,8 @@ const systemOptionDescriptions = {
   },
 };
 let currentRevision = null,
+  latestOverview = null,
+  latestDiagnostics = [],
   ruleLibrary = { rules: [] },
   policyLibrary = { policies: [], active_policy_id: "", umo_policy_selections: {} },
   openRuleIds = [],
@@ -440,6 +450,7 @@ document
   .forEach((tab) =>
     tab.addEventListener("click", () => switchTab(tab.dataset.tab)),
   );
+overviewOpenSystemSettings.addEventListener("click", () => switchTab("system"));
 function addSummary(label, value) {
   const term = document.createElement("dt"),
     detail = document.createElement("dd");
@@ -447,21 +458,235 @@ function addSummary(label, value) {
   detail.textContent = String(value);
   summary.append(term, detail);
 }
-function renderOverview(overview) {
-  summary.replaceChildren();
-  addSummary("Revision", overview.revision);
-  addSummary("Schema", overview.schema_version);
-  addSummary("Warnings", overview.warning_count);
-  addSummary("Active policy", overview.active_policy_id);
-  addSummary(
-    "Graph",
-    `${overview.graph.node_count} rules / ${overview.graph.edge_count} edges`,
+const overviewRailDefinitions = Object.freeze([
+  { rail: "input_rail", step: "Step 1", label: "输入分析" },
+  { rail: "routing_rail", step: "Step 2", label: "模型路由" },
+  { rail: "request_rail", step: "Step 3", label: "请求审查" },
+  { rail: "prompt_rail", step: "Step 4", label: "提示词增强" },
+  { rail: "output_rail", step: "Step 5", label: "输出检查" },
+]);
+function formatOverviewTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "未记录";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  try {
+    return date.toLocaleString("zh-CN", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return raw;
+  }
+}
+function overviewCount(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+function appendOverviewLine(container, label, value) {
+  const row = document.createElement("div");
+  const term = document.createElement("span");
+  const detail = document.createElement("strong");
+  term.textContent = label;
+  detail.textContent = value;
+  row.append(term, detail);
+  container.append(row);
+}
+function createOverviewMetric(label, value, note = "") {
+  const metric = document.createElement("article");
+  const count = document.createElement("strong");
+  const title = document.createElement("span");
+  const description = document.createElement("small");
+  metric.className = "overview-metric";
+  count.textContent = String(value);
+  title.textContent = label;
+  description.textContent = note;
+  metric.append(count, title, description);
+  return metric;
+}
+function overviewPolicyById(policyId) {
+  return policyLibrary.policies.find((policy) => policy.policy_id === policyId) || null;
+}
+function showOverviewPolicyPath(policyId) {
+  switchTab("policies");
+  if (policyId && overviewPolicyById(policyId)) showPolicyDetail(policyId);
+}
+function renderOverviewDefaultPolicyPath(overview) {
+  overviewDefaultPolicyPath.replaceChildren();
+  const policyId = String(policyLibrary.active_policy_id || overview.active_policy_id || "").trim();
+  const policy = overviewPolicyById(policyId);
+  const mappingCount = Object.keys(policyLibrary.umo_policy_selections || {}).length;
+  const fallbackSettings = systemSettingsDraft.fallback_policy_settings || {};
+  const llmReviewEnabled = Boolean(fallbackSettings.enable_llm_review_in_fallback_policy);
+  const identity = document.createElement("div");
+  const title = document.createElement("strong");
+  const description = document.createElement("p");
+  const details = document.createElement("div");
+  const action = document.createElement("button");
+  title.textContent = policy ? (policy.name || policy.policy_id) : "系统 fallback 图";
+  if (policy) {
+    description.textContent = "默认策略 · " + policy.policy_id;
+    appendOverviewLine(
+      details,
+      "会话指定",
+      mappingCount ? String(mappingCount) + " 项 UMO 显式选择" : "未设置显式选择",
+    );
+    appendOverviewLine(details, "失效回退", "系统 fallback 图");
+    action.textContent = "查看策略";
+    action.addEventListener("click", () => showOverviewPolicyPath(policy.policy_id));
+  } else {
+    description.textContent = "尚未指定默认策略";
+    appendOverviewLine(details, "请求路径", "找不到合法策略时使用 fallback");
+    appendOverviewLine(
+      details,
+      "LLM 旁审",
+      llmReviewEnabled ? "fallback 中已开启" : "fallback 中未开启",
+    );
+    action.textContent = "策略编排";
+    action.addEventListener("click", () => showOverviewPolicyPath(""));
+  }
+  identity.className = "overview-default-policy-identity";
+  identity.append(title, description);
+  action.type = "button";
+  action.className = "button-secondary overview-inline-action";
+  overviewDefaultPolicyPath.append(identity, details, action);
+}
+function renderOverviewPriority(overview) {
+  overviewPrioritySummary.replaceChildren();
+  const messages = [];
+  const diagnosticCount = latestDiagnostics.length || overviewCount(overview.warning_count);
+  if (diagnosticCount) {
+    messages.push({
+      tone: "is-warning",
+      title: "发现 " + diagnosticCount + " 项配置诊断",
+      detail: "请先确认诊断是否会使节点降级或使保存失败。",
+    });
+  }
+  if (!String(policyLibrary.active_policy_id || overview.active_policy_id || "").trim()) {
+    messages.push({
+      tone: "is-attention",
+      title: "未指定默认策略",
+      detail: "未匹配到合法策略的请求会使用系统 fallback 图。",
+    });
+  }
+  if (overview.graph?.has_cycle_suspect) {
+    messages.push({
+      tone: "is-danger",
+      title: "检测到依赖图循环迹象",
+      detail: "请在策略编排中检查节点依赖关系。",
+    });
+  }
+  if (!messages.length) {
+    messages.push({
+      tone: "is-clear",
+      title: "当前没有待处理的配置提示",
+      detail: "当前快照没有返回需要处理的配置项。",
+    });
+  }
+  for (const message of messages.slice(0, 3)) {
+    const item = document.createElement("article");
+    const title = document.createElement("strong");
+    const detail = document.createElement("span");
+    item.className = "overview-priority-item " + message.tone;
+    title.textContent = message.title;
+    detail.textContent = message.detail;
+    item.append(title, detail);
+    overviewPrioritySummary.append(item);
+  }
+}
+function renderOverviewRails(overview) {
+  overviewRailCoverage.replaceChildren();
+  let enabledCount = 0;
+  let enabledNodes = 0;
+  let totalNodes = 0;
+  const activePolicyId = String(policyLibrary.active_policy_id || overview.active_policy_id || "").trim();
+  for (const definition of overviewRailDefinitions) {
+    const rail = overview.rails?.[definition.rail] || {};
+    const enabled = rail.enabled !== false;
+    const activeNodes = overviewCount(rail.enabled_nodes);
+    const nodes = overviewCount(rail.total_nodes);
+    if (enabled) enabledCount += 1;
+    enabledNodes += activeNodes;
+    totalNodes += nodes;
+    const card = document.createElement("button");
+    const step = document.createElement("span");
+    const title = document.createElement("strong");
+    const state = document.createElement("small");
+    const coverage = document.createElement("em");
+    card.type = "button";
+    card.className = "overview-rail-card " + (enabled ? "is-enabled" : "is-disabled");
+    card.dataset.rail = definition.rail;
+    step.textContent = definition.step;
+    title.textContent = definition.label;
+    state.textContent = enabled ? "已启用" : "未启用";
+    coverage.textContent = String(activeNodes) + " / " + String(nodes) + " 有效节点";
+    card.append(step, title, state, coverage);
+    card.addEventListener("click", () => showOverviewPolicyPath(activePolicyId));
+    overviewRailCoverage.append(card);
+  }
+  overviewRailSummary.textContent = String(enabledCount)
+    + " / " + String(overviewRailDefinitions.length)
+    + " 个 Step 已开启 · " + String(enabledNodes)
+    + " / " + String(totalNodes) + " 个有效节点";
+}
+function renderOverviewAssets(overview) {
+  overviewAssets.replaceChildren();
+  const componentTypeCount = Object.keys(componentDefinitions).length;
+  const constantCount = Object.keys(systemSettingsDraft.system_constants || {}).length;
+  overviewAssets.append(
+    createOverviewMetric("规则", ruleLibrary.rules.length, "可复用规则本体"),
+    createOverviewMetric("策略", policyLibrary.policies.length, "策略图与默认路径"),
+    createOverviewMetric("可用元件", componentTypeCount, "当前可放置的元件种类"),
+    createOverviewMetric("常量", constantCount, "系统共享配置值"),
   );
+}
+function renderOverviewBoundary() {
+  overviewBoundary.replaceChildren();
+  const banned = accessRecords.filter((record) => record.decision === "ban").length;
+  const pardoned = accessRecords.filter((record) => record.decision === "pardon").length;
+  overviewBoundary.append(
+    createOverviewMetric("有效封禁", banned, "当前访问控制决定"),
+    createOverviewMetric("有效赦免", pardoned, "仅跳过访问控制"),
+    createOverviewMetric(
+      "会话观测",
+      sessionPolicyMonitoringEnabled ? sessionPolicyStateTotal : "未启用",
+      sessionPolicyMonitoringEnabled ? "已观测 UMO" : "会话状态未记录",
+    ),
+    createOverviewMetric("RAG 经验", ragExperienceTotal, "本地命中经验记录"),
+  );
+}
+function renderOverview(overview) {
+  if (!overview || typeof overview !== "object") return;
+  summary.replaceChildren();
+  const diagnosticCount = latestDiagnostics.length || overviewCount(overview.warning_count);
+  overviewHealthState.textContent = diagnosticCount ? String(diagnosticCount) + " 项提示" : "已发布";
+  overviewHealthState.className = "overview-state-pill " + (diagnosticCount ? "is-warning" : "is-ready");
+  addSummary("当前 revision", overview.revision);
+  addSummary("最近保存", formatOverviewTime(overview.saved_at));
+  addSummary("配置版本", overview.schema_version);
+  renderOverviewDefaultPolicyPath(overview);
+  renderOverviewPriority(overview);
+  renderOverviewRails(overview);
+  renderOverviewAssets(overview);
+  renderOverviewBoundary();
+}
+function rerenderOverviewIfReady() {
+  if (latestOverview) renderOverview(latestOverview);
 }
 function renderDiagnostics(items) {
   diagnostics.replaceChildren();
-  for (const message of items.length ? items : ["未发现配置诊断。"]) {
+  const messages = Array.isArray(items)
+    ? items.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (!messages.length) {
     const item = document.createElement("li");
+    item.className = "overview-diagnostic-item is-clear";
+    item.textContent = "当前已发布快照未发现配置诊断。";
+    diagnostics.append(item);
+    return;
+  }
+  for (const message of messages) {
+    const item = document.createElement("li");
+    item.className = "overview-diagnostic-item is-warning";
     item.textContent = message;
     diagnostics.append(item);
   }
@@ -2814,6 +3039,7 @@ async function persistPolicyLibrary(successMessage, { showIssues = false, operat
     currentRevision = result.revision;
     policyLibraryStatus.textContent = "";
     publishReport(successMessage(result.revision));
+    rerenderOverviewIfReady();
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -3196,6 +3422,7 @@ async function persistRuleLibrary(successMessage) {
     currentRevision = result.revision;
     ruleStatus.textContent = "";
     publishReport(successMessage(result.revision));
+    rerenderOverviewIfReady();
     return true;
   } catch (error) {
     ruleStatus.textContent = "";
@@ -3468,6 +3695,7 @@ function applyAccessRecordsPayload(payload) {
     : { ban: [], pardon: [] };
   renderAccessReasonCodeOptions(accessReasonCode.value);
   renderAccessRecords();
+  rerenderOverviewIfReady();
 }
 async function refreshAccessControl() {
   if (!bridge) return;
@@ -3988,6 +4216,7 @@ async function refreshSessionPolicyStates(resetPage = false) {
     sessionPolicyStateTotal = Number.isInteger(pagination.total) ? pagination.total : 0;
     sessionPolicyMonitoringEnabled = Boolean(payload.monitoring_enabled);
     renderSessionPolicyStateList();
+    rerenderOverviewIfReady();
     sessionPolicyStateStatus.textContent = sessionPolicyMonitoringEnabled
       ? `已加载 ${sessionPolicyStateTotal} 个 UMO 状态；P2-A 仅观察，不参与路由。`
       : `状态采集当前已关闭；请在“系统设置 → 会话策略状态监控”启用后再发送请求。已加载 ${sessionPolicyStateTotal} 条历史状态。`;
@@ -4194,6 +4423,7 @@ async function refreshRagExperiences(resetPage = false) {
       : ragExperiencePageSize;
     ragExperienceTotal = Number.isInteger(pagination.total) ? pagination.total : 0;
     renderRagExperienceList();
+    rerenderOverviewIfReady();
     ragExperienceStatus.textContent = `已加载 ${ragExperienceTotal} 条 RAG 命中经验记录。`;
   } catch (error) {
     if (epoch === ragExperienceRefreshEpoch) {
@@ -4317,8 +4547,11 @@ async function refresh() {
     bridge.apiGet("get_system_settings"),
   ]);
   currentRevision = overviewResult.overview.revision;
-  renderOverview(overviewResult.overview);
-  renderDiagnostics(diagnosticsResult.diagnostics || []);
+  latestOverview = overviewResult.overview;
+  latestDiagnostics = Array.isArray(diagnosticsResult.diagnostics)
+    ? diagnosticsResult.diagnostics
+    : [];
+  renderDiagnostics(latestDiagnostics);
   renderSystemSettings(systemSettingsResult);
   systemSettingsStatus.textContent = `已加载系统设置 revision ${systemSettingsResult.revision}。`;
   await refreshAccessControl();
@@ -4340,6 +4573,7 @@ async function refresh() {
       ? policyResult.policy_library.umo_policy_selections
       : {},
   };
+  renderOverview(latestOverview);
   openRuleEditors.replaceChildren();
   openRuleIds = [];
   for (const ruleId of previousOpenRuleIds) openRule(ruleId);
