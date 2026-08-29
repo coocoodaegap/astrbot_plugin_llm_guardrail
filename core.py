@@ -179,10 +179,13 @@ NodeExecutor = Callable[[NormalizedNode, RailContext], NodeResult]
 AsyncNodeExecutor = Callable[[NormalizedNode, RailContext], Any]
 NodeErrorHandler = Callable[[NormalizedNode, RailContext, Exception], Any]
 StopPredicate = Callable[[RailContext], bool]
-AsyncBatchHandler = Callable[
+AsyncSettlementHandler = Callable[
     [list[tuple[NormalizedNode, NodeExecution]], RailContext], Any
 ]
 ExecutionSemaphorePredicate = Callable[[NormalizedNode], bool]
+IntakeClosePredicate = Callable[[NormalizedNode, NodeExecution, RailContext], bool]
+# A streaming Rail reports every completed result to its dependency graph, but
+# applies diagnostics and host-facing effects only once at Rail quiescence.
 
 
 # Compatibility aliases preserve direct P0 callers while the runtime and all
@@ -232,16 +235,27 @@ class NodeScheduler:
         max_parallel_checks: int = 1,
         execution_semaphore: asyncio.Semaphore | None = None,
         execution_semaphore_predicate: ExecutionSemaphorePredicate | None = None,
-        batch_handler: AsyncBatchHandler | None = None,
+        intake_close_predicate: IntakeClosePredicate | None = None,
+        settlement_handler: AsyncSettlementHandler | None = None,
     ) -> None:
+        streaming_requested = (
+            intake_close_predicate is not None or settlement_handler is not None
+        )
+        if streaming_requested and should_stop is not None:
+            raise ValueError(
+                "should_stop is only available to strict serial Rails"
+            )
         if self.strategy == "bruteforce":
+            if streaming_requested:
+                raise ValueError(
+                    "streaming scheduling requires the graph strategy"
+                )
             await self._run_bruteforce_async(
                 rail,
                 context,
                 executor,
                 should_stop,
                 error_handler,
-                batch_handler=batch_handler,
             )
             return
         try:
@@ -257,7 +271,8 @@ class NodeScheduler:
             max_parallel_checks=parallel_limit,
             execution_semaphore=execution_semaphore,
             execution_semaphore_predicate=execution_semaphore_predicate,
-            batch_handler=batch_handler,
+            intake_close_predicate=intake_close_predicate,
+            settlement_handler=settlement_handler,
         )
 
     def _run_graph(
@@ -314,29 +329,46 @@ class NodeScheduler:
         max_parallel_checks: int,
         execution_semaphore: asyncio.Semaphore | None,
         execution_semaphore_predicate: ExecutionSemaphorePredicate | None,
-        batch_handler: AsyncBatchHandler | None,
+        intake_close_predicate: IntakeClosePredicate | None,
+        settlement_handler: AsyncSettlementHandler | None,
     ) -> None:
-        if max_parallel_checks <= 1:
+        if should_stop is not None or (
+            max_parallel_checks <= 1
+            and intake_close_predicate is None
+            and settlement_handler is None
+        ):
             await self._run_graph_async_serial(
                 rail,
                 context,
                 executor,
                 should_stop,
                 error_handler,
-                batch_handler=batch_handler,
             )
             return
 
-        await self._run_graph_async_batched(
+        if max_parallel_checks <= 1:
+            await self._run_graph_async_streaming_serial(
+                rail,
+                context,
+                executor,
+                error_handler,
+                execution_semaphore=execution_semaphore,
+                execution_semaphore_predicate=execution_semaphore_predicate,
+                intake_close_predicate=intake_close_predicate,
+                settlement_handler=settlement_handler,
+            )
+            return
+
+        await self._run_graph_async_streaming(
             rail,
             context,
             executor,
-            should_stop,
             error_handler,
             max_parallel_checks=max_parallel_checks,
             execution_semaphore=execution_semaphore,
             execution_semaphore_predicate=execution_semaphore_predicate,
-            batch_handler=batch_handler,
+            intake_close_predicate=intake_close_predicate,
+            settlement_handler=settlement_handler,
         )
 
     async def _run_graph_async_serial(
@@ -346,8 +378,6 @@ class NodeScheduler:
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None,
         error_handler: RuleErrorHandler | None,
-        *,
-        batch_handler: AsyncBatchHandler | None,
     ) -> None:
         graph = self.graph or build_graph_index(rail)
         active_rules = self._collect_active_rules(rail, context)
@@ -370,10 +400,6 @@ class NodeScheduler:
             self._commit_execution(rule, execution, context)
             pending.remove(rule_id)
 
-            await self._run_batch_handler(
-                batch_handler, [(rule, execution)], context
-            )
-
             if should_stop is not None and should_stop(context):
                 self._stop_pending(active_rules, pending, context)
                 return
@@ -390,74 +416,283 @@ class NodeScheduler:
 
         self._expire_pending(graph, active_rules, pending, context)
 
-    async def _run_graph_async_batched(
+    async def _run_graph_async_streaming_serial(
         self,
         rail: NormalizedRail,
         context: RailContext,
         executor: AsyncRuleExecutor,
-        should_stop: StopPredicate | None,
         error_handler: RuleErrorHandler | None,
         *,
-        max_parallel_checks: int,
         execution_semaphore: asyncio.Semaphore | None,
         execution_semaphore_predicate: ExecutionSemaphorePredicate | None,
-        batch_handler: AsyncBatchHandler | None,
+        intake_close_predicate: IntakeClosePredicate | None,
+        settlement_handler: AsyncSettlementHandler | None,
     ) -> None:
-        """Execute each ready frontier against one immutable context snapshot."""
+        """Run streaming settlement with one actual executor slot.
+
+        A globally throttled external check is allowed to wait without taking
+        this Rail's sole executor slot, so a ready local check can pass it.
+        Apart from that resource exception, each completion refreshes the
+        ready heap before the next executor entry and therefore retains the
+        legacy ``(priority, index)`` serial order.
+        """
 
         graph = self.graph or build_graph_index(rail)
-        active_rules = self._collect_active_rules(rail, context)
+        published_context = self._snapshot_context(context)
+        active_rules: dict[str, NormalizedRule] = {}
+        settled: dict[str, tuple[NormalizedRule, NodeExecution]] = {}
+        expired_sources: set[str] = set()
+
+        def publish_execution(
+            rule: NormalizedRule, execution: NodeExecution
+        ) -> None:
+            settled[rule.rule_id] = (rule, execution)
+            result = execution.result
+            if result is None:
+                expired_sources.add(rule.rule_id)
+                return
+            published_context.results[rule.rule_id] = copy.deepcopy(result)
+
+        def publish_skipped(rule: NormalizedRule, reason: str) -> None:
+            warnings = (
+                [f"{rule.rule_id} skipped: {reason}"]
+                if _skip_reason_is_warning(reason)
+                else []
+            )
+            publish_execution(
+                rule,
+                NodeExecution(
+                    result=skipped_result(rule, reason), warnings=warnings
+                ),
+            )
+
+        for rule in sorted(rail.nodes, key=lambda item: (item.priority, item.index)):
+            if rule.enabled and rule.valid:
+                active_rules[rule.rule_id] = rule
+                continue
+            reason = "disabled" if not rule.enabled else "invalid"
+            publish_execution(
+                rule,
+                NodeExecution(
+                    result=skipped_result(rule, reason, warnings=rule.warnings),
+                    warnings=list(rule.warnings),
+                ),
+            )
+
         pending = set(active_rules)
         queued: set[str] = set()
         ready_heap: list[tuple[int, int, str]] = []
+        base_warning_count = len(published_context.warnings)
+        shared_holders: set[str] = set()
+        waiting_external: (
+            tuple[asyncio.Task[None], NormalizedRule, RailContext] | None
+        ) = None
+        leased_external: tuple[NormalizedRule, RailContext] | None = None
+        intake_closed = False
 
-        self._refresh_ready(graph, active_rules, pending, queued, ready_heap, context)
+        def stable_key(rule: NormalizedRule) -> tuple[int, int, str]:
+            return rule.priority, rule.index, rule.rule_id
 
-        while ready_heap:
-            batch: list[NormalizedRule] = []
-            while ready_heap:
-                _, _, rule_id = heapq.heappop(ready_heap)
-                queued.discard(rule_id)
-                if rule_id in pending:
-                    batch.append(active_rules[rule_id])
-
-            executions = await self._execute_ready_batch(
-                batch,
-                context,
-                executor,
-                error_handler,
-                max_parallel_checks=max_parallel_checks,
-                execution_semaphore=execution_semaphore,
-                execution_semaphore_predicate=execution_semaphore_predicate,
+        def uses_shared_slot(rule: NormalizedRule) -> bool:
+            return execution_semaphore is not None and (
+                execution_semaphore_predicate is None
+                or execution_semaphore_predicate(rule)
             )
-            changed_sources: list[str] = []
-            for rule, execution in executions:
-                self._commit_execution(rule, execution, context)
-                pending.remove(rule.rule_id)
-                if execution.result is not None:
-                    changed_sources.append(rule.rule_id)
 
-            await self._run_batch_handler(batch_handler, executions, context)
-
-            if should_stop is not None and should_stop(context):
-                self._stop_pending(active_rules, pending, context)
+        def release_shared_slot(rule: NormalizedRule) -> None:
+            if rule.rule_id not in shared_holders:
                 return
+            shared_holders.remove(rule.rule_id)
+            assert execution_semaphore is not None
+            execution_semaphore.release()
 
-            self._refresh_ready(
-                graph,
-                active_rules,
+        async def wait_for_shared_slot(rule: NormalizedRule) -> None:
+            acquired = False
+            try:
+                assert execution_semaphore is not None
+                await execution_semaphore.acquire()
+                acquired = True
+                shared_holders.add(rule.rule_id)
+            except BaseException:
+                if acquired:
+                    release_shared_slot(rule)
+                raise
+
+        async def discard_external_reservations() -> None:
+            nonlocal waiting_external, leased_external
+            if waiting_external is not None:
+                task, rule, _worker_context = waiting_external
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                release_shared_slot(rule)
+                waiting_external = None
+            if leased_external is not None:
+                rule, _worker_context = leased_external
+                release_shared_slot(rule)
+                leased_external = None
+
+        def choose_next(
+        ) -> tuple[NormalizedRule, RailContext, bool] | None:
+            nonlocal waiting_external, leased_external
+            if waiting_external is not None and waiting_external[0].done():
+                task, rule, worker_context = waiting_external
+                task.result()
+                waiting_external = None
+                leased_external = (rule, worker_context)
+
+            deferred: list[tuple[int, int, str]] = []
+            candidate: tuple[NormalizedRule, RailContext, bool] | None = None
+            while ready_heap:
+                entry = heapq.heappop(ready_heap)
+                _priority, _index, rule_id = entry
+                if rule_id not in pending:
+                    queued.discard(rule_id)
+                    continue
+                rule = active_rules[rule_id]
+                if uses_shared_slot(rule):
+                    if leased_external is not None or waiting_external is not None:
+                        deferred.append(entry)
+                        continue
+                    assert execution_semaphore is not None
+                    if execution_semaphore.locked():
+                        worker_context = self._snapshot_context(published_context)
+                        waiting_external = (
+                            asyncio.create_task(wait_for_shared_slot(rule)),
+                            rule,
+                            worker_context,
+                        )
+                        # Keep it marked queued while it waits outside the
+                        # heap, so dependency refresh cannot admit it twice.
+                        continue
+                queued.discard(rule_id)
+                candidate = (
+                    rule,
+                    self._snapshot_context(published_context),
+                    uses_shared_slot(rule),
+                )
+                break
+
+            for entry in deferred:
+                heapq.heappush(ready_heap, entry)
+
+            if leased_external is not None:
+                leased_rule, leased_context = leased_external
+                if candidate is None or stable_key(leased_rule) <= stable_key(
+                    candidate[0]
+                ):
+                    if candidate is not None:
+                        candidate_rule = candidate[0]
+                        heapq.heappush(
+                            ready_heap,
+                            (
+                                candidate_rule.priority,
+                                candidate_rule.index,
+                                candidate_rule.rule_id,
+                            ),
+                        )
+                        queued.add(candidate_rule.rule_id)
+                    leased_external = None
+                    queued.discard(leased_rule.rule_id)
+                    return leased_rule, leased_context, True
+            return candidate
+
+        def stop_pending() -> None:
+            for rule_id in sorted(
                 pending,
-                queued,
-                ready_heap,
-                context,
-                changed_sources=changed_sources,
-            )
+                key=lambda item: stable_key(active_rules[item]),
+            ):
+                publish_skipped(active_rules[rule_id], "rail_stopped")
+            pending.clear()
 
-        self._expire_pending(graph, active_rules, pending, context)
+        def expire_pending() -> None:
+            for rule_id in sorted(
+                pending,
+                key=lambda item: stable_key(active_rules[item]),
+            ):
+                reason = self._blocked_reason_graph(graph, rule_id, pending)
+                publish_skipped(active_rules[rule_id], reason)
+            pending.clear()
 
-    async def _execute_ready_batch(
+        self._refresh_ready(
+            graph,
+            active_rules,
+            pending,
+            queued,
+            ready_heap,
+            published_context,
+            expired_sources=expired_sources,
+            skip_handler=publish_skipped,
+        )
+
+        try:
+            while True:
+                candidate = choose_next()
+                if candidate is None:
+                    if waiting_external is not None:
+                        await asyncio.wait(
+                            {waiting_external[0]},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        continue
+                    break
+
+                rule, worker_context, needs_shared_slot = candidate
+                if needs_shared_slot and rule.rule_id not in shared_holders:
+                    await wait_for_shared_slot(rule)
+                try:
+                    execution = await self._execute_rule_async(
+                        rule, worker_context, executor, error_handler
+                    )
+                finally:
+                    if needs_shared_slot:
+                        release_shared_slot(rule)
+
+                worker_warnings = worker_context.warnings[base_warning_count:]
+                if worker_warnings:
+                    execution.warnings.extend(worker_warnings)
+                publish_execution(rule, execution)
+                pending.discard(rule.rule_id)
+
+                if (
+                    intake_close_predicate is not None
+                    and intake_close_predicate(rule, execution, published_context)
+                ):
+                    intake_closed = True
+                    break
+
+                self._refresh_ready(
+                    graph,
+                    active_rules,
+                    pending,
+                    queued,
+                    ready_heap,
+                    published_context,
+                    changed_sources=[rule.rule_id],
+                    expired_sources=expired_sources,
+                    skip_handler=publish_skipped,
+                )
+        except BaseException:
+            await discard_external_reservations()
+            raise
+
+        if intake_closed:
+            await discard_external_reservations()
+            stop_pending()
+        elif pending:
+            expire_pending()
+
+        executions = sorted(
+            settled.values(),
+            key=lambda item: stable_key(item[0]),
+        )
+        for rule, execution in executions:
+            self._commit_execution(rule, execution, context)
+        await self._run_settlement_handler(settlement_handler, executions, context)
+
+    async def _run_graph_async_streaming(
         self,
-        batch: list[NormalizedRule],
+        rail: NormalizedRail,
         context: RailContext,
         executor: AsyncRuleExecutor,
         error_handler: RuleErrorHandler | None,
@@ -465,21 +700,95 @@ class NodeScheduler:
         max_parallel_checks: int,
         execution_semaphore: asyncio.Semaphore | None,
         execution_semaphore_predicate: ExecutionSemaphorePredicate | None,
-    ) -> list[tuple[NormalizedRule, NodeExecution]]:
-        """Return worker outcomes in stable ready-queue order.
+        intake_close_predicate: IntakeClosePredicate | None,
+        settlement_handler: AsyncSettlementHandler | None,
+    ) -> None:
+        """Stream completed outcomes while deferring Rail side effects.
 
-        ``asyncio.gather`` preserves the supplied task order.  Every worker
-        receives an independent snapshot, so sibling payloads cannot become
-        visible merely because one task returns earlier than another.
+        A worker gets a snapshot when it becomes ready.  Its result is then
+        published to a private coordinator context immediately on completion,
+        which can unlock an explicitly dependent node without waiting for
+        unrelated siblings.  The public ``RailContext`` is updated only once
+        the Rail is quiescent, in stable rule order.
         """
 
+        graph = self.graph or build_graph_index(rail)
+        published_context = self._snapshot_context(context)
+        active_rules: dict[str, NormalizedRule] = {}
+        settled: dict[str, tuple[NormalizedRule, NodeExecution]] = {}
+        expired_sources: set[str] = set()
+
+        def publish_execution(
+            rule: NormalizedRule, execution: NodeExecution
+        ) -> None:
+            settled[rule.rule_id] = (rule, execution)
+            result = execution.result
+            if result is None:
+                expired_sources.add(rule.rule_id)
+                return
+            # The published copy is dependency-visible only.  Later workers
+            # receive another snapshot, so no worker can mutate coordinator
+            # state or a sibling's result.
+            published_context.results[rule.rule_id] = copy.deepcopy(result)
+
+        def publish_skipped(rule: NormalizedRule, reason: str) -> None:
+            warnings = (
+                [f"{rule.rule_id} skipped: {reason}"]
+                if _skip_reason_is_warning(reason)
+                else []
+            )
+            publish_execution(
+                rule,
+                NodeExecution(
+                    result=skipped_result(rule, reason), warnings=warnings
+                ),
+            )
+
+        for rule in sorted(rail.nodes, key=lambda item: (item.priority, item.index)):
+            if rule.enabled and rule.valid:
+                active_rules[rule.rule_id] = rule
+                continue
+            reason = "disabled" if not rule.enabled else "invalid"
+            publish_execution(
+                rule,
+                NodeExecution(
+                    result=skipped_result(rule, reason, warnings=rule.warnings),
+                    warnings=list(rule.warnings),
+                ),
+            )
+
+        pending = set(active_rules)
+        queued: set[str] = set()
+        ready_heap: list[tuple[int, int, str]] = []
         batch_semaphore = asyncio.Semaphore(max_parallel_checks)
-        base_warning_count = len(context.warnings)
+        base_warning_count = len(published_context.warnings)
+        entered_executor: set[str] = set()
+        batch_holders: set[str] = set()
+        active: dict[
+            asyncio.Task[NodeExecution], tuple[NormalizedRule, RailContext]
+        ] = {}
+        intake_closed = False
 
         async def execute_one(
-            rule: NormalizedRule,
-        ) -> tuple[NormalizedRule, NodeExecution]:
-            worker_context = self._snapshot_context(context)
+            rule: NormalizedRule, worker_context: RailContext
+        ) -> NodeExecution:
+            async def execute_with_batch_slot() -> NodeExecution:
+                await batch_semaphore.acquire()
+                batch_holders.add(rule.rule_id)
+                entered_executor.add(rule.rule_id)
+                try:
+                    return await self._execute_rule_async(
+                        rule, worker_context, executor, error_handler
+                    )
+                except BaseException:
+                    # A host-level cancellation must not leak the capacity
+                    # lease that normally remains held until the coordinator
+                    # observes and publishes this completion.
+                    if rule.rule_id in batch_holders:
+                        batch_holders.remove(rule.rule_id)
+                        batch_semaphore.release()
+                    raise
+
             uses_shared_slot = (
                 execution_semaphore is not None
                 and (
@@ -491,21 +800,142 @@ class NodeScheduler:
                 # Do not let a provider-starved external check consume this
                 # Rail's limited worker slots: local siblings must still run.
                 async with execution_semaphore:
-                    async with batch_semaphore:
-                        execution = await self._execute_rule_async(
-                            rule, worker_context, executor, error_handler
-                        )
-            else:
-                async with batch_semaphore:
-                    execution = await self._execute_rule_async(
-                        rule, worker_context, executor, error_handler
-                    )
-            worker_warnings = worker_context.warnings[base_warning_count:]
-            if worker_warnings:
-                execution.warnings.extend(worker_warnings)
-            return rule, execution
+                    return await execute_with_batch_slot()
+            return await execute_with_batch_slot()
 
-        return list(await asyncio.gather(*(execute_one(rule) for rule in batch)))
+        def launch_ready() -> None:
+            while ready_heap and not intake_closed:
+                _, _, rule_id = heapq.heappop(ready_heap)
+                queued.discard(rule_id)
+                if rule_id not in pending:
+                    continue
+                rule = active_rules[rule_id]
+                worker_context = self._snapshot_context(published_context)
+                task = asyncio.create_task(execute_one(rule, worker_context))
+                active[task] = (rule, worker_context)
+
+        def stop_unstarted_workers() -> None:
+            for task, (rule, _worker_context) in active.items():
+                if rule.rule_id not in entered_executor and not task.done():
+                    task.cancel()
+
+        def stop_pending() -> None:
+            for rule_id in sorted(
+                pending,
+                key=lambda item: (active_rules[item].priority, active_rules[item].index),
+            ):
+                publish_skipped(active_rules[rule_id], "rail_stopped")
+            pending.clear()
+
+        def expire_pending() -> None:
+            for rule_id in sorted(
+                pending,
+                key=lambda item: (active_rules[item].priority, active_rules[item].index),
+            ):
+                reason = self._blocked_reason_graph(graph, rule_id, pending)
+                publish_skipped(active_rules[rule_id], reason)
+            pending.clear()
+
+        self._refresh_ready(
+            graph,
+            active_rules,
+            pending,
+            queued,
+            ready_heap,
+            published_context,
+            expired_sources=expired_sources,
+            skip_handler=publish_skipped,
+        )
+        launch_ready()
+
+        try:
+            while active:
+                done, _pending_tasks = await asyncio.wait(
+                    active, return_when=asyncio.FIRST_COMPLETED
+                )
+                changed_sources: list[str] = []
+
+                # Process one event-loop completion group before admitting any
+                # children: a simultaneous terminal outcome must close intake
+                # before an unrelated sibling can open another execution.
+                for task in sorted(
+                    done,
+                    key=lambda item: (
+                        active[item][0].priority,
+                        active[item][0].index,
+                    ),
+                ):
+                    rule, worker_context = active.pop(task)
+                    try:
+                        execution = task.result()
+                    except asyncio.CancelledError:
+                        # This is an intentionally cancelled waiter after a
+                        # terminal candidate closed the intake.  It remains
+                        # pending and becomes rail_stopped at quiescence.
+                        continue
+                    except Exception as exc:  # Defensive task-wrapper boundary.
+                        execution = self._coerce_execution(
+                            self._handle_rule_error(
+                                rule, worker_context, exc, error_handler
+                            )
+                        )
+                    try:
+                        worker_warnings = worker_context.warnings[
+                            base_warning_count:
+                        ]
+                        if worker_warnings:
+                            execution.warnings.extend(worker_warnings)
+                        publish_execution(rule, execution)
+                        pending.discard(rule.rule_id)
+                        changed_sources.append(rule.rule_id)
+                        if (
+                            intake_close_predicate is not None
+                            and intake_close_predicate(
+                                rule, execution, published_context
+                            )
+                        ):
+                            intake_closed = True
+                    finally:
+                        if rule.rule_id in batch_holders:
+                            batch_holders.remove(rule.rule_id)
+                            batch_semaphore.release()
+
+                if intake_closed:
+                    stop_unstarted_workers()
+                    continue
+
+                if changed_sources:
+                    self._refresh_ready(
+                        graph,
+                        active_rules,
+                        pending,
+                        queued,
+                        ready_heap,
+                        published_context,
+                        changed_sources=changed_sources,
+                        expired_sources=expired_sources,
+                        skip_handler=publish_skipped,
+                    )
+                launch_ready()
+        except BaseException:
+            for task in active:
+                task.cancel()
+            await asyncio.gather(*active, return_exceptions=True)
+            raise
+
+        if intake_closed:
+            stop_pending()
+        elif pending:
+            expire_pending()
+
+        executions = sorted(
+            settled.values(),
+            key=lambda item: (item[0].priority, item[0].index, item[0].rule_id),
+        )
+        for rule, execution in executions:
+            self._commit_execution(rule, execution, context)
+
+        await self._run_settlement_handler(settlement_handler, executions, context)
 
     @staticmethod
     def _snapshot_context(context: RailContext) -> RailContext:
@@ -543,8 +973,8 @@ class NodeScheduler:
         context.warnings.extend(execution.warnings)
 
     @staticmethod
-    async def _run_batch_handler(
-        handler: AsyncBatchHandler | None,
+    async def _run_settlement_handler(
+        handler: AsyncSettlementHandler | None,
         executions: list[tuple[NormalizedRule, NodeExecution]],
         context: RailContext,
     ) -> None:
@@ -635,8 +1065,6 @@ class NodeScheduler:
         executor: AsyncRuleExecutor,
         should_stop: StopPredicate | None,
         error_handler: RuleErrorHandler | None,
-        *,
-        batch_handler: AsyncBatchHandler | None,
     ) -> None:
         pending: dict[str, NormalizedRule] = {}
         expired_sources: set[str] = set()
@@ -688,9 +1116,6 @@ class NodeScheduler:
                 )
                 result = execution.result
                 self._commit_execution(rule, execution, context)
-                await self._run_batch_handler(
-                    batch_handler, [(rule, execution)], context
-                )
                 if result is None:
                     expired_sources.add(rule.rule_id)
                 pending.pop(rule.rule_id, None)
@@ -812,6 +1237,9 @@ class NodeScheduler:
         ready_heap: list[tuple[int, int, str]],
         context: RailContext,
         changed_sources: list[str] | None = None,
+        *,
+        expired_sources: set[str] | None = None,
+        skip_handler: Callable[[NormalizedRule, str], None] | None = None,
     ) -> None:
         if changed_sources is None:
             candidates = set(pending)
@@ -830,13 +1258,23 @@ class NodeScheduler:
             ):
                 if rule_id not in pending or rule_id in queued:
                     continue
-                state, reason = self._node_state(graph, rule_id, pending, context)
+                state, reason = self._node_state(
+                    graph,
+                    rule_id,
+                    pending,
+                    context,
+                    expired_sources=expired_sources,
+                )
                 if state == "ready":
                     rule = active_rules[rule_id]
                     heapq.heappush(ready_heap, (rule.priority, rule.index, rule_id))
                     queued.add(rule_id)
                 elif state == "impossible":
-                    self._skip_rule(active_rules[rule_id], reason, context)
+                    rule = active_rules[rule_id]
+                    if skip_handler is None:
+                        self._skip_rule(rule, reason, context)
+                    else:
+                        skip_handler(rule, reason)
                     pending.remove(rule_id)
                     next_changed.append(rule_id)
             candidates = self._active_targets(
@@ -863,11 +1301,19 @@ class NodeScheduler:
         rule_id: str,
         pending: set[str],
         context: RailContext,
+        *,
+        expired_sources: set[str] | None = None,
     ) -> tuple[str, str]:
         waiting = False
         for edges_by_source in graph.incoming.get(rule_id, {}).values():
             for edge in edges_by_source:
-                state, reason = self._edge_state(graph, edge, pending, context)
+                state, reason = self._edge_state(
+                    graph,
+                    edge,
+                    pending,
+                    context,
+                    expired_sources=expired_sources,
+                )
                 if state == "impossible":
                     return "impossible", reason
                 if state == "waiting":
@@ -882,9 +1328,13 @@ class NodeScheduler:
         edge: RuleEdge,
         pending: set[str],
         context: RailContext,
+        *,
+        expired_sources: set[str] | None = None,
     ) -> tuple[str, str]:
         result = context.results.get(edge.source)
         if result is None:
+            if edge.source in (expired_sources or set()):
+                return "impossible", "expired"
             if edge.source in pending or edge.source in graph.nodes:
                 return "waiting", ""
             return "impossible", self._missing_reason(edge)

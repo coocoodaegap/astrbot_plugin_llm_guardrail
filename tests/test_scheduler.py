@@ -628,7 +628,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertTrue(ctx.results["a"].matched)
         self.assertTrue(ctx.results["b"].matched)
 
-    def test_run_async_batches_ready_nodes_and_hides_sibling_payloads(self):
+    def test_run_async_publishes_fast_dependency_before_slow_sibling_settles(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -672,10 +672,11 @@ class SchedulerTests(unittest.TestCase):
         async def scenario():
             a_started = asyncio.Event()
             b_started = asyncio.Event()
-            release = asyncio.Event()
+            release_a = asyncio.Event()
+            release_b = asyncio.Event()
             child_started = asyncio.Event()
             seen_sibling = {"value": "unset"}
-            batches = []
+            settlements = []
 
             async def execute(rule, worker_context):
                 if rule.rule_id == "a":
@@ -683,7 +684,7 @@ class SchedulerTests(unittest.TestCase):
                         "state"
                     ] = "changed-by-a"
                     a_started.set()
-                    await release.wait()
+                    await release_a.wait()
                 elif rule.rule_id == "b":
                     seen_sibling["value"] = worker_context.results.get("a")
                     self.assertEqual(
@@ -693,14 +694,14 @@ class SchedulerTests(unittest.TestCase):
                         "original",
                     )
                     b_started.set()
-                    await release.wait()
+                    await release_b.wait()
                 else:
                     child_started.set()
                     self.assertIn("a", worker_context.results)
                 return evaluate_text_rule(rule, worker_context, "a b child")
 
-            async def commit_batch(executions, _context):
-                batches.append([rule.rule_id for rule, _execution in executions])
+            async def settle_rail(executions, _context):
+                settlements.append([rule.rule_id for rule, _execution in executions])
 
             task = asyncio.create_task(
                 RuleScheduler(build_graph_index(cfg)).run_async(
@@ -708,14 +709,17 @@ class SchedulerTests(unittest.TestCase):
                     ctx,
                     execute,
                     max_parallel_checks=2,
-                    batch_handler=commit_batch,
+                    settlement_handler=settle_rail,
                 )
             )
             await asyncio.wait_for(
                 asyncio.gather(a_started.wait(), b_started.wait()), timeout=1
             )
             self.assertFalse(child_started.is_set())
-            release.set()
+            release_a.set()
+            await asyncio.wait_for(child_started.wait(), timeout=1)
+            self.assertFalse(release_b.is_set())
+            release_b.set()
             await asyncio.wait_for(task, timeout=1)
 
             self.assertIsNone(seen_sibling["value"])
@@ -723,11 +727,93 @@ class SchedulerTests(unittest.TestCase):
                 ctx.results["seed"].signal.payload["nested"]["state"],
                 "original",
             )
-            self.assertEqual(batches, [["a", "b"], ["child"]])
+            self.assertEqual(settlements, [["child", "a", "b"]])
 
         asyncio.run(scenario())
 
-    def test_run_async_batch_commits_error_and_sibling_in_stable_order(self):
+    def test_terminal_result_closes_intake_before_waiting_rule_enters_executor(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "terminal",
+                            "priority": 10,
+                            "keywords": ["terminal"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "running",
+                            "priority": 20,
+                            "keywords": ["running"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "waiting",
+                            "priority": 30,
+                            "keywords": ["waiting"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        async def scenario():
+            terminal_started = asyncio.Event()
+            running_started = asyncio.Event()
+            release_terminal = asyncio.Event()
+            release_running = asyncio.Event()
+            intake_closed = asyncio.Event()
+            waiting_entered = False
+
+            async def execute(rule, context):
+                nonlocal waiting_entered
+                if rule.rule_id == "terminal":
+                    terminal_started.set()
+                    await release_terminal.wait()
+                elif rule.rule_id == "running":
+                    running_started.set()
+                    await release_running.wait()
+                else:
+                    waiting_entered = True
+                return evaluate_text_rule(rule, context, "terminal running waiting")
+
+            def close_intake(rule, execution, _context):
+                if rule.rule_id == "terminal":
+                    intake_closed.set()
+                    return True
+                return False
+
+            task = asyncio.create_task(
+                RuleScheduler(build_graph_index(cfg)).run_async(
+                    rail,
+                    ctx,
+                    execute,
+                    max_parallel_checks=2,
+                    intake_close_predicate=close_intake,
+                )
+            )
+            await asyncio.wait_for(
+                asyncio.gather(terminal_started.wait(), running_started.wait()),
+                timeout=1,
+            )
+            release_terminal.set()
+            await asyncio.wait_for(intake_closed.wait(), timeout=1)
+            self.assertFalse(waiting_entered)
+            release_running.set()
+            await asyncio.wait_for(task, timeout=1)
+
+        asyncio.run(scenario())
+
+        self.assertTrue(ctx.results["terminal"].matched)
+        self.assertTrue(ctx.results["running"].matched)
+        self.assertFalse(ctx.results["waiting"].executed)
+        self.assertEqual(ctx.results["waiting"].skipped_reason, "rail_stopped")
+
+    def test_run_async_streaming_commits_error_and_sibling_in_stable_order(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -767,6 +853,7 @@ class SchedulerTests(unittest.TestCase):
                     rule, matched=False, status="failed"
                 ),
                 max_parallel_checks=2,
+                settlement_handler=lambda _executions, _context: None,
             )
         )
 
@@ -818,7 +905,58 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(ctx.results["cancelled"].status, "failed")
         self.assertTrue(ctx.results["sibling"].matched)
 
-    def test_external_slot_wait_does_not_block_local_ready_sibling(self):
+    def test_streaming_max_one_refreshes_ready_heap_before_next_executor_entry(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "source",
+                            "priority": 10,
+                            "keywords": ["source"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "sibling",
+                            "priority": 50,
+                            "keywords": ["sibling"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "child",
+                            "priority": 1,
+                            "depend_on": "?source",
+                            "keywords": ["child"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+        order = []
+
+        async def execute(rule, worker_context):
+            order.append(rule.rule_id)
+            return evaluate_text_rule(rule, worker_context, "source sibling child")
+
+        async def settle_rail(_executions, _context):
+            return None
+
+        asyncio.run(
+            RuleScheduler(build_graph_index(cfg)).run_async(
+                rail,
+                ctx,
+                execute,
+                max_parallel_checks=1,
+                settlement_handler=settle_rail,
+            )
+        )
+
+        self.assertEqual(order, ["source", "child", "sibling"])
+
+    def test_streaming_external_slot_wait_does_not_block_local_ready_sibling(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -845,11 +983,17 @@ class SchedulerTests(unittest.TestCase):
         async def scenario():
             external_slots = asyncio.Semaphore(0)
             local_finished = asyncio.Event()
+            external_started = asyncio.Event()
 
             async def execute(rule, context):
-                if rule.rule_id == "local":
+                if rule.rule_id == "external":
+                    external_started.set()
+                else:
                     local_finished.set()
                 return evaluate_text_rule(rule, context, "external local")
+
+            async def settle_rail(_executions, _context):
+                return None
 
             task = asyncio.create_task(
                 RuleScheduler(build_graph_index(cfg)).run_async(
@@ -860,16 +1004,74 @@ class SchedulerTests(unittest.TestCase):
                     execution_semaphore=external_slots,
                     execution_semaphore_predicate=lambda rule: rule.rule_id
                     == "external",
+                    settlement_handler=settle_rail,
                 )
             )
             await asyncio.wait_for(local_finished.wait(), timeout=1)
+            self.assertFalse(external_started.is_set())
             external_slots.release()
+            await asyncio.wait_for(external_started.wait(), timeout=1)
             await asyncio.wait_for(task, timeout=1)
 
         asyncio.run(scenario())
 
         self.assertTrue(ctx.results["external"].matched)
         self.assertTrue(ctx.results["local"].matched)
+
+    def test_streaming_predicate_error_cancels_started_siblings(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "fast",
+                            "priority": 10,
+                            "keywords": ["fast"],
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "slow",
+                            "priority": 20,
+                            "keywords": ["slow"],
+                        },
+                    ]
+                }
+            }
+        )
+        rail = cfg.rails["input_rail"]
+        ctx = RailContext(None, None, None, "", "", "", "")
+
+        async def scenario():
+            slow_started = asyncio.Event()
+            slow_cancelled = asyncio.Event()
+            never = asyncio.Event()
+
+            async def execute(rule, worker_context):
+                if rule.rule_id == "fast":
+                    await slow_started.wait()
+                    return evaluate_text_rule(rule, worker_context, "fast")
+                slow_started.set()
+                try:
+                    await never.wait()
+                except asyncio.CancelledError:
+                    slow_cancelled.set()
+                    raise
+
+            def explode(_rule, _execution, _context):
+                raise RuntimeError("predicate boom")
+
+            with self.assertRaisesRegex(RuntimeError, "predicate boom"):
+                await RuleScheduler(build_graph_index(cfg)).run_async(
+                    rail,
+                    ctx,
+                    execute,
+                    max_parallel_checks=2,
+                    intake_close_predicate=explode,
+                )
+            await asyncio.wait_for(slow_cancelled.wait(), timeout=1)
+
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from rails import (
 from fallback_graph import build_fallback_runtime_config
 from session_lock import PrincipalLockManager
 from state import MemoryStateStore
+from rules import evaluate_text_rule as evaluate_text_rule_impl
 from policy_library import (
     PolicyComponent,
     PolicyDefinition,
@@ -590,10 +591,10 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(context.results["later"].skipped_reason, "rail_stopped")
         self.assertEqual(context.terminal_action["node_id"], "blocking")
         self.assertEqual(
-            list(context.results), ["blocking", "sibling", "later"]
+            list(context.results), ["later", "blocking", "sibling"]
         )
 
-    def test_input_batch_uses_stable_single_block_action_after_out_of_order_checks(self):
+    def test_input_rail_uses_stable_single_block_action_after_out_of_order_checks(self):
         class CountingEvent(FakeEvent):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
@@ -2300,6 +2301,363 @@ class PipelineTests(unittest.TestCase):
             fake_context.kb_manager.retrieve_calls[0]["kb_names"], ["policy"]
         )
         self.assertEqual(fake_context.kb_manager.retrieve_calls[0]["top_m_final"], 3)
+
+    def test_fast_rag_unlocks_dependent_before_slow_llm_and_defers_capture(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "priority": 10,
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                            "action_on_hit": "observe",
+                        },
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "slow_review",
+                            "priority": 20,
+                            "provider_id": "safe-provider",
+                            "audit_prompt": "Slow review.",
+                            "action_on_hit": "observe",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "rag_child",
+                            "priority": 1,
+                            "depend_on": "?rag",
+                            "keywords": ["hello"],
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+                "routing_rail": {"enabled": False},
+            }
+        )
+        event = FakeEvent("hello")
+        fake_context = FakeContext()
+        fake_context.kb_manager.retrieve_result = {
+            "results": [{"text": "Matched policy.", "score": 0.91}]
+        }
+        llm_started = asyncio.Event()
+        release_llm = asyncio.Event()
+        llm_finished = asyncio.Event()
+        child_executed = asyncio.Event()
+        capture_finished = asyncio.Event()
+        rag_logged = asyncio.Event()
+
+        async def slow_llm_generate(chat_provider_id, prompt, system_prompt=None):
+            llm_started.set()
+            await release_llm.wait()
+            llm_finished.set()
+            return FakeResponse('{"matched": false, "payload": {}}')
+
+        fake_context.llm_generate = slow_llm_generate
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        def observe_child(rule, context, text):
+            if rule.rule_id == "rag_child":
+                child_executed.set()
+            return evaluate_text_rule_impl(rule, context, text)
+
+        async def capture_match(rule, inspected_text, evidence, context):
+            capture_finished.set()
+
+        def observe_rag_log(rule, result):
+            rag_logged.set()
+
+        async def scenario():
+            with patch("rails.evaluate_text_rule", side_effect=observe_child):
+                with patch.object(
+                    pipeline, "_capture_rag_experience", new=capture_match
+                ):
+                    with patch.object(
+                        pipeline, "_log_rag_judge_result", side_effect=observe_rag_log
+                    ):
+                        task = asyncio.create_task(pipeline.run_message_input(event))
+                        await asyncio.wait_for(llm_started.wait(), timeout=1)
+                        await asyncio.wait_for(child_executed.wait(), timeout=1)
+                        self.assertTrue(rag_logged.is_set())
+                        self.assertFalse(llm_finished.is_set())
+                        self.assertFalse(capture_finished.is_set())
+                        release_llm.set()
+                        context = await asyncio.wait_for(task, timeout=1)
+            return context
+
+        context = asyncio.run(scenario())
+
+        self.assertTrue(context.results["rag"].matched)
+        self.assertTrue(context.results["rag_child"].matched)
+        self.assertTrue(capture_finished.is_set())
+
+    def test_block_closes_input_admission_then_records_running_rag_before_stop(self):
+        class CountingEvent(FakeEvent):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.effects = []
+
+            def stop_event(self):
+                self.effects.append("stop")
+                super().stop_event()
+
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "block_review",
+                            "priority": 10,
+                            "provider_id": "safe-provider",
+                            "audit_prompt": "Fast blocking review.",
+                            "action_on_hit": "block",
+                        },
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "running_rag",
+                            "priority": 20,
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                            "action_on_hit": "observe",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "blocked_child",
+                            "priority": 1,
+                            "depend_on": "?block_review",
+                            "keywords": ["hello"],
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+                "routing_rail": {"enabled": False},
+            }
+        )
+        event = CountingEvent("hello")
+        fake_context = FakeContext()
+        block_started = asyncio.Event()
+        release_block = asyncio.Event()
+        rag_started = asyncio.Event()
+        release_rag = asyncio.Event()
+        capture_finished = asyncio.Event()
+
+        async def blocking_llm_generate(chat_provider_id, prompt, system_prompt=None):
+            block_started.set()
+            await release_block.wait()
+            return FakeResponse('{"matched": true, "payload": {}}')
+
+        async def slow_retrieve(**kwargs):
+            rag_started.set()
+            await release_rag.wait()
+            return {"results": [{"text": "Matched policy.", "score": 0.91}]}
+
+        fake_context.llm_generate = blocking_llm_generate
+        fake_context.kb_manager.retrieve = slow_retrieve
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        async def capture_match(rule, inspected_text, evidence, context):
+            event.effects.append("capture")
+            capture_finished.set()
+
+        async def scenario():
+            with patch.object(
+                pipeline, "_capture_rag_experience", new=capture_match
+            ):
+                task = asyncio.create_task(pipeline.run_message_input(event))
+                await asyncio.wait_for(
+                    asyncio.gather(block_started.wait(), rag_started.wait()), timeout=1
+                )
+                release_block.set()
+                await asyncio.sleep(0)
+                self.assertFalse(event.stopped)
+                self.assertFalse(capture_finished.is_set())
+                release_rag.set()
+                return await asyncio.wait_for(task, timeout=1)
+
+        context = asyncio.run(scenario())
+
+        self.assertTrue(context.input_blocked)
+        self.assertTrue(context.results["block_review"].matched)
+        self.assertTrue(context.results["running_rag"].matched)
+        self.assertEqual(
+            context.results["blocked_child"].skipped_reason, "rail_stopped"
+        )
+        self.assertEqual(event.effects, ["capture", "stop"])
+
+    def test_retry_settles_running_rag_record_before_provider_regeneration(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "retry_review",
+                            "priority": 10,
+                            "provider_id": "safe-provider",
+                            "audit_prompt": "Retry unsafe output.",
+                            "action_on_hit": "retry_generation",
+                        },
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "running_rag",
+                            "priority": 20,
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                            "action_on_hit": "observe",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        review_calls = 0
+        rag_calls = 0
+        retry_review_started = asyncio.Event()
+        release_retry_review = asyncio.Event()
+        rag_started = asyncio.Event()
+        release_rag = asyncio.Event()
+        effects = []
+
+        async def retry_review_llm(chat_provider_id, prompt, system_prompt=None):
+            nonlocal review_calls
+            review_calls += 1
+            if review_calls == 1:
+                retry_review_started.set()
+                await release_retry_review.wait()
+                return FakeResponse('{"matched": true, "payload": {}}')
+            return FakeResponse('{"matched": false, "payload": {}}')
+
+        async def first_rag_is_slow(**kwargs):
+            nonlocal rag_calls
+            rag_calls += 1
+            if rag_calls == 1:
+                rag_started.set()
+                await release_rag.wait()
+                return {"results": [{"text": "Matched policy.", "score": 0.91}]}
+            return {"results": []}
+
+        provider = FakeTextProvider(["safe replacement"])
+        original_text_chat = provider.text_chat
+
+        async def tracked_text_chat(**kwargs):
+            effects.append("retry")
+            return await original_text_chat(**kwargs)
+
+        provider.text_chat = tracked_text_chat
+        fake_context.llm_generate = retry_review_llm
+        fake_context.kb_manager.retrieve = first_rag_is_slow
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        async def capture_match(rule, inspected_text, evidence, context):
+            effects.append("capture")
+
+        async def scenario():
+            await pipeline.run_request(event, FakeRequest("original"))
+            with patch.object(
+                pipeline, "_capture_rag_experience", new=capture_match
+            ):
+                task = asyncio.create_task(pipeline.run_response(event, response))
+                await asyncio.wait_for(
+                    asyncio.gather(retry_review_started.wait(), rag_started.wait()),
+                    timeout=1,
+                )
+                release_retry_review.set()
+                await asyncio.sleep(0)
+                self.assertEqual(provider.calls, [])
+                self.assertEqual(effects, [])
+                release_rag.set()
+                return await asyncio.wait_for(task, timeout=1)
+
+        context = asyncio.run(scenario())
+
+        self.assertEqual(effects[:2], ["capture", "retry"])
+        self.assertEqual(context.retry_trace[0]["node_id"], "retry_review")
+        self.assertEqual(response.completion_text, "safe replacement")
+
+    def test_output_block_wins_over_earlier_completed_retry_candidate(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {"enabled": False},
+                "output_rail": {
+                    "__policy_step_settings": {"max_retries": 1},
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "fast_retry",
+                            "priority": 10,
+                            "provider_id": "retry-provider",
+                            "audit_prompt": "Retry unsafe output.",
+                            "action_on_hit": "retry_generation",
+                        },
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "slow_block",
+                            "priority": 20,
+                            "provider_id": "block-provider",
+                            "audit_prompt": "Block unsafe output.",
+                            "action_on_hit": "block",
+                        },
+                    ],
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        response = FakeResponse("unsafe draft")
+        fake_context = FakeContext()
+        fake_context.providers.update(
+            {"retry-provider": object(), "block-provider": object()}
+        )
+        retry_started = asyncio.Event()
+        release_retry = asyncio.Event()
+        block_started = asyncio.Event()
+        release_block = asyncio.Event()
+
+        async def controlled_llm(chat_provider_id, prompt, system_prompt=None):
+            if chat_provider_id == "retry-provider":
+                retry_started.set()
+                await release_retry.wait()
+                return FakeResponse('{"matched": true, "payload": {}}')
+            block_started.set()
+            await release_block.wait()
+            return FakeResponse('{"matched": true, "payload": {}}')
+
+        provider = FakeTextProvider(["must not be used"])
+        fake_context.llm_generate = controlled_llm
+        fake_context.providers["default-provider"] = provider
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        async def scenario():
+            await pipeline.run_request(event, FakeRequest("original"))
+            task = asyncio.create_task(pipeline.run_response(event, response))
+            await asyncio.wait_for(
+                asyncio.gather(retry_started.wait(), block_started.wait()), timeout=1
+            )
+            release_retry.set()
+            await asyncio.sleep(0)
+            self.assertEqual(provider.calls, [])
+            release_block.set()
+            return await asyncio.wait_for(task, timeout=1)
+
+        context = asyncio.run(scenario())
+
+        self.assertTrue(context.results["fast_retry"].matched)
+        self.assertTrue(context.results["slow_block"].matched)
+        self.assertTrue(context.output_blocked)
+        self.assertEqual(context.terminal_action["node_id"], "slow_block")
+        self.assertEqual(provider.calls, [])
 
     def test_request_rag_judge_without_scores_matches_when_evidence_exists(self):
         cfg = normalize_config(

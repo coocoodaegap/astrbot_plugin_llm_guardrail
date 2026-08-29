@@ -116,10 +116,10 @@ INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
 # provider switching or a broad retry tuning surface is a later increment.
 RETRY_GENERATION_TIMEOUT_SECONDS = 30.0
 
-# These are runtime safeguards, not per-policy budget controls.  The batch
-# limit prevents one Rail from flooding the event loop; the shared limiter
+# These are runtime safeguards, not per-policy budget controls.  The Rail
+# limit bounds concurrent executor entry in one Rail; the shared limiter
 # protects external providers when several UMOs are active at once.
-READY_BATCH_MAX_PARALLEL_CHECKS = 4
+RAIL_MAX_PARALLEL_CHECKS = 4
 GLOBAL_PARALLEL_CHECK_SEMAPHORE = asyncio.Semaphore(8)
 EXTERNAL_CHECK_TEMPLATES = frozenset({"llm_review", "rag_judge"})
 
@@ -598,11 +598,11 @@ class GuardrailPipeline:
                 message_facts=message_facts,
             )
 
-        async def commit_batch(
+        async def settle_rail(
             executions: list[tuple[NormalizedRule, NodeExecution]],
             committed_context: RailContext,
         ) -> None:
-            await self._commit_input_check_batch(
+            await self._settle_input_check_rail(
                 rail, committed_context, executions
             )
 
@@ -610,14 +610,18 @@ class GuardrailPipeline:
             rail,
             context,
             execute,
-            should_stop=lambda ctx: ctx.input_blocked,
             error_handler=lambda rule, ctx, exc: self._handle_rule_error(
                 rail, rule, ctx, exc
             ),
-            max_parallel_checks=READY_BATCH_MAX_PARALLEL_CHECKS,
+            max_parallel_checks=RAIL_MAX_PARALLEL_CHECKS,
             execution_semaphore=GLOBAL_PARALLEL_CHECK_SEMAPHORE,
             execution_semaphore_predicate=_uses_global_check_slot,
-            batch_handler=commit_batch,
+            intake_close_predicate=(
+                lambda rule, execution, _ctx: self._input_execution_closes_intake(
+                    rail, rule, execution
+                )
+            ),
+            settlement_handler=settle_rail,
         )
         if not context.input_blocked:
             self._commit_input_redirect(rail, context, context.original_input)
@@ -636,11 +640,11 @@ class GuardrailPipeline:
             )
             return await self._evaluate_check_node(rail, rule, ctx, inspected_text)
 
-        async def commit_batch(
+        async def settle_rail(
             executions: list[tuple[NormalizedRule, NodeExecution]],
             committed_context: RailContext,
         ) -> None:
-            await self._commit_input_check_batch(
+            await self._settle_input_check_rail(
                 rail, committed_context, executions
             )
 
@@ -648,14 +652,18 @@ class GuardrailPipeline:
             rail,
             context,
             execute,
-            should_stop=lambda ctx: ctx.input_blocked,
             error_handler=lambda rule, ctx, exc: self._handle_rule_error(
                 rail, rule, ctx, exc
             ),
-            max_parallel_checks=READY_BATCH_MAX_PARALLEL_CHECKS,
+            max_parallel_checks=RAIL_MAX_PARALLEL_CHECKS,
             execution_semaphore=GLOBAL_PARALLEL_CHECK_SEMAPHORE,
             execution_semaphore_predicate=_uses_global_check_slot,
-            batch_handler=commit_batch,
+            intake_close_predicate=(
+                lambda rule, execution, _ctx: self._input_execution_closes_intake(
+                    rail, rule, execution
+                )
+            ),
+            settlement_handler=settle_rail,
         )
         if not context.input_blocked:
             self._commit_input_redirect(rail, context, request_text)
@@ -703,6 +711,7 @@ class GuardrailPipeline:
         result = execution.result
         if result is not None and result.action_on_hit == "sanitize":
             self._attach_sanitized_payload(rail, result, inspected_text)
+        self._log_check_completion(rule, execution)
         return execution
 
     async def _commit_node_observations(
@@ -710,16 +719,9 @@ class GuardrailPipeline:
         context: RailContext,
         executions: list[tuple[NormalizedRule, NodeExecution]],
     ) -> None:
-        """Log and persist observations after their NodeResults are stable."""
+        """Persist deferred observations after their NodeResults are stable."""
 
         for rule, execution in executions:
-            result = execution.result
-            if result is not None:
-                if rule.template_key == "llm_review":
-                    self._log_llm_review_result(rule, result)
-                elif rule.template_key == "rag_judge":
-                    self._log_rag_judge_result(rule, result)
-
             capture = execution.deferred.get("rag_experience")
             if not isinstance(capture, dict):
                 continue
@@ -728,13 +730,27 @@ class GuardrailPipeline:
             if isinstance(content, str) and isinstance(evidence, list):
                 await self._capture_rag_experience(rule, content, evidence, context)
 
-    async def _commit_input_check_batch(
+    @staticmethod
+    def _input_execution_closes_intake(
+        rail: NormalizedRail,
+        rule: NormalizedRule,
+        execution: NodeExecution,
+    ) -> bool:
+        """Return whether an input/request result ends further admission."""
+
+        error_plan = execution.deferred.get("error_plan")
+        if isinstance(error_plan, ErrorActionPlan):
+            return error_plan.block
+        result = execution.result
+        return result is not None and resolve_hit_action_plan(rail, result).block
+
+    async def _settle_input_check_rail(
         self,
         rail: NormalizedRail,
         context: RailContext,
         executions: list[tuple[NormalizedRule, NodeExecution]],
     ) -> None:
-        """Apply input/request actions only after a ready batch is committed."""
+        """Record a quiescent input/request Rail, then apply one block action."""
 
         await self._commit_node_observations(context, executions)
         for _rule, execution in executions:
@@ -1187,54 +1203,100 @@ class GuardrailPipeline:
             )
             return await self._evaluate_check_node(rail, rule, ctx, inspected_text)
 
-        async def commit_batch(
+        async def settle_attempt(
             executions: list[tuple[NormalizedRule, NodeExecution]],
             committed_context: RailContext,
         ) -> None:
             nonlocal retry_request
-            await self._commit_node_observations(committed_context, executions)
-            for _rule, execution in executions:
-                if committed_context.output_blocked or retry_request is not None:
-                    break
-                error_plan = execution.deferred.get("error_plan")
-                if isinstance(error_plan, ErrorActionPlan):
-                    if error_plan.block:
-                        self._apply_error_block(
-                            rail,
-                            committed_context,
-                            error_plan,
-                            error_plan.node_id,
-                        )
-                    continue
-                result = execution.result
-                if result is None:
-                    continue
-                hit_plan = resolve_hit_action_plan(rail, result)
-                if hit_plan.action == "retry_generation":
-                    retry_request = {"node_id": result.node_id}
-                else:
-                    self._apply_output_action(
-                        rail, committed_context, result, hit_plan
-                    )
-            for _rule, execution in executions:
-                execution.deferred.clear()
+            retry_request = await self._settle_output_rail_attempt(
+                rail, committed_context, executions
+            )
 
         await self.scheduler.run_async(
             rail,
             context,
             execute,
-            should_stop=lambda ctx: ctx.output_blocked or retry_request is not None,
             error_handler=lambda rule, ctx, exc: self._handle_rule_error(
                 rail, rule, ctx, exc
             ),
-            max_parallel_checks=READY_BATCH_MAX_PARALLEL_CHECKS,
+            max_parallel_checks=RAIL_MAX_PARALLEL_CHECKS,
             execution_semaphore=GLOBAL_PARALLEL_CHECK_SEMAPHORE,
             execution_semaphore_predicate=_uses_global_check_slot,
-            batch_handler=commit_batch,
+            intake_close_predicate=(
+                lambda rule, execution, _ctx: self._output_execution_closes_intake(
+                    rail, rule, execution
+                )
+            ),
+            settlement_handler=settle_attempt,
         )
         if retry_request is None and not context.output_blocked:
             self._apply_output_redirect(rail, context, context.current_output)
         return retry_request
+
+    @staticmethod
+    def _output_execution_closes_intake(
+        rail: NormalizedRail,
+        rule: NormalizedRule,
+        execution: NodeExecution,
+    ) -> bool:
+        """Return whether a Step 5 result ends this candidate's admission."""
+
+        error_plan = execution.deferred.get("error_plan")
+        if isinstance(error_plan, ErrorActionPlan):
+            return error_plan.block
+        result = execution.result
+        if result is None:
+            return False
+        return resolve_hit_action_plan(rail, result).action in {
+            "block",
+            "retry_generation",
+        }
+
+    async def _settle_output_rail_attempt(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        executions: list[tuple[NormalizedRule, NodeExecution]],
+    ) -> dict[str, str] | None:
+        """Persist one quiescent Step 5 attempt before selecting its outcome."""
+
+        await self._commit_node_observations(context, executions)
+        block_candidate: tuple[
+            ErrorActionPlan | None, RuleResult | None, HitActionPlan | None
+        ] | None = None
+        retry_candidate: RuleResult | None = None
+
+        for _rule, execution in executions:
+            error_plan = execution.deferred.get("error_plan")
+            if isinstance(error_plan, ErrorActionPlan):
+                if error_plan.block and block_candidate is None:
+                    block_candidate = (error_plan, None, None)
+                continue
+            result = execution.result
+            if result is None:
+                continue
+            hit_plan = resolve_hit_action_plan(rail, result)
+            if hit_plan.block and block_candidate is None:
+                block_candidate = (None, result, hit_plan)
+            elif hit_plan.action == "retry_generation" and retry_candidate is None:
+                retry_candidate = result
+
+        try:
+            if block_candidate is not None:
+                error_plan, result, hit_plan = block_candidate
+                if error_plan is not None:
+                    self._apply_error_block(
+                        rail, context, error_plan, error_plan.node_id
+                    )
+                elif result is not None and hit_plan is not None:
+                    self._apply_output_action(rail, context, result, hit_plan)
+                return None
+            if retry_candidate is not None:
+                return {"node_id": retry_candidate.node_id}
+            return None
+        finally:
+            for _rule, execution in executions:
+                execution.deferred.clear()
 
     def _reset_output_rail_attempt(
         self, rail: NormalizedRail, context: RailContext
@@ -1635,6 +1697,19 @@ class GuardrailPipeline:
             self._log_summary(result.metadata.get("raw_response", ""), 500),
         )
 
+    def _log_check_completion(
+        self, rule: NormalizedRule, execution: NodeExecution
+    ) -> None:
+        """Log a completed worker without applying a Rail side effect."""
+
+        result = execution.result
+        if result is None or not result.executed:
+            return
+        if rule.template_key == "llm_review":
+            self._log_llm_review_result(rule, result)
+        elif rule.template_key == "rag_judge":
+            self._log_rag_judge_result(rule, result)
+
     @staticmethod
     def _log_summary(value: object, limit: int) -> str:
         text = str(value or "").replace("\r", "\\r").replace("\n", "\\n").strip()
@@ -1690,7 +1765,9 @@ class GuardrailPipeline:
         context: RailContext,
         exc: Exception,
     ) -> NodeExecution:
-        return self._make_rule_error_execution(rail, rule, exc)
+        execution = self._make_rule_error_execution(rail, rule, exc)
+        self._log_check_completion(rule, execution)
+        return execution
 
     @staticmethod
     def _make_rule_error_execution(
