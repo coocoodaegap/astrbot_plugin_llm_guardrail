@@ -427,9 +427,14 @@ class ConfigSnapshotManager:
             "effective_policy_name": (
                 effective_policy.name if effective_policy is not None else ""
             ),
-            "fallback_llm_review_enabled": bool(
+            "fallback_input_llm_review_enabled": bool(
                 snapshot.fallback_runtime_config.fallback_policy_settings.get(
                     "enable_llm_review_in_fallback_policy", False
+                )
+            ),
+            "fallback_output_llm_review_enabled": bool(
+                snapshot.fallback_runtime_config.fallback_policy_settings.get(
+                    "enable_output_llm_review_in_fallback_policy", False
                 )
             ),
             "rails": rails,

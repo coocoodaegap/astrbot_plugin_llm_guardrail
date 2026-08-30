@@ -500,6 +500,9 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(cfg.fallback_policy_settings["max_retries"], 2)
         self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 2)
         self.assertFalse(cfg.fallback_policy_settings["enable_fallback_output_checks"])
+        self.assertFalse(
+            cfg.fallback_policy_settings["enable_output_llm_review_in_fallback_policy"]
+        )
 
     def test_legacy_per_detector_fallback_switches_are_ignored_with_warning(self):
         cfg = normalize_config(

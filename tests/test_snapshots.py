@@ -260,7 +260,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             {"SAFETY_PREAMBLE": "Keep replies safe."},
         )
 
-    def test_fallback_llm_review_is_controlled_by_system_settings_and_snapshot_safe(self):
+    def test_fallback_llm_reviews_are_controlled_by_system_settings_and_snapshot_safe(self):
         manager = ConfigSnapshotManager(
             {"fallback_policy_settings": {"enable_llm_review_in_fallback_policy": False}}
         )
@@ -268,7 +268,12 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         result = asyncio.run(
             manager.publish(
-                {"fallback_policy_settings": {"enable_llm_review_in_fallback_policy": True}},
+                {
+                    "fallback_policy_settings": {
+                        "enable_llm_review_in_fallback_policy": True,
+                        "enable_output_llm_review_in_fallback_policy": True,
+                    }
+                },
                 expected_revision=0,
             )
         )
@@ -300,6 +305,24 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             ],
         )
         self.assertEqual(nodes[6].depend_on, "__fallback_input_or")
+        self.assertEqual(
+            [node.node_id for node in old_snapshot.fallback_runtime_config.rails["output_rail"].nodes],
+            [
+                "__fallback_poor_quality",
+                "__fallback_output_or",
+                "__fallback_output_enforcement",
+            ],
+        )
+        output_nodes = result.snapshot.fallback_runtime_config.rails["output_rail"].nodes
+        self.assertEqual(
+            [node.node_id for node in output_nodes],
+            [
+                "__fallback_poor_quality",
+                "__fallback_output_or",
+                "__fallback_output_llm_review",
+            ],
+        )
+        self.assertEqual(output_nodes[2].depend_on, "__fallback_output_or")
 
     def test_fallback_detector_registry_honors_its_rail_system_switch(self):
         detector = FallbackDetectorSpec(

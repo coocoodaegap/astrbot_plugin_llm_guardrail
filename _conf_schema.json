@@ -34,18 +34,24 @@
         "hint": "在没有可用用户策略时，运行当前版本已验收的全部输出 fallback 检测器及其终端裁决链路。关闭后整个输出 fallback 图不生成；不影响用户显式配置的策略。",
         "default": true
       },
+      "enable_llm_review_in_fallback_policy": {
+        "type": "bool",
+        "description": "启用兜底输入 LLM 旁审。",
+        "hint": "输入 fallback 检测器命中时调用 LLM 进行语境复核。关闭时由输入 enforcement 节点按默认动作处置。",
+        "default": false
+      },
+      "enable_output_llm_review_in_fallback_policy": {
+        "type": "bool",
+        "description": "启用兜底输出 LLM 旁审。",
+        "hint": "输出 fallback 检测器命中时调用 LLM 结合本轮请求和候选回复进行语境复核。关闭时由输出 enforcement 节点按默认动作处置。",
+        "default": false
+      },
       "default_llm_provider": {
         "type": "string",
         "description": "默认辅助 Provider",
         "_special": "select_provider",
         "default": "",
         "hint": "仅供本插件 LLM 旁审类规则使用。留空则相关辅助调用尝试使用 AstrBot 当前会话默认 Provider。此设置为所有自定义策略提供默认值。"
-      },
-      "enable_llm_review_in_fallback_policy": {
-        "type": "bool",
-        "description": "在兜底策略下启用 LLM 旁审。",
-        "hint": "在兜底策略下启用的检测器被触发时调用 LLM 辅助分析。此开关仅用于控制该功能在兜底策略下的激活状态。",
-        "default": false
       },
       "default_action_on_hit": {
         "type": "string",

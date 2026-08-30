@@ -524,7 +524,8 @@ function renderOverviewDefaultPolicyPath(overview) {
   const policyId = String(overview.effective_policy_id || "").trim();
   const policy = overviewPolicyById(policyId);
   const mappingCount = overviewCount(overview.umo_policy_selection_count);
-  const llmReviewEnabled = Boolean(overview.fallback_llm_review_enabled);
+  const inputLlmReviewEnabled = Boolean(overview.fallback_input_llm_review_enabled);
+  const outputLlmReviewEnabled = Boolean(overview.fallback_output_llm_review_enabled);
   const identity = document.createElement("div");
   const title = document.createElement("strong");
   const description = document.createElement("p");
@@ -548,8 +549,13 @@ function renderOverviewDefaultPolicyPath(overview) {
     appendOverviewLine(details, "请求路径", "找不到合法策略时使用 fallback");
     appendOverviewLine(
       details,
-      "LLM 旁审",
-      llmReviewEnabled ? "fallback 中已开启" : "fallback 中未开启",
+      "输入 LLM 旁审",
+      inputLlmReviewEnabled ? "fallback 中已开启" : "fallback 中未开启",
+    );
+    appendOverviewLine(
+      details,
+      "输出 LLM 旁审",
+      outputLlmReviewEnabled ? "fallback 中已开启" : "fallback 中未开启",
     );
     action.textContent = "策略详情";
     action.disabled = true;

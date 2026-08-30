@@ -22,10 +22,20 @@ FALLBACK_INPUT_OR_ID = "__fallback_input_or"
 FALLBACK_LLM_REVIEW_ID = "__fallback_llm_review"
 FALLBACK_ENFORCEMENT_ID = "__fallback_input_enforcement"
 FALLBACK_OUTPUT_OR_ID = "__fallback_output_or"
+FALLBACK_OUTPUT_LLM_REVIEW_ID = "__fallback_output_llm_review"
 FALLBACK_OUTPUT_ENFORCEMENT_ID = "__fallback_output_enforcement"
 FALLBACK_LLM_REVIEW_PROMPT = (
     "Review the supplied text for safety risks indicated by the preceding "
     "detectors. Return whether the text should be treated as unsafe."
+)
+FALLBACK_OUTPUT_LLM_REVIEW_PROMPT = (
+    "Review the candidate reply in the context of the user's request. The "
+    "preceding output detectors found a possible safety or reliability issue. "
+    "Return whether this reply should be treated as unsafe or unsuitable to send."
+)
+FALLBACK_OUTPUT_LLM_REVIEW_TEMPLATE = (
+    "User message:\n${event_origin}\n\nFinal request:\n${req_origin}\n\n"
+    "Candidate reply:\n${res_origin}"
 )
 
 
@@ -151,18 +161,35 @@ def build_fallback_runtime_config(
 
     output_detector_ids = [node["rule_id"] for node in output_nodes]
     if output_detector_ids:
-        output_nodes.extend(
-            (
+        output_nodes.append(
+            {
+                "__template_key": "logic_gate",
+                "rule_id": FALLBACK_OUTPUT_OR_ID,
+                "enabled": True,
+                "priority": 900,
+                "gate": "any",
+                "inputs": output_detector_ids,
+                "action_on_hit": "observe",
+                "action_on_error": "default",
+            }
+        )
+        if settings.get("enable_output_llm_review_in_fallback_policy", False):
+            output_nodes.append(
                 {
-                    "__template_key": "logic_gate",
-                    "rule_id": FALLBACK_OUTPUT_OR_ID,
+                    "__template_key": "llm_review",
+                    "rule_id": FALLBACK_OUTPUT_LLM_REVIEW_ID,
                     "enabled": True,
-                    "priority": 900,
-                    "gate": "any",
-                    "inputs": output_detector_ids,
-                    "action_on_hit": "observe",
+                    "priority": 1000,
+                    "depend_on": FALLBACK_OUTPUT_OR_ID,
+                    "provider_id": str(settings.get("default_llm_provider", "") or ""),
+                    "audit_prompt": FALLBACK_OUTPUT_LLM_REVIEW_PROMPT,
+                    "inspection_template": FALLBACK_OUTPUT_LLM_REVIEW_TEMPLATE,
+                    "action_on_hit": "default",
                     "action_on_error": "default",
-                },
+                }
+            )
+        else:
+            output_nodes.append(
                 {
                     "__template_key": "logic_gate",
                     "rule_id": FALLBACK_OUTPUT_ENFORCEMENT_ID,
@@ -172,9 +199,8 @@ def build_fallback_runtime_config(
                     "inputs": [FALLBACK_OUTPUT_OR_ID],
                     "action_on_hit": "default",
                     "action_on_error": "default",
-                },
+                }
             )
-        )
 
     raw_config = {
         "fallback_policy_settings": settings,

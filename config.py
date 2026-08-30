@@ -1128,6 +1128,9 @@ def _normalize_fallback_policy_settings(
         "enable_llm_review_in_fallback_policy": _as_bool(
             raw_settings.get("enable_llm_review_in_fallback_policy"), False
         ),
+        "enable_output_llm_review_in_fallback_policy": _as_bool(
+            raw_settings.get("enable_output_llm_review_in_fallback_policy"), False
+        ),
         "enable_fallback_input_checks": _as_bool(
             raw_settings.get("enable_fallback_input_checks"), True
         ),

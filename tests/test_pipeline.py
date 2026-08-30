@@ -640,6 +640,34 @@ class PipelineTests(unittest.TestCase):
             context.terminal_action["node_id"], "__fallback_output_enforcement"
         )
 
+    def test_poor_quality_fallback_can_be_reviewed_by_output_llm(self):
+        cfg = build_fallback_runtime_config(
+            {
+                "reply_placeholder_on_block": True,
+                "enable_output_llm_review_in_fallback_policy": True,
+            }
+        )
+        event = FakeEvent("normal request")
+        adapter_context = FakeContext()
+        adapter_context.llm_responses = ['{"matched": false, "payload": {}}']
+        response = FakeResponse("?!?!?!")
+
+        context = asyncio.run(
+            GuardrailPipeline(cfg, AstrBotAdapter(adapter_context)).run_response(
+                event, response
+            )
+        )
+
+        self.assertTrue(context.results["__fallback_poor_quality"].matched)
+        self.assertTrue(context.results["__fallback_output_or"].matched)
+        self.assertIn("__fallback_output_llm_review", context.results)
+        self.assertFalse(context.results["__fallback_output_llm_review"].matched)
+        self.assertFalse(context.output_blocked)
+        self.assertEqual(len(adapter_context.llm_calls), 1)
+        self.assertIn("candidate reply", adapter_context.llm_calls[0]["system_prompt"])
+        self.assertIn("normal request", adapter_context.llm_calls[0]["prompt"])
+        self.assertIn("?!?!?!", adapter_context.llm_calls[0]["prompt"])
+
     def test_input_rail_uses_stable_single_block_action_after_out_of_order_checks(self):
         class CountingEvent(FakeEvent):
             def __init__(self, *args, **kwargs):
