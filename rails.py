@@ -682,8 +682,10 @@ class GuardrailPipeline:
         if rule.template_key == "logic_gate":
             execution = NodeExecution(result=evaluate_logic_gate(rule, context))
         elif rule.template_key in {
+            "encoded_payload_detector",
             "length_anomaly_detector",
             "role_marker_spoofing_detector",
+            "external_fetch_detector",
             "instruction_override_detector",
         }:
             execution = NodeExecution(

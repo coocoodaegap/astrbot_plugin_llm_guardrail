@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections import Counter
 import json
 import re
@@ -88,10 +90,46 @@ def _logic_gate_value_to_text(value: object) -> str:
 
 
 INPUT_DETECTOR_TEMPLATES = {
+    "encoded_payload_detector",
     "length_anomaly_detector",
     "role_marker_spoofing_detector",
+    "external_fetch_detector",
     "instruction_override_detector",
 }
+
+_BASE64_CANDIDATE_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{16,}={0,2})(?![A-Za-z0-9+/_=-])"
+)
+_PERCENT_ESCAPE_PATTERN = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
+_UNICODE_ESCAPE_PATTERN = re.compile(r"(?:\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})+")
+_HEX_BYTE_PATTERN = re.compile(
+    r"(?<![0-9A-Fa-f])(?:0x)?[0-9A-Fa-f]{2}(?:[\s,:-]+[0-9A-Fa-f]{2})+(?![0-9A-Fa-f])"
+)
+_ROT13_WRAPPER_PATTERN = re.compile(
+    r"\brot13\s*:\s*([A-Za-z]{8,})\b|\brot13\s*\(\s*([A-Za-z]{8,})\s*\)",
+    re.IGNORECASE,
+)
+_HTTP_RESOURCE_PATTERN = re.compile(
+    r"(?i)(?:(?:https?:)?//[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?(?:/[^\s<>()\[\]\"']*)?)"
+)
+_MARKDOWN_IMAGE_PREFIX_PATTERN = re.compile(r"!\[[^\]\r\n]{0,120}\]\(\s*$")
+_COMMAND_FETCH_PATTERN = re.compile(
+    r"(?im)^\s*(?:curl|wget|invoke-webrequest|iwr)\b[^\r\n]*?(?:(?:https?:)?//)"
+)
+_COMMAND_EXECUTION_TAIL_PATTERN = re.compile(
+    r"(?i)(?:\||&&)\s*(?:sh|bash|zsh|python3?|pwsh|powershell|iex)\b"
+)
+_FETCH_ACTION_TERMS = (
+    "fetch", "retrieve", "download", "load", "read", "open", "import",
+    "获取", "抓取", "下载", "读取", "加载", "打开", "导入",
+)
+_TRANSFER_ACTION_TERMS = (
+    "send", "upload", "post", "forward", "exfiltrate",
+    "发送", "上传", "转发", "外传",
+)
+_PROMPT_TARGET_TERMS = (
+    "prompt", "instruction", "system prompt", "提示词", "指令", "系统提示",
+)
 
 MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
@@ -118,12 +156,16 @@ _MESSAGE_KIND_BY_TEMPLATE = {
 def evaluate_input_detector(
     node: NormalizedNode, context: RailContext, text: str,
 ):
-    """Evaluate one P1 local input detector without external I/O."""
+    """Evaluate one local input detector without external I/O."""
 
-    if node.template_key == "length_anomaly_detector":
+    if node.template_key == "encoded_payload_detector":
+        matched, payload = _evaluate_encoded_payload(node.config, text)
+    elif node.template_key == "length_anomaly_detector":
         matched, payload = _evaluate_length_anomaly(node.config, text)
     elif node.template_key == "role_marker_spoofing_detector":
         matched, payload = _evaluate_role_marker_spoofing(node.config, text)
+    elif node.template_key == "external_fetch_detector":
+        matched, payload = _evaluate_external_fetch(node.config, text)
     elif node.template_key == "instruction_override_detector":
         matched, payload = _evaluate_instruction_override(node.config, text)
     else:
@@ -197,6 +239,142 @@ def _redact_identifier(value: str) -> str:
     if not normalized:
         return ""
     return f"***{normalized[-4:]}" if len(normalized) > 4 else "***"
+
+
+def _evaluate_encoded_payload(config: dict, text: str) -> tuple[bool, dict]:
+    scanned, truncated = _normalized_window(
+        text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    candidates: list[tuple[str, int, int]] = []
+    decode_limited = False
+    candidate_limit = int(config["max_candidate_segments"])
+
+    def add_candidate(code: str, start: int, end: int) -> None:
+        if len(candidates) < candidate_limit:
+            candidates.append((code, start, end))
+
+    if config["detect_base64"]:
+        for match in _BASE64_CANDIDATE_PATTERN.finditer(scanned):
+            candidate = match.group(1)
+            if len(candidate) < int(config["min_base64_chars"]):
+                continue
+            if len(set(candidate.rstrip("="))) < int(config["min_base64_distinct_chars"]):
+                continue
+            if not any(char in candidate for char in "+/=_-"):
+                continue
+            valid, limited = _validate_base64_candidate(
+                candidate, int(config["max_decode_bytes"]),
+            )
+            decode_limited = decode_limited or limited
+            if valid:
+                add_candidate("base64", match.start(1), match.end(1))
+
+    if config["detect_percent_encoding"]:
+        for match in _PERCENT_ESCAPE_PATTERN.finditer(scanned):
+            if match.group(0).count("%") >= int(config["min_percent_escape_count"]):
+                add_candidate("percent_escape", match.start(), match.end())
+
+    if config["detect_unicode_escape"]:
+        for match in _UNICODE_ESCAPE_PATTERN.finditer(scanned):
+            escape_count = len(
+                re.findall(r"\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}", match.group(0))
+            )
+            if escape_count >= int(config["min_unicode_escape_count"]):
+                add_candidate("unicode_escape", match.start(), match.end())
+
+    if config["detect_hex"]:
+        for match in _HEX_BYTE_PATTERN.finditer(scanned):
+            byte_count = len(re.findall(r"[0-9A-Fa-f]{2}", match.group(0)))
+            if byte_count >= int(config["min_hex_bytes"]):
+                add_candidate("hex_bytes", match.start(), match.end())
+
+    if config["detect_rot13_wrapper"]:
+        for match in _ROT13_WRAPPER_PATTERN.finditer(scanned):
+            start, end = match.span(1 if match.group(1) is not None else 2)
+            if end - start >= int(config["min_rot13_chars"]):
+                add_candidate("rot13_wrapper", start, end)
+
+    zero_width_count = 0
+    if config["detect_zero_width"]:
+        zero_width_count = sum(
+            1 for char in scanned if unicodedata.category(char) == "Cf"
+        )
+    zero_width_ratio = zero_width_count / max(1, len(scanned))
+    zero_width_match = (
+        zero_width_count >= int(config["min_zero_width_chars"])
+        and zero_width_ratio >= float(config["min_zero_width_ratio"])
+    )
+
+    encoding_codes = list(dict.fromkeys(code for code, _start, _end in candidates))
+    if zero_width_match:
+        encoding_codes.append("zero_width")
+    encoded_chars = _merged_range_length(
+        [(start, end) for _code, start, end in candidates]
+    ) + zero_width_count
+    encoded_ratio = min(1.0, encoded_chars / max(1, len(scanned)))
+    strongest_candidate = max(
+        (end - start for _code, start, end in candidates), default=0,
+    )
+    strong_candidate = any(
+        (end - start) >= _encoded_strong_length(code, config)
+        and (end - start) / max(1, len(scanned)) >= float(config["min_encoded_ratio"])
+        for code, start, end in candidates
+    )
+    strong_match = zero_width_match or strong_candidate
+    matched = strong_match or len(encoding_codes) >= int(config["min_signal_families"])
+    base_score = min(
+        79,
+        len(encoding_codes) * 24 + round(encoded_ratio * 30),
+    ) if encoding_codes else 0
+    score = max(80 if strong_match else 0, base_score)
+    return matched, {
+        "encoding_codes": encoding_codes,
+        "score": min(100, score),
+        "candidate_segment_count": len(candidates),
+        "max_candidate_chars": strongest_candidate,
+        "encoded_ratio": round(encoded_ratio, 4),
+        "zero_width_count": zero_width_count,
+        "zero_width_ratio": round(zero_width_ratio, 4),
+        "scan_truncated": truncated,
+        "decode_limited": decode_limited,
+    }
+
+
+def _validate_base64_candidate(value: str, max_decode_bytes: int) -> tuple[bool, bool]:
+    unpadded = value.rstrip("=")
+    if not unpadded or "=" in unpadded or len(unpadded) % 4 == 1:
+        return False, False
+    estimated_size = (len(unpadded) * 3) // 4
+    if estimated_size > max_decode_bytes:
+        return True, True
+    padded = unpadded + "=" * (-len(unpadded) % 4)
+    try:
+        base64.b64decode(padded, altchars=b"-_", validate=True)
+    except (binascii.Error, ValueError):
+        return False, False
+    return True, False
+
+
+def _encoded_strong_length(code: str, config: dict) -> int:
+    minimums = {
+        "base64": int(config["min_base64_chars"]),
+        "percent_escape": int(config["min_percent_escape_count"]) * 3,
+        "unicode_escape": int(config["min_unicode_escape_count"]) * 6,
+        "hex_bytes": int(config["min_hex_bytes"]) * 3,
+        "rot13_wrapper": int(config["min_rot13_chars"]),
+    }
+    return minimums.get(code, 1000000) * 2
+
+
+def _merged_range_length(ranges: list[tuple[int, int]]) -> int:
+    total = 0
+    latest_end = -1
+    for start, end in sorted(ranges):
+        if end <= latest_end:
+            continue
+        total += end - max(start, latest_end)
+        latest_end = end
+    return total
 
 
 def _evaluate_length_anomaly(config: dict, text: str) -> tuple[bool, dict]:
@@ -291,6 +469,157 @@ def _evaluate_role_marker_spoofing(config: dict, text: str) -> tuple[bool, dict]
     }
 
 
+def _evaluate_external_fetch(config: dict, text: str) -> tuple[bool, dict]:
+    scanned, truncated = _normalized_window(
+        text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    resources, resource_scan_limited = _external_resources(
+        scanned,
+        int(config["max_resources"]),
+        detect_http_resources=bool(config["detect_http_resources"]),
+        detect_markdown_remote_image=bool(config["detect_markdown_remote_image"]),
+    )
+    action_gap = int(config["max_action_gap_chars"])
+    fetch_positions = _semantic_term_positions(scanned, _FETCH_ACTION_TERMS)
+    transfer_positions = _semantic_term_positions(scanned, _TRANSFER_ACTION_TERMS)
+    prompt_positions = _semantic_term_positions(scanned, _PROMPT_TARGET_TERMS)
+    fetch_pairs = _resource_action_pair_count(resources, fetch_positions, action_gap)
+    transfer_pairs = (
+        _resource_action_pair_count(resources, transfer_positions, action_gap)
+        if config["detect_external_transfer"] else 0
+    )
+    prompt_import_pairs = (
+        _prompt_import_pair_count(
+            resources, fetch_positions, prompt_positions, action_gap,
+        )
+        if config["detect_prompt_import"] else 0
+    )
+    command_fetch_execute_count = (
+        _command_fetch_execute_count(scanned)
+        if config["detect_command_fetch"] else 0
+    )
+    remote_image_count = sum(1 for _start, _end, is_image in resources if is_image)
+    evidence_codes: list[str] = []
+    if resources:
+        evidence_codes.append("http_resource")
+    if remote_image_count:
+        evidence_codes.append("markdown_remote_image")
+    if fetch_pairs:
+        evidence_codes.append("fetch_intent")
+    if prompt_import_pairs:
+        evidence_codes.append("prompt_import")
+    if transfer_pairs:
+        evidence_codes.append("external_transfer")
+    if command_fetch_execute_count:
+        evidence_codes.append("command_fetch_execute")
+
+    relationship_count = (
+        int(bool(resources))
+        + int(bool(fetch_pairs))
+        + int(bool(prompt_import_pairs))
+        + int(bool(transfer_pairs))
+    )
+    matched = command_fetch_execute_count > 0 or (
+        bool(resources)
+        and relationship_count >= int(config["min_evidence"])
+        and (fetch_pairs > 0 or prompt_import_pairs > 0 or transfer_pairs > 0)
+    )
+    ordinary_score = min(
+        79,
+        int(bool(resources)) * 15
+        + int(bool(fetch_pairs)) * 25
+        + int(bool(prompt_import_pairs)) * 18
+        + int(bool(transfer_pairs)) * 20
+        + min(16, (fetch_pairs + prompt_import_pairs + transfer_pairs) * 4),
+    )
+    score = max(85 if command_fetch_execute_count else 0, ordinary_score)
+    return matched, {
+        "evidence_codes": evidence_codes,
+        "score": min(100, score),
+        "resource_count": len(resources),
+        "remote_image_count": remote_image_count,
+        "command_fetch_execute_count": command_fetch_execute_count,
+        "nearby_action_pair_count": fetch_pairs + prompt_import_pairs + transfer_pairs,
+        "scan_truncated": truncated,
+        "resource_scan_limited": resource_scan_limited,
+    }
+
+
+def _external_resources(
+    text: str,
+    maximum: int,
+    *,
+    detect_http_resources: bool,
+    detect_markdown_remote_image: bool,
+) -> tuple[list[tuple[int, int, bool]], bool]:
+    resources: list[tuple[int, int, bool]] = []
+    limited = False
+    for match in _HTTP_RESOURCE_PATTERN.finditer(text):
+        start, end = match.span()
+        while end > start and text[end - 1] in ".,;:!?":
+            end -= 1
+        is_markdown_image = bool(
+            _MARKDOWN_IMAGE_PREFIX_PATTERN.search(text[max(0, start - 256):start])
+        )
+        if not detect_http_resources and not (
+            detect_markdown_remote_image and is_markdown_image
+        ):
+            continue
+        if len(resources) >= maximum:
+            limited = True
+            break
+        resources.append((start, end, is_markdown_image))
+    return resources, limited
+
+
+def _semantic_term_positions(text: str, terms: tuple[str, ...]) -> list[int]:
+    positions: list[int] = []
+    for term in terms:
+        if term.isascii():
+            pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(term)}(?![A-Za-z0-9_])", re.IGNORECASE)
+            positions.extend(match.start() for match in pattern.finditer(text))
+        else:
+            positions.extend(_all_positions(text, term))
+    return positions
+
+
+def _resource_action_pair_count(
+    resources: list[tuple[int, int, bool]], action_positions: list[int], gap: int,
+) -> int:
+    return sum(
+        1
+        for start, end, _is_image in resources
+        if any(_position_near_range(position, start, end, gap) for position in action_positions)
+    )
+
+
+def _prompt_import_pair_count(
+    resources: list[tuple[int, int, bool]],
+    fetch_positions: list[int],
+    prompt_positions: list[int],
+    gap: int,
+) -> int:
+    return sum(
+        1
+        for start, end, _is_image in resources
+        if any(_position_near_range(position, start, end, gap) for position in fetch_positions)
+        and any(_position_near_range(position, start, end, gap) for position in prompt_positions)
+    )
+
+
+def _position_near_range(position: int, start: int, end: int, gap: int) -> bool:
+    return start - gap <= position <= end + gap
+
+
+def _command_fetch_execute_count(text: str) -> int:
+    return sum(
+        1
+        for line in text.splitlines()
+        if _COMMAND_FETCH_PATTERN.search(line)
+        and _COMMAND_EXECUTION_TAIL_PATTERN.search(line)
+    )
+
+
 def _evaluate_instruction_override(config: dict, text: str) -> tuple[bool, dict]:
     scanned, truncated = _normalized_window(text, int(config["scan_limit_chars"]))
     gap = int(config["max_token_gap"]) * 8
@@ -337,11 +666,13 @@ def _evaluate_instruction_override(config: dict, text: str) -> tuple[bool, dict]
     }
 
 
-def _normalized_window(text: str, limit: int) -> tuple[str, bool]:
+def _normalized_window(
+    text: str, limit: int, *, casefold: bool = True,
+) -> tuple[str, bool]:
     raw = text or ""
     truncated = len(raw) > limit
     normalized = unicodedata.normalize("NFKC", raw[:limit]).replace("\r\n", "\n").replace("\r", "\n")
-    return normalized.casefold(), truncated
+    return normalized.casefold() if casefold else normalized, truncated
 
 
 def _longest_repeat_run(text: str) -> int:

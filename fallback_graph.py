@@ -44,10 +44,9 @@ class FallbackDetectorSpec:
     config: Mapping[str, Any] = field(default_factory=dict)
 
 
-# P1 starts with length anomaly, role-marker spoofing and explicit instruction
-# override.  The remaining entries are later-phase placeholders.  Keeping a
-# spec out of ``implemented`` avoids emitting invalid nodes while preserving
-# the intended fallback composition as an explicit contract.
+# The catalogue preserves the intended fallback composition before every
+# detector is implemented.  Only completed, independently tested detectors
+# are listed in ``IMPLEMENTED_FALLBACK_DETECTORS``.
 FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
     FallbackDetectorSpec("enable_encoded_payload_detector", "__fallback_encoded_payload", "input_rail", "encoded_payload_detector"),
     FallbackDetectorSpec("enable_length_anomaly_detector", "__fallback_length_anomaly", "input_rail", "length_anomaly_detector"),
@@ -67,8 +66,10 @@ FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
 # A registered detector is only an observation node in fallback.  The terminal
 # LLM review or enforcement gate owns the default block/observe action.
 IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
+    FALLBACK_DETECTOR_CATALOGUE[0],
     FALLBACK_DETECTOR_CATALOGUE[1],
     FALLBACK_DETECTOR_CATALOGUE[2],
+    FALLBACK_DETECTOR_CATALOGUE[3],
     FALLBACK_DETECTOR_CATALOGUE[4],
 )
 

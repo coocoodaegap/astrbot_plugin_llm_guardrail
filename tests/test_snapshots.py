@@ -127,8 +127,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(
             [node.node_id for node in config.rails["input_rail"].nodes],
             [
+                "__fallback_encoded_payload",
                 "__fallback_length_anomaly",
                 "__fallback_role_marker_spoofing",
+                "__fallback_external_fetch",
                 "__fallback_instruction_override",
                 "__fallback_input_or",
                 "__fallback_input_enforcement",
@@ -137,8 +139,14 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertTrue(config.rails["input_rail"].nodes[0].enabled)
         self.assertTrue(config.rails["input_rail"].nodes[0].valid)
         self.assertEqual(
-            config.rails["input_rail"].nodes[3].config["inputs"],
-            ["__fallback_length_anomaly", "__fallback_role_marker_spoofing", "__fallback_instruction_override"],
+            config.rails["input_rail"].nodes[5].config["inputs"],
+            [
+                "__fallback_encoded_payload",
+                "__fallback_length_anomaly",
+                "__fallback_role_marker_spoofing",
+                "__fallback_external_fetch",
+                "__fallback_instruction_override",
+            ],
         )
         self.assertNotIn("inputs is empty", " ".join(config.warnings))
         self.assertFalse(config.rails["output_rail"].nodes)
@@ -149,8 +157,8 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(overview["defence_source"], "system_fallback")
         self.assertEqual(overview["effective_policy_id"], "")
         self.assertTrue(overview["rails"]["input_rail"]["enabled"])
-        self.assertEqual(overview["rails"]["input_rail"]["enabled_nodes"], 5)
-        self.assertEqual(overview["rails"]["input_rail"]["total_nodes"], 5)
+        self.assertEqual(overview["rails"]["input_rail"]["enabled_nodes"], 7)
+        self.assertEqual(overview["rails"]["input_rail"]["total_nodes"], 7)
         self.assertFalse(overview["rails"]["routing_rail"]["enabled"])
         self.assertFalse(overview["rails"]["request_rail"]["enabled"])
         self.assertFalse(overview["rails"]["prompt_rail"]["enabled"])
@@ -241,8 +249,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(
             [node.node_id for node in old_snapshot.fallback_runtime_config.rails["input_rail"].nodes],
             [
+                "__fallback_encoded_payload",
                 "__fallback_length_anomaly",
                 "__fallback_role_marker_spoofing",
+                "__fallback_external_fetch",
                 "__fallback_instruction_override",
                 "__fallback_input_or",
                 "__fallback_input_enforcement",
@@ -252,14 +262,16 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(
             [node.node_id for node in nodes],
             [
+                "__fallback_encoded_payload",
                 "__fallback_length_anomaly",
                 "__fallback_role_marker_spoofing",
+                "__fallback_external_fetch",
                 "__fallback_instruction_override",
                 "__fallback_input_or",
                 "__fallback_llm_review",
             ],
         )
-        self.assertEqual(nodes[4].depend_on, "__fallback_input_or")
+        self.assertEqual(nodes[6].depend_on, "__fallback_input_or")
 
     def test_fallback_detector_registry_honors_its_system_switch(self):
         detector = FallbackDetectorSpec(
@@ -365,7 +377,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(overview["rule_library_count"], 0)
         self.assertEqual(overview["policy_library_count"], 0)
         self.assertEqual(overview["system_constant_count"], 0)
-        self.assertEqual(overview["rails"]["input_rail"]["enabled_rules"], 5)
+        self.assertEqual(overview["rails"]["input_rail"]["enabled_rules"], 7)
 
     def test_legacy_rule_list_is_not_a_configuration_source(self):
         manager = ConfigSnapshotManager(
@@ -514,8 +526,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(
             [node.node_id for node in fallback_config.rails["input_rail"].nodes],
             [
+                "__fallback_encoded_payload",
                 "__fallback_length_anomaly",
                 "__fallback_role_marker_spoofing",
+                "__fallback_external_fetch",
                 "__fallback_instruction_override",
                 "__fallback_input_or",
                 "__fallback_input_enforcement",
@@ -570,8 +584,10 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(
             [node.node_id for node in config.rails["input_rail"].nodes],
             [
+                "__fallback_encoded_payload",
                 "__fallback_length_anomaly",
                 "__fallback_role_marker_spoofing",
+                "__fallback_external_fetch",
                 "__fallback_instruction_override",
                 "__fallback_input_or",
                 "__fallback_input_enforcement",

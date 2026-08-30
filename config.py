@@ -47,8 +47,10 @@ COMPONENT_TEMPLATES: dict[str, set[str]] = {
 }
 COMPONENT_TEMPLATES["input_rail"].update(
     {
+        "encoded_payload_detector",
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
+        "external_fetch_detector",
         "instruction_override_detector",
         "contains_forward",
         "contains_file",
@@ -64,8 +66,10 @@ STAGE_ORIGIN_TEMPLATES = {
 }
 COMPONENT_TEMPLATES["request_rail"].update(
     {
+        "encoded_payload_detector",
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
+        "external_fetch_detector",
         "instruction_override_detector",
     }
 )
@@ -497,8 +501,10 @@ def _normalize_node(
     elif template_key == "logic_gate":
         _normalize_logic_gate(rule_id, config, warnings)
     elif template_key in {
+        "encoded_payload_detector",
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
+        "external_fetch_detector",
         "instruction_override_detector",
     }:
         _normalize_input_detector(rule_id, template_key, config, warnings)
@@ -528,8 +534,10 @@ def _normalize_node(
         "logic_gate",
         "rag_judge",
         "llm_review",
+        "encoded_payload_detector",
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
+        "external_fetch_detector",
         "instruction_override_detector",
         *MESSAGE_FACT_TEMPLATES,
     }:
@@ -690,12 +698,58 @@ def _logic_gate_value_template_is_valid(value: str) -> bool:
 def _normalize_input_detector(
     rule_id: str, template_key: str, config: dict[str, Any], warnings: list[str]
 ) -> None:
-    """Normalize P1 policy-local, deterministic input detector parameters."""
+    """Normalize policy-local, deterministic input detector parameters."""
 
     config["scan_limit_chars"] = _bounded_int(
         config.get("scan_limit_chars"), 12000, 256, 100000, rule_id, "scan_limit_chars", warnings
     )
-    if template_key == "length_anomaly_detector":
+    if template_key == "encoded_payload_detector":
+        config["min_base64_chars"] = _bounded_int(
+            config.get("min_base64_chars"), 80, 16, 100000, rule_id, "min_base64_chars", warnings
+        )
+        config["min_base64_distinct_chars"] = _bounded_int(
+            config.get("min_base64_distinct_chars"), 4, 2, 64, rule_id, "min_base64_distinct_chars", warnings
+        )
+        config["min_percent_escape_count"] = _bounded_int(
+            config.get("min_percent_escape_count"), 8, 2, 100000, rule_id, "min_percent_escape_count", warnings
+        )
+        config["min_unicode_escape_count"] = _bounded_int(
+            config.get("min_unicode_escape_count"), 6, 2, 100000, rule_id, "min_unicode_escape_count", warnings
+        )
+        config["min_hex_bytes"] = _bounded_int(
+            config.get("min_hex_bytes"), 24, 4, 100000, rule_id, "min_hex_bytes", warnings
+        )
+        config["min_rot13_chars"] = _bounded_int(
+            config.get("min_rot13_chars"), 32, 8, 100000, rule_id, "min_rot13_chars", warnings
+        )
+        config["min_encoded_ratio"] = _bounded_float(
+            config.get("min_encoded_ratio"), 0.35, 0.01, 1.0, rule_id, "min_encoded_ratio", warnings
+        )
+        config["min_zero_width_chars"] = _bounded_int(
+            config.get("min_zero_width_chars"), 8, 1, 100000, rule_id, "min_zero_width_chars", warnings
+        )
+        config["min_zero_width_ratio"] = _bounded_float(
+            config.get("min_zero_width_ratio"), 0.02, 0.0, 1.0, rule_id, "min_zero_width_ratio", warnings
+        )
+        config["max_candidate_segments"] = _bounded_int(
+            config.get("max_candidate_segments"), 32, 1, 1000, rule_id, "max_candidate_segments", warnings
+        )
+        config["max_decode_bytes"] = _bounded_int(
+            config.get("max_decode_bytes"), 4096, 16, 1000000, rule_id, "max_decode_bytes", warnings
+        )
+        config["min_signal_families"] = _bounded_int(
+            config.get("min_signal_families"), 2, 1, 6, rule_id, "min_signal_families", warnings
+        )
+        for key, default in {
+            "detect_base64": True,
+            "detect_percent_encoding": True,
+            "detect_unicode_escape": True,
+            "detect_hex": True,
+            "detect_rot13_wrapper": True,
+            "detect_zero_width": True,
+        }.items():
+            config[key] = _as_bool(config.get(key), default)
+    elif template_key == "length_anomaly_detector":
         config["hard_max_chars"] = _bounded_int(
             config.get("hard_max_chars"), 8000, 1, 1000000, rule_id, "hard_max_chars", warnings
         )
@@ -726,6 +780,24 @@ def _normalize_input_detector(
         config["min_structural_signals"] = _bounded_int(
             config.get("min_structural_signals"), 2, 1, 5, rule_id, "min_structural_signals", warnings
         )
+    elif template_key == "external_fetch_detector":
+        config["max_resources"] = _bounded_int(
+            config.get("max_resources"), 24, 1, 1000, rule_id, "max_resources", warnings
+        )
+        config["max_action_gap_chars"] = _bounded_int(
+            config.get("max_action_gap_chars"), 120, 1, 10000, rule_id, "max_action_gap_chars", warnings
+        )
+        config["min_evidence"] = _bounded_int(
+            config.get("min_evidence"), 2, 1, 4, rule_id, "min_evidence", warnings
+        )
+        for key, default in {
+            "detect_http_resources": True,
+            "detect_markdown_remote_image": True,
+            "detect_command_fetch": True,
+            "detect_prompt_import": True,
+            "detect_external_transfer": True,
+        }.items():
+            config[key] = _as_bool(config.get(key), default)
     elif template_key == "role_marker_spoofing_detector":
         config["min_indicators"] = _bounded_int(
             config.get("min_indicators"), 2, 1, 5, rule_id, "min_indicators", warnings
