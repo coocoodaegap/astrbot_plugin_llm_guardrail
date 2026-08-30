@@ -48,6 +48,7 @@ try:
         evaluate_logic_gate,
         evaluate_message_fact_component,
         evaluate_output_detector,
+        prepare_sensitive_echo_text,
     )
     from .rules import (
         apply_span_replacements,
@@ -93,6 +94,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_logic_gate,
         evaluate_message_fact_component,
         evaluate_output_detector,
+        prepare_sensitive_echo_text,
     )
     from rules import (
         apply_span_replacements,
@@ -696,6 +698,10 @@ class GuardrailPipeline:
         elif rule.template_key == "poor_quality_detector":
             execution = NodeExecution(
                 result=evaluate_output_detector(rule, context, inspected_text)
+            )
+        elif rule.template_key == "sensitive_echo_detector":
+            execution = await self._execute_sensitive_echo_detector(
+                rail, rule, context, context.current_output
             )
         elif rule.template_key in MESSAGE_FACT_TEMPLATES:
             if message_facts is None:
@@ -1661,6 +1667,145 @@ class GuardrailPipeline:
             warnings=list(adapter_result.warnings),
             deferred=deferred,
         )
+
+    async def _execute_sensitive_echo_detector(
+        self,
+        rail: NormalizedRail,
+        detector: NormalizedRule,
+        context: RailContext,
+        output_text: str,
+    ) -> NodeExecution:
+        """Virtually recheck selected current-run Step 1/3 signals on output."""
+
+        try:
+            inspected_text, scan_truncated = prepare_sensitive_echo_text(
+                detector.config, output_text
+            )
+            sources = self._eligible_sensitive_echo_sources(detector, context)
+            external_limit = int(detector.config["max_external_rechecks"])
+            external_rechecks = 0
+            external_limit_reached = False
+            rechecked_kind_counts: dict[str, int] = {}
+            rechecked_source_count = 0
+            rechecked_match_count = 0
+
+            for source in sources:
+                if source.template_key in EXTERNAL_CHECK_TEMPLATES:
+                    if external_rechecks >= external_limit:
+                        external_limit_reached = True
+                        continue
+                    external_rechecks += 1
+                matched = await self._virtual_sensitive_echo_recheck(
+                    source, context, inspected_text
+                )
+                rechecked_source_count += 1
+                rechecked_kind_counts[source.template_key] = (
+                    rechecked_kind_counts.get(source.template_key, 0) + 1
+                )
+                if matched:
+                    rechecked_match_count += 1
+
+            minimum = int(detector.config["min_rechecked_sources"])
+            matched = rechecked_match_count >= minimum
+            score = min(100, 75 + rechecked_match_count * 5) if matched else 0
+            payload = {
+                "detector": detector.template_key,
+                "reason_codes": ["rechecked_input_signal"] if matched else [],
+                "eligible_source_count": len(sources),
+                "rechecked_source_count": rechecked_source_count,
+                "rechecked_match_count": rechecked_match_count,
+                "rechecked_kind_counts": dict(sorted(rechecked_kind_counts.items())),
+                "external_recheck_count": external_rechecks,
+                "external_recheck_limit_reached": external_limit_reached,
+                "scan_truncated": scan_truncated,
+                "score": score,
+            }
+            return NodeExecution(
+                result=make_result(
+                    detector,
+                    matched=matched,
+                    action_on_hit=str(detector.config.get("action_on_hit", "default")),
+                    metadata=payload,
+                    signal=RuleSignal(value=matched, truthy=matched, payload=payload),
+                )
+            )
+        except Exception:
+            return self._make_rule_error_execution(
+                rail,
+                detector,
+                RuntimeError("sensitive echo virtual recheck failed"),
+            )
+
+    def _eligible_sensitive_echo_sources(
+        self, detector: NormalizedRule, context: RailContext
+    ) -> list[NormalizedRule]:
+        source_ids = set(detector.config.get("source_node_ids", []))
+        sources: list[NormalizedRule] = []
+        for rail_name in ("input_rail", "request_rail"):
+            for source in self.config.rails[rail_name].nodes:
+                if source.node_id not in source_ids:
+                    continue
+                if source.template_key not in {
+                    "plain_keywords", "regex_pattern", "rag_judge", "llm_review",
+                }:
+                    continue
+                result = context.results.get(source.node_id)
+                if (
+                    result is None
+                    or result.status != "completed"
+                    or not result.executed
+                    or not result.matched
+                ):
+                    continue
+                sources.append(source)
+        return sorted(sources, key=lambda source: source.node_id)
+
+    async def _virtual_sensitive_echo_recheck(
+        self, source: NormalizedRule, context: RailContext, text: str
+    ) -> bool:
+        if source.template_key in {"plain_keywords", "regex_pattern"}:
+            return bool(evaluate_text_rule(source, context, text).matched)
+        if source.template_key == "rag_judge":
+            async with GLOBAL_PARALLEL_CHECK_SEMAPHORE:
+                adapter_result = await self.adapter.search_knowledge_base(
+                    list(source.config.get("knowledge_bases", []) or []),
+                    query=text,
+                    top_k=int(source.config.get("top_k", 5) or 5),
+                    timeout_seconds=float(source.config.get("timeout_seconds", 0.0) or 0.0),
+                )
+            if not adapter_result.success:
+                raise RuntimeError("virtual rag recheck is unavailable")
+            evidence = adapter_result.metadata.get("evidence", [])
+            if not isinstance(evidence, list):
+                evidence = []
+            return bool(evaluate_rag_judge_evidence(source, evidence).matched)
+        if source.template_key == "llm_review":
+            source_rail = self.config.rails[source.rail]
+            provider_id = str(source.config.get("provider_id", "")).strip()
+            if not provider_id:
+                provider_id = str(
+                    source_rail.settings.get("default_llm_provider", "")
+                ).strip()
+            async with GLOBAL_PARALLEL_CHECK_SEMAPHORE:
+                adapter_result = await self.adapter.request_llm_text(
+                    context.event,
+                    provider_id=provider_id,
+                    prompt=self._build_llm_review_user_prompt(text),
+                    system_prompt=self._build_llm_review_system_prompt(
+                        str(source.config.get("audit_prompt", ""))
+                    ),
+                    timeout_seconds=float(source.config.get("timeout_seconds", 0.0) or 0.0),
+                )
+            if not adapter_result.success:
+                raise RuntimeError("virtual llm recheck is unavailable")
+            virtual_context = RailContext(None, None, None, "", "", "", "")
+            response_text = str(adapter_result.metadata.get("text", "") or "")
+            return bool(
+                evaluate_llm_review_response(
+                    source, virtual_context, response_text
+                ).matched
+            )
+        raise RuntimeError("unsupported virtual recheck source")
 
     async def _capture_rag_experience(
         self,

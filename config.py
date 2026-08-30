@@ -73,7 +73,9 @@ COMPONENT_TEMPLATES["request_rail"].update(
         "instruction_override_detector",
     }
 )
-COMPONENT_TEMPLATES["output_rail"].add("poor_quality_detector")
+COMPONENT_TEMPLATES["output_rail"].update(
+    {"poor_quality_detector", "sensitive_echo_detector"}
+)
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     rail_name: RULE_TEMPLATES[rail_name] | COMPONENT_TEMPLATES[rail_name]
     for rail_name in RAIL_NAMES
@@ -526,6 +528,11 @@ def _normalize_node(
         _normalize_input_detector(rule_id, template_key, config, warnings)
     elif template_key == "poor_quality_detector":
         _normalize_poor_quality_detector(rule_id, config, warnings)
+    elif template_key == "sensitive_echo_detector":
+        _normalize_sensitive_echo_detector(rule_id, config, warnings)
+        if not config["source_node_ids"]:
+            valid = False
+            enabled = False
     elif template_key in MESSAGE_FACT_TEMPLATES:
         _normalize_message_fact_component(rule_id, template_key, config, warnings)
         if template_key == "contains_request_user_id" and not config["user_ids"]:
@@ -558,6 +565,7 @@ def _normalize_node(
         "external_fetch_detector",
         "instruction_override_detector",
         "poor_quality_detector",
+        "sensitive_echo_detector",
         *MESSAGE_FACT_TEMPLATES,
     }:
         raw_action = "observe" if (
@@ -886,6 +894,43 @@ def _normalize_poor_quality_detector(
         "ignore_fenced_code": True,
     }.items():
         config[key] = _as_bool(config.get(key), default)
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _normalize_sensitive_echo_detector(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the policy-local Step 5 source-rule recheck component."""
+
+    source_ids = _clean_string_list(config.get("source_node_ids", []))
+    config["source_node_ids"] = list(dict.fromkeys(source_ids))
+    if not config["source_node_ids"]:
+        warnings.append(f"{rule_id}.source_node_ids is empty; component skipped")
+    config["scan_limit_chars"] = _bounded_int(
+        config.get("scan_limit_chars"), 12000, 256, 100000,
+        rule_id, "scan_limit_chars", warnings,
+    )
+    config["max_rechecked_sources"] = _bounded_int(
+        config.get("max_rechecked_sources"), 4, 1, 32,
+        rule_id, "max_rechecked_sources", warnings,
+    )
+    max_required_sources = min(
+        int(config["max_rechecked_sources"]), len(config["source_node_ids"])
+    )
+    if max_required_sources < 1:
+        max_required_sources = int(config["max_rechecked_sources"])
+    config["min_rechecked_sources"] = _bounded_int(
+        config.get("min_rechecked_sources"), 1, 1,
+        max_required_sources,
+        rule_id, "min_rechecked_sources", warnings,
+    )
+    config["max_external_rechecks"] = _bounded_int(
+        config.get("max_external_rechecks"), 2, 0, 16,
+        rule_id, "max_external_rechecks", warnings,
+    )
+    config["ignore_fenced_code"] = _as_bool(
+        config.get("ignore_fenced_code"), True
+    )
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 

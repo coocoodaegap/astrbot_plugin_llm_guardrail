@@ -361,6 +361,17 @@ def evaluate_output_detector(
     )
 
 
+def prepare_sensitive_echo_text(config: dict, text: str) -> tuple[str, bool]:
+    """Return the bounded, optional-code-free output view for virtual rechecks."""
+
+    scanned, truncated = _normalized_window(
+        text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    if bool(config.get("ignore_fenced_code", True)):
+        scanned = _without_fenced_code(scanned)
+    return scanned, truncated
+
+
 def _validate_base64_candidate(value: str, max_decode_bytes: int) -> tuple[bool, bool]:
     unpadded = value.rstrip("=")
     if not unpadded or "=" in unpadded or len(unpadded) % 4 == 1:

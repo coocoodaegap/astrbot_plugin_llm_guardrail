@@ -34,6 +34,9 @@ STEP_BY_RAIL = {
 }
 KNOWN_RULE_TEMPLATE_KEYS = frozenset().union(*RULE_TEMPLATES.values())
 KNOWN_COMPONENT_TYPES = frozenset().union(*COMPONENT_TEMPLATES.values())
+SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
+    {"plain_keywords", "regex_pattern", "rag_judge", "llm_review"}
+)
 
 
 @dataclass(frozen=True)
@@ -537,6 +540,7 @@ class PolicyLibrary:
                     )
                 seen_order_ids.add(node_id)
 
+        rule_by_id = {rule.rule_id: rule for rule in self.rules}
         for policy in self.policies:
             for binding in policy.bindings:
                 rule = next((item for item in self.rules if item.rule_id == binding.rule_id), None)
@@ -613,6 +617,12 @@ class PolicyLibrary:
                             f"component {component.component_id} has invalid logic gate input(s): "
                             + ", ".join(invalid_inputs)
                         )
+                elif component.component_type == "sensitive_echo_detector":
+                    fatal_errors.extend(
+                        _validate_sensitive_echo_component(
+                            policy, component, rule_by_id
+                        )
+                    )
                 if _is_sanitize_action(component.action_on_hit):
                     fatal_errors.append(
                         f"component {component.component_id} uses sanitize, which is only available "
@@ -632,7 +642,6 @@ class PolicyLibrary:
                         "it will fall back to the Step default"
                     )
 
-        rule_by_id = {rule.rule_id: rule for rule in self.rules}
         for policy in self.policies:
             fatal_errors.extend(_validate_policy_dependency_graph(policy, rule_by_id))
 
@@ -843,6 +852,80 @@ def _policy_dependency_references(
         for value in _clean_string_list(config.get("inputs")):
             references.append((component.component_id, value, "logic input"))
     return references
+
+
+def _validate_sensitive_echo_component(
+    policy: PolicyDefinition,
+    component: PolicyComponent,
+    rule_by_id: Mapping[str, RuleDefinition],
+) -> list[str]:
+    """Validate source-rule replay references before a policy is published."""
+
+    errors: list[str] = []
+    config = component.config if isinstance(component.config, Mapping) else {}
+    raw_sources = config.get("source_node_ids")
+    if not isinstance(raw_sources, list):
+        return [
+            f"component {component.component_id} source_node_ids must be a non-empty list"
+        ]
+    source_ids = [str(value).strip() for value in raw_sources if str(value).strip()]
+    if not source_ids:
+        errors.append(
+            f"component {component.component_id} source_node_ids must not be empty"
+        )
+    if len(source_ids) != len(set(source_ids)):
+        errors.append(
+            f"component {component.component_id} source_node_ids must not contain duplicates"
+        )
+
+    max_sources = _as_int(config.get("max_rechecked_sources"), 4)
+    min_sources = _as_int(config.get("min_rechecked_sources"), 1)
+    max_external = _as_int(config.get("max_external_rechecks"), 2)
+    if not 1 <= max_sources <= 32:
+        errors.append(
+            f"component {component.component_id} max_rechecked_sources must be 1..32"
+        )
+    if not 1 <= min_sources <= max_sources:
+        errors.append(
+            f"component {component.component_id} min_rechecked_sources must be 1..max_rechecked_sources"
+        )
+    elif source_ids and min_sources > len(source_ids):
+        errors.append(
+            f"component {component.component_id} min_rechecked_sources exceeds source_node_ids"
+        )
+    if not 0 <= max_external <= 16:
+        errors.append(
+            f"component {component.component_id} max_external_rechecks must be 0..16"
+        )
+    if len(source_ids) > max_sources:
+        errors.append(
+            f"component {component.component_id} has more source_node_ids than max_rechecked_sources"
+        )
+
+    bindings_by_id = {binding.rule_id: binding for binding in policy.bindings}
+    for source_id in sorted(set(source_ids)):
+        binding = bindings_by_id.get(source_id)
+        if binding is None:
+            errors.append(
+                f"component {component.component_id} source {source_id} is not a rule binding in this policy"
+            )
+            continue
+        if not binding.enabled:
+            errors.append(
+                f"component {component.component_id} source {source_id} is disabled"
+            )
+            continue
+        if binding.rail not in {"input_rail", "request_rail"}:
+            errors.append(
+                f"component {component.component_id} source {source_id} must be in Step 1 or Step 3"
+            )
+            continue
+        rule = rule_by_id.get(source_id)
+        if rule is None or rule.template_key not in SENSITIVE_ECHO_SOURCE_TEMPLATES:
+            errors.append(
+                f"component {component.component_id} source {source_id} is not a replayable rule"
+            )
+    return errors
 
 
 def _validate_policy_dependency_graph(
