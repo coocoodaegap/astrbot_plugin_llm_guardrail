@@ -21,6 +21,8 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 FALLBACK_INPUT_OR_ID = "__fallback_input_or"
 FALLBACK_LLM_REVIEW_ID = "__fallback_llm_review"
 FALLBACK_ENFORCEMENT_ID = "__fallback_input_enforcement"
+FALLBACK_OUTPUT_OR_ID = "__fallback_output_or"
+FALLBACK_OUTPUT_ENFORCEMENT_ID = "__fallback_output_enforcement"
 FALLBACK_LLM_REVIEW_PROMPT = (
     "Review the supplied text for safety risks indicated by the preceding "
     "detectors. Return whether the text should be treated as unsafe."
@@ -71,6 +73,7 @@ IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
     FALLBACK_DETECTOR_CATALOGUE[2],
     FALLBACK_DETECTOR_CATALOGUE[3],
     FALLBACK_DETECTOR_CATALOGUE[4],
+    FALLBACK_DETECTOR_CATALOGUE[8],
 )
 
 
@@ -140,6 +143,33 @@ def build_fallback_runtime_config(
                 "action_on_hit": "default",
                 "action_on_error": "default",
             }
+        )
+
+    output_detector_ids = [node["rule_id"] for node in output_nodes]
+    if output_detector_ids:
+        output_nodes.extend(
+            (
+                {
+                    "__template_key": "logic_gate",
+                    "rule_id": FALLBACK_OUTPUT_OR_ID,
+                    "enabled": True,
+                    "priority": 900,
+                    "gate": "any",
+                    "inputs": output_detector_ids,
+                    "action_on_hit": "observe",
+                    "action_on_error": "default",
+                },
+                {
+                    "__template_key": "logic_gate",
+                    "rule_id": FALLBACK_OUTPUT_ENFORCEMENT_ID,
+                    "enabled": True,
+                    "priority": 1000,
+                    "gate": "all",
+                    "inputs": [FALLBACK_OUTPUT_OR_ID],
+                    "action_on_hit": "default",
+                    "action_on_error": "default",
+                },
+            )
         )
 
     raw_config = {

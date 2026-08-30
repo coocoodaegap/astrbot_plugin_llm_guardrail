@@ -73,6 +73,7 @@ COMPONENT_TEMPLATES["request_rail"].update(
         "instruction_override_detector",
     }
 )
+COMPONENT_TEMPLATES["output_rail"].add("poor_quality_detector")
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     rail_name: RULE_TEMPLATES[rail_name] | COMPONENT_TEMPLATES[rail_name]
     for rail_name in RAIL_NAMES
@@ -508,6 +509,8 @@ def _normalize_node(
         "instruction_override_detector",
     }:
         _normalize_input_detector(rule_id, template_key, config, warnings)
+    elif template_key == "poor_quality_detector":
+        _normalize_poor_quality_detector(rule_id, config, warnings)
     elif template_key in MESSAGE_FACT_TEMPLATES:
         _normalize_message_fact_component(rule_id, template_key, config, warnings)
         if template_key == "contains_request_user_id" and not config["user_ids"]:
@@ -539,6 +542,7 @@ def _normalize_node(
         "role_marker_spoofing_detector",
         "external_fetch_detector",
         "instruction_override_detector",
+        "poor_quality_detector",
         *MESSAGE_FACT_TEMPLATES,
     }:
         raw_action = "observe" if (
@@ -826,6 +830,47 @@ def _normalize_input_detector(
             "detect_role_reassignment": True,
         }.items():
             config[key] = _as_bool(config.get(key), default)
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _normalize_poor_quality_detector(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the deterministic, non-semantic Step 5 quality detector."""
+
+    config["scan_limit_chars"] = _bounded_int(
+        config.get("scan_limit_chars"), 12000, 256, 100000,
+        rule_id, "scan_limit_chars", warnings,
+    )
+    config["min_visible_chars"] = _bounded_int(
+        config.get("min_visible_chars"), 1, 1, 10000,
+        rule_id, "min_visible_chars", warnings,
+    )
+    config["max_punctuation_ratio"] = _bounded_float(
+        config.get("max_punctuation_ratio"), 0.95, 0.5, 1.0,
+        rule_id, "max_punctuation_ratio", warnings,
+    )
+    config["min_repeat_run"] = _bounded_int(
+        config.get("min_repeat_run"), 80, 4, 10000,
+        rule_id, "min_repeat_run", warnings,
+    )
+    config["duplicate_line_min_chars"] = _bounded_int(
+        config.get("duplicate_line_min_chars"), 16, 1, 10000,
+        rule_id, "duplicate_line_min_chars", warnings,
+    )
+    config["duplicate_line_min_count"] = _bounded_int(
+        config.get("duplicate_line_min_count"), 4, 2, 10000,
+        rule_id, "duplicate_line_min_count", warnings,
+    )
+    config["min_signal_families"] = _bounded_int(
+        config.get("min_signal_families"), 1, 1, 4,
+        rule_id, "min_signal_families", warnings,
+    )
+    for key, default in {
+        "detect_unformatted_error_envelope": True,
+        "ignore_fenced_code": True,
+    }.items():
+        config[key] = _as_bool(config.get(key), default)
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 

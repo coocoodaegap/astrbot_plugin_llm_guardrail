@@ -47,6 +47,7 @@ try:
         evaluate_input_detector,
         evaluate_logic_gate,
         evaluate_message_fact_component,
+        evaluate_output_detector,
     )
     from .rules import (
         apply_span_replacements,
@@ -91,6 +92,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_input_detector,
         evaluate_logic_gate,
         evaluate_message_fact_component,
+        evaluate_output_detector,
     )
     from rules import (
         apply_span_replacements,
@@ -690,6 +692,10 @@ class GuardrailPipeline:
         }:
             execution = NodeExecution(
                 result=evaluate_input_detector(rule, context, inspected_text)
+            )
+        elif rule.template_key == "poor_quality_detector":
+            execution = NodeExecution(
+                result=evaluate_output_detector(rule, context, inspected_text)
             )
         elif rule.template_key in MESSAGE_FACT_TEMPLATES:
             if message_facts is None:

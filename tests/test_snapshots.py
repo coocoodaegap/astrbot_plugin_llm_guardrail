@@ -149,7 +149,18 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             ],
         )
         self.assertNotIn("inputs is empty", " ".join(config.warnings))
-        self.assertFalse(config.rails["output_rail"].nodes)
+        self.assertEqual(
+            [node.node_id for node in config.rails["output_rail"].nodes],
+            [
+                "__fallback_poor_quality",
+                "__fallback_output_or",
+                "__fallback_output_enforcement",
+            ],
+        )
+        self.assertEqual(
+            config.rails["output_rail"].nodes[1].config["inputs"],
+            ["__fallback_poor_quality"],
+        )
 
     def test_overview_uses_fallback_graph_when_no_default_policy_exists(self):
         overview = ConfigSnapshotManager({}).overview()
@@ -163,7 +174,15 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertFalse(overview["rails"]["request_rail"]["enabled"])
         self.assertFalse(overview["rails"]["prompt_rail"]["enabled"])
         self.assertTrue(overview["rails"]["output_rail"]["enabled"])
-        self.assertEqual(overview["rails"]["output_rail"]["total_nodes"], 0)
+        self.assertEqual(overview["rails"]["output_rail"]["enabled_nodes"], 3)
+        self.assertEqual(overview["rails"]["output_rail"]["total_nodes"], 3)
+
+    def test_poor_quality_switch_removes_the_entire_output_fallback_graph(self):
+        config = build_fallback_runtime_config(
+            {"enable_poor_quality_detector": False}
+        )
+
+        self.assertEqual(config.rails["output_rail"].nodes, [])
 
     def test_fallback_graph_keeps_access_control_system_settings(self):
         manager = ConfigSnapshotManager(

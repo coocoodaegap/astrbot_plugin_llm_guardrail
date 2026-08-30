@@ -265,6 +265,7 @@ const templateDescriptions = {
   role_marker_spoofing_detector: "角色标记伪造检测器",
   external_fetch_detector: "外部资源操作检测器",
   instruction_override_detector: "指令覆盖检测器",
+  poor_quality_detector: "异常低质回复检测器",
   contains_request_user_id: "请求者 ID 匹配规则",
   contains_forward: "转发消息检测器",
   contains_file: "文件消息检测器",
@@ -1245,7 +1246,7 @@ const supportedTemplatesByRail = {
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
   prompt_rail: new Set(["strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
-  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
+  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "poor_quality_detector"]),
 };
 const inputRedirectTemplates = new Set([
   "plain_keywords",
@@ -1363,6 +1364,23 @@ const componentDefinitions = {
       { key: "detect_role_reassignment", label: "检测角色重设", hint: "仅在同时存在覆盖既有约束意图时命中。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, min_evidence: 2, max_token_gap: 12, detect_instruction_replacement: true, detect_hidden_content_request: true, detect_authority_claim: true, detect_role_reassignment: true }),
+  },
+  poor_quality_detector: {
+    label: "异常低质回复检测器",
+    description: "检测空白、纯标点、长重复、重复长行和未格式化错误包络；不评价回答内容或风格。",
+    rails: new Set(["output_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "回复形态扫描的最大窗口。", type: "integer", default: 12000 },
+      { key: "min_visible_chars", label: "最少可见字符", hint: "少于该数量的非空白内容视为空回复。", type: "integer", default: 1 },
+      { key: "max_punctuation_ratio", label: "纯标点比例", hint: "可见字符中标点达到该比例时作为低质信号。", type: "number", default: 0.95 },
+      { key: "min_repeat_run", label: "重复字符连续长度", hint: "达到该长度的同字符连续段作为低质信号。", type: "integer", default: 80 },
+      { key: "duplicate_line_min_chars", label: "重复行最小长度", hint: "只统计达到该长度的非空行。", type: "integer", default: 16 },
+      { key: "duplicate_line_min_count", label: "重复行最少次数", hint: "同一长行达到该次数作为低质信号。", type: "integer", default: 4 },
+      { key: "min_signal_families", label: "最少低质信号", hint: "需要同时满足的独立形态数量。", type: "integer", default: 1 },
+      { key: "detect_unformatted_error_envelope", label: "检测未格式化错误包络", hint: "识别完整 traceback、异常头或结构化错误对象。", type: "boolean", default: true },
+      { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "不把教学代码或错误示例当作异常回复。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, min_visible_chars: 1, max_punctuation_ratio: 0.95, min_repeat_run: 80, duplicate_line_min_chars: 16, duplicate_line_min_count: 4, min_signal_families: 1, detect_unformatted_error_envelope: true, ignore_fenced_code: true }),
   },
   contains_forward: {
     label: "转发消息检测器",

@@ -594,6 +594,52 @@ class PipelineTests(unittest.TestCase):
             list(context.results), ["later", "blocking", "sibling"]
         )
 
+    def test_poor_quality_component_compiles_and_blocks_through_output_pipeline(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition(
+                    "output_detector_policy",
+                    "Output detector policy",
+                    components=(
+                        PolicyComponent(
+                            "poor_quality_guard",
+                            "poor_quality_detector",
+                            "output_rail",
+                            action_on_hit="block",
+                        ),
+                    ),
+                    node_order=("poor_quality_guard",),
+                ),
+            ),
+            active_policy_id="output_detector_policy",
+        )
+        raw, validation = compile_policy_to_runtime_config({}, library)
+        cfg = normalize_config(raw)
+        event = FakeEvent("normal request")
+        response = FakeResponse("   \u200b")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
+
+        self.assertTrue(validation.valid)
+        self.assertTrue(context.results["poor_quality_guard"].matched)
+        self.assertTrue(context.output_blocked)
+        self.assertEqual(context.terminal_action["node_id"], "poor_quality_guard")
+
+    def test_poor_quality_fallback_uses_output_enforcement_gate(self):
+        cfg = build_fallback_runtime_config({"reply_placeholder_on_block": True})
+        event = FakeEvent("normal request")
+        response = FakeResponse("?!?!?!")
+
+        context = asyncio.run(GuardrailPipeline(cfg).run_response(event, response))
+
+        self.assertTrue(context.results["__fallback_poor_quality"].matched)
+        self.assertTrue(context.results["__fallback_output_or"].matched)
+        self.assertTrue(context.results["__fallback_output_enforcement"].matched)
+        self.assertTrue(context.output_blocked)
+        self.assertEqual(
+            context.terminal_action["node_id"], "__fallback_output_enforcement"
+        )
+
     def test_input_rail_uses_stable_single_block_action_after_out_of_order_checks(self):
         class CountingEvent(FakeEvent):
             def __init__(self, *args, **kwargs):

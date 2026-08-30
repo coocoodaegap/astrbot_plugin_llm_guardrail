@@ -97,6 +97,8 @@ INPUT_DETECTOR_TEMPLATES = {
     "instruction_override_detector",
 }
 
+OUTPUT_DETECTOR_TEMPLATES = {"poor_quality_detector"}
+
 _BASE64_CANDIDATE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{16,}={0,2})(?![A-Za-z0-9+/_=-])"
 )
@@ -245,6 +247,7 @@ def _evaluate_encoded_payload(config: dict, text: str) -> tuple[bool, dict]:
     scanned, truncated = _normalized_window(
         text, int(config["scan_limit_chars"]), casefold=False,
     )
+
     candidates: list[tuple[str, int, int]] = []
     decode_limited = False
     candidate_limit = int(config["max_candidate_segments"])
@@ -338,6 +341,24 @@ def _evaluate_encoded_payload(config: dict, text: str) -> tuple[bool, dict]:
         "scan_truncated": truncated,
         "decode_limited": decode_limited,
     }
+
+
+def evaluate_output_detector(
+    node: NormalizedNode, context: RailContext, text: str,
+):
+    """Evaluate one deterministic, policy-local Step 5 detector."""
+
+    if node.template_key != "poor_quality_detector":
+        raise ValueError(f"unsupported output detector {node.template_key}")
+    matched, payload = _evaluate_poor_quality(node.config, text)
+    payload["detector"] = node.template_key
+    return make_node_result(
+        node,
+        matched=matched,
+        action_on_hit=str(node.config.get("action_on_hit", "default")),
+        metadata=payload,
+        signal=NodeSignal(value=matched, truthy=matched, payload=payload),
+    )
 
 
 def _validate_base64_candidate(value: str, max_decode_bytes: int) -> tuple[bool, bool]:
@@ -465,6 +486,86 @@ def _evaluate_role_marker_spoofing(config: dict, text: str) -> tuple[bool, dict]
         ),
         "role_header_count": role_headers,
         "scanned_line_count": len(lines),
+        "scan_truncated": truncated,
+    }
+
+
+def _evaluate_poor_quality(config: dict, text: str) -> tuple[bool, dict]:
+    """Detect clear generation failures without judging response usefulness."""
+
+    scanned, truncated = _normalized_window(
+        text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    analysis_text = (
+        _without_fenced_code(scanned)
+        if bool(config["ignore_fenced_code"])
+        else scanned
+    )
+    raw_visible_count = sum(
+        1 for char in scanned
+        if not char.isspace() and not unicodedata.category(char).startswith("C")
+    )
+    visible = [
+        char for char in analysis_text
+        if not char.isspace() and not unicodedata.category(char).startswith("C")
+    ]
+    visible_count = len(visible)
+    punctuation_count = sum(
+        1 for char in visible if unicodedata.category(char).startswith("P")
+    )
+    punctuation_ratio = punctuation_count / max(1, visible_count)
+    reason_codes: list[str] = []
+    if not truncated and raw_visible_count < int(config["min_visible_chars"]):
+        reason_codes.append("empty_output")
+    if (
+        not truncated
+        and visible_count >= int(config["min_visible_chars"])
+        and punctuation_ratio >= float(config["max_punctuation_ratio"])
+    ):
+        reason_codes.append("punctuation_only")
+    repeat_run = _longest_repeat_run(analysis_text)
+    if repeat_run >= int(config["min_repeat_run"]):
+        reason_codes.append("repeat_run")
+    duplicate_count, duplicate_ratio = _duplicate_line_stats(
+        analysis_text, int(config["duplicate_line_min_chars"]),
+    )
+    if duplicate_count >= int(config["duplicate_line_min_count"]):
+        reason_codes.append("duplicate_lines")
+    error_envelope = (
+        _has_unformatted_error_envelope(analysis_text)
+        if bool(config["detect_unformatted_error_envelope"])
+        else False
+    )
+    if error_envelope:
+        reason_codes.append("unformatted_error_envelope")
+
+    matched = len(reason_codes) >= int(config["min_signal_families"])
+    score = 0
+    if "empty_output" in reason_codes:
+        score = max(score, 90)
+    if "unformatted_error_envelope" in reason_codes:
+        score = max(score, 85)
+    if "punctuation_only" in reason_codes:
+        score = max(score, 80)
+    if "repeat_run" in reason_codes:
+        score = max(score, min(80, 60 + repeat_run // 8))
+    if "duplicate_lines" in reason_codes:
+        score = max(score, min(80, 55 + duplicate_count * 5))
+    if len(reason_codes) > 1:
+        score = min(100, score + (len(reason_codes) - 1) * 5)
+
+    return matched, {
+        "reason_codes": reason_codes,
+        "score": score,
+        "raw_char_count": len(text or ""),
+        "scanned_char_count": len(scanned),
+        "raw_visible_char_count": raw_visible_count,
+        "visible_char_count": visible_count,
+        "punctuation_ratio": round(punctuation_ratio, 4),
+        "max_repeat_run": repeat_run,
+        "duplicate_line_count": duplicate_count,
+        "duplicate_line_ratio": round(duplicate_ratio, 4),
+        "error_envelope_detected": error_envelope,
         "scan_truncated": truncated,
     }
 
@@ -673,6 +774,55 @@ def _normalized_window(
     truncated = len(raw) > limit
     normalized = unicodedata.normalize("NFKC", raw[:limit]).replace("\r\n", "\n").replace("\r", "\n")
     return normalized.casefold() if casefold else normalized, truncated
+
+
+def _without_fenced_code(text: str) -> str:
+    """Remove fenced code content while preserving non-code line boundaries."""
+
+    kept: list[str] = []
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        marker = line.lstrip()
+        if not fence and (marker.startswith("```") or marker.startswith("~~~")):
+            fence = marker[:3]
+            kept.append("\n" if line.endswith("\n") else "")
+            continue
+        if fence:
+            if marker.startswith(fence):
+                fence = ""
+            kept.append("\n" if line.endswith("\n") else "")
+            continue
+        kept.append(line)
+    return "".join(kept)
+
+
+def _has_unformatted_error_envelope(text: str) -> bool:
+    """Recognize complete error artefacts without retaining their contents."""
+
+    stripped = text.strip()
+    if not stripped:
+        return False
+    parsed = _parse_json_object(stripped)
+    if isinstance(parsed, dict):
+        keys = {str(key).casefold() for key in parsed}
+        if "error" in keys and bool(keys & {"code", "status", "type"}):
+            return True
+
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    first_line = lines[0] if lines else ""
+    has_traceback = first_line.casefold().startswith("traceback") and any(
+        re.match(r'^File ".+", line \d+', line) for line in lines[1:]
+    )
+    if has_traceback:
+        return True
+    has_error_header = bool(
+        re.match(r"(?i)^(?:error|exception|错误)\s*[:\[]", first_line)
+    )
+    has_status = bool(re.search(r"\b(?:HTTP\s*)?[45]\d{2}\b", stripped, re.IGNORECASE))
+    has_exception_type = bool(
+        re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)\s*:", first_line)
+    )
+    return has_exception_type or (has_error_header and has_status)
 
 
 def _longest_repeat_run(text: str) -> int:
