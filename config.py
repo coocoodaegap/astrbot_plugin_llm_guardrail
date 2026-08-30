@@ -95,6 +95,21 @@ OUTPUT_ACTIONS = {
 }
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
+LEGACY_FALLBACK_DETECTOR_SWITCHES = (
+    "enable_encoded_payload_detector",
+    "enable_length_anomaly_detector",
+    "enable_role_marker_spoofing_detector",
+    "enable_external_fetch_detector",
+    "enable_instruction_override_detector",
+    "enable_multi_turn_escalation_detector",
+    "enable_prompt_injection_combo_detector",
+    "enable_format_violation_detector",
+    "enable_poor_quality_detector",
+    "enable_metadata_leakage_detector",
+    "enable_sensitive_echo_detector",
+    "enable_language_drift_detector",
+    "enable_prompt_leakage_detector",
+)
 DEFAULT_REQUEST_BLOCK_MESSAGE = "用户 ${user_id} 的请求在 Step ${step_number} 被阻断。"
 DEFAULT_BLACKLIST_MESSAGE = (
     "用户 ${user_id} 已因多次触发风险规则被临时限制使用，请稍后再试。"
@@ -1068,6 +1083,12 @@ def _normalize_fallback_policy_settings(
         "enable_llm_review_in_fallback_policy": _as_bool(
             raw_settings.get("enable_llm_review_in_fallback_policy"), False
         ),
+        "enable_fallback_input_checks": _as_bool(
+            raw_settings.get("enable_fallback_input_checks"), True
+        ),
+        "enable_fallback_output_checks": _as_bool(
+            raw_settings.get("enable_fallback_output_checks"), True
+        ),
         "default_action_on_hit": _as_str(
             raw_settings.get("default_action_on_hit", "block")
         ),
@@ -1093,22 +1114,14 @@ def _normalize_fallback_policy_settings(
             "fallback_policy_settings.default_action_on_error is invalid; fallback to discard"
         )
         settings["default_action_on_error"] = "discard"
-    for key in (
-        "enable_encoded_payload_detector",
-        "enable_length_anomaly_detector",
-        "enable_role_marker_spoofing_detector",
-        "enable_external_fetch_detector",
-        "enable_instruction_override_detector",
-        "enable_multi_turn_escalation_detector",
-        "enable_prompt_injection_combo_detector",
-        "enable_format_violation_detector",
-        "enable_poor_quality_detector",
-        "enable_metadata_leakage_detector",
-        "enable_sensitive_echo_detector",
-        "enable_language_drift_detector",
-        "enable_prompt_leakage_detector",
-    ):
-        settings[key] = _as_bool(raw_settings.get(key), True)
+    legacy_switches = [
+        key for key in LEGACY_FALLBACK_DETECTOR_SWITCHES if key in raw_settings
+    ]
+    if legacy_switches:
+        warnings.append(
+            "per-detector fallback switches are deprecated and ignored; use "
+            "enable_fallback_input_checks or enable_fallback_output_checks"
+        )
     return settings
 
 

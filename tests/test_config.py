@@ -477,7 +477,7 @@ class ConfigNormalizerTests(unittest.TestCase):
                     "max_retries": 2,
                     "default_action_on_hit": "observe",
                     "default_action_on_error": "record",
-                    "enable_prompt_leakage_detector": False,
+                    "enable_fallback_output_checks": False,
                 },
                 "input_rail": {"default_llm_provider": "ignored-old-value"},
             }
@@ -499,7 +499,23 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(cfg.rails["input_rail"].settings["max_text_chars"], 42)
         self.assertEqual(cfg.fallback_policy_settings["max_retries"], 2)
         self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 2)
-        self.assertFalse(cfg.fallback_policy_settings["enable_prompt_leakage_detector"])
+        self.assertFalse(cfg.fallback_policy_settings["enable_fallback_output_checks"])
+
+    def test_legacy_per_detector_fallback_switches_are_ignored_with_warning(self):
+        cfg = normalize_config(
+            {
+                "fallback_policy_settings": {
+                    "enable_poor_quality_detector": False,
+                }
+            }
+        )
+
+        self.assertTrue(cfg.fallback_policy_settings["enable_fallback_output_checks"])
+        self.assertNotIn("enable_poor_quality_detector", cfg.fallback_policy_settings)
+        self.assertIn(
+            "per-detector fallback switches are deprecated and ignored",
+            " ".join(cfg.warnings),
+        )
 
     def test_output_step_retry_setting_overrides_system_default(self):
         cfg = normalize_config(

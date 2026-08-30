@@ -177,12 +177,21 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertEqual(overview["rails"]["output_rail"]["enabled_nodes"], 3)
         self.assertEqual(overview["rails"]["output_rail"]["total_nodes"], 3)
 
-    def test_poor_quality_switch_removes_the_entire_output_fallback_graph(self):
+    def test_output_check_switch_removes_the_entire_output_fallback_graph(self):
         config = build_fallback_runtime_config(
-            {"enable_poor_quality_detector": False}
+            {"enable_fallback_output_checks": False}
         )
 
         self.assertEqual(config.rails["output_rail"].nodes, [])
+        self.assertFalse(config.rails["output_rail"].enabled)
+
+    def test_input_check_switch_removes_the_entire_input_fallback_graph(self):
+        config = build_fallback_runtime_config(
+            {"enable_fallback_input_checks": False}
+        )
+
+        self.assertEqual(config.rails["input_rail"].nodes, [])
+        self.assertFalse(config.rails["input_rail"].enabled)
 
     def test_fallback_graph_keeps_access_control_system_settings(self):
         manager = ConfigSnapshotManager(
@@ -292,9 +301,8 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         )
         self.assertEqual(nodes[6].depend_on, "__fallback_input_or")
 
-    def test_fallback_detector_registry_honors_its_system_switch(self):
+    def test_fallback_detector_registry_honors_its_rail_system_switch(self):
         detector = FallbackDetectorSpec(
-            "enable_test_detector",
             "__fallback_test_detector",
             "input_rail",
             "plain_keywords",
@@ -302,18 +310,16 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         )
 
         disabled = build_fallback_runtime_config(
-            {"enable_test_detector": False},
+            {"enable_fallback_input_checks": False},
             implemented_detectors=(detector,),
         )
         enabled = build_fallback_runtime_config(
-            {"enable_test_detector": True},
+            {},
             implemented_detectors=(detector,),
         )
 
-        self.assertEqual(
-            [node.node_id for node in disabled.rails["input_rail"].nodes],
-            ["__fallback_input_or", "__fallback_input_enforcement"],
-        )
+        self.assertEqual(disabled.rails["input_rail"].nodes, [])
+        self.assertFalse(disabled.rails["input_rail"].enabled)
         self.assertEqual(
             [node.node_id for node in enabled.rails["input_rail"].nodes],
             ["__fallback_test_detector", "__fallback_input_or", "__fallback_input_enforcement"],

@@ -31,15 +31,14 @@ FALLBACK_LLM_REVIEW_PROMPT = (
 
 @dataclass(frozen=True)
 class FallbackDetectorSpec:
-    """A future built-in detector's placement and controlling system switch.
+    """A future built-in detector's code-owned placement.
 
-    The catalogue records the stable system-setting contract; a detector joins
+    The catalogue records the code-owned fallback composition; a detector joins
     the runtime graph only after its template/evaluator is implemented and
     registered here.  P1 starts with the three local input detectors; all
     remaining catalogue entries stay dormant until their later implementation.
     """
 
-    setting_key: str
     node_id: str
     rail: str
     template_key: str
@@ -50,19 +49,19 @@ class FallbackDetectorSpec:
 # detector is implemented.  Only completed, independently tested detectors
 # are listed in ``IMPLEMENTED_FALLBACK_DETECTORS``.
 FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
-    FallbackDetectorSpec("enable_encoded_payload_detector", "__fallback_encoded_payload", "input_rail", "encoded_payload_detector"),
-    FallbackDetectorSpec("enable_length_anomaly_detector", "__fallback_length_anomaly", "input_rail", "length_anomaly_detector"),
-    FallbackDetectorSpec("enable_role_marker_spoofing_detector", "__fallback_role_marker_spoofing", "input_rail", "role_marker_spoofing_detector"),
-    FallbackDetectorSpec("enable_external_fetch_detector", "__fallback_external_fetch", "input_rail", "external_fetch_detector"),
-    FallbackDetectorSpec("enable_instruction_override_detector", "__fallback_instruction_override", "input_rail", "instruction_override_detector"),
-    FallbackDetectorSpec("enable_multi_turn_escalation_detector", "__fallback_multi_turn_escalation", "input_rail", "multi_turn_escalation_detector"),
-    FallbackDetectorSpec("enable_prompt_injection_combo_detector", "__fallback_prompt_injection_combo", "input_rail", "prompt_injection_combo_detector"),
-    FallbackDetectorSpec("enable_format_violation_detector", "__fallback_format_violation", "output_rail", "format_violation_detector"),
-    FallbackDetectorSpec("enable_poor_quality_detector", "__fallback_poor_quality", "output_rail", "poor_quality_detector"),
-    FallbackDetectorSpec("enable_metadata_leakage_detector", "__fallback_metadata_leakage", "output_rail", "metadata_leakage_detector"),
-    FallbackDetectorSpec("enable_sensitive_echo_detector", "__fallback_sensitive_echo", "output_rail", "sensitive_echo_detector"),
-    FallbackDetectorSpec("enable_language_drift_detector", "__fallback_language_drift", "output_rail", "language_drift_detector"),
-    FallbackDetectorSpec("enable_prompt_leakage_detector", "__fallback_prompt_leakage", "output_rail", "prompt_leakage_detector"),
+    FallbackDetectorSpec("__fallback_encoded_payload", "input_rail", "encoded_payload_detector"),
+    FallbackDetectorSpec("__fallback_length_anomaly", "input_rail", "length_anomaly_detector"),
+    FallbackDetectorSpec("__fallback_role_marker_spoofing", "input_rail", "role_marker_spoofing_detector"),
+    FallbackDetectorSpec("__fallback_external_fetch", "input_rail", "external_fetch_detector"),
+    FallbackDetectorSpec("__fallback_instruction_override", "input_rail", "instruction_override_detector"),
+    FallbackDetectorSpec("__fallback_multi_turn_escalation", "input_rail", "multi_turn_escalation_detector"),
+    FallbackDetectorSpec("__fallback_prompt_injection_combo", "input_rail", "prompt_injection_combo_detector"),
+    FallbackDetectorSpec("__fallback_format_violation", "output_rail", "format_violation_detector"),
+    FallbackDetectorSpec("__fallback_poor_quality", "output_rail", "poor_quality_detector"),
+    FallbackDetectorSpec("__fallback_metadata_leakage", "output_rail", "metadata_leakage_detector"),
+    FallbackDetectorSpec("__fallback_sensitive_echo", "output_rail", "sensitive_echo_detector"),
+    FallbackDetectorSpec("__fallback_language_drift", "output_rail", "language_drift_detector"),
+    FallbackDetectorSpec("__fallback_prompt_leakage", "output_rail", "prompt_leakage_detector"),
 )
 
 # A registered detector is only an observation node in fallback.  The terminal
@@ -87,14 +86,18 @@ def build_fallback_runtime_config(
     """Create the immutable fallback graph's normalized runtime configuration.
 
     ``implemented_detectors`` contains only completed detector implementations.
-    Disabled system switches keep those detector nodes out of the graph.
+    The input/output system switches include or remove each rail's complete
+    fallback graph; individual detector selection is code-owned.
     """
 
     settings = dict(fallback_policy_settings)
+    input_checks_enabled = bool(settings.get("enable_fallback_input_checks", True))
+    output_checks_enabled = bool(settings.get("enable_fallback_output_checks", True))
     detector_nodes = [
         _detector_node(spec, settings)
         for spec in implemented_detectors
-        if settings.get(spec.setting_key, True)
+        if (spec.rail == "input_rail" and input_checks_enabled)
+        or (spec.rail == "output_rail" and output_checks_enabled)
     ]
     input_detector_ids = [
         node["rule_id"] for node in detector_nodes if node["__rail"] == "input_rail"
@@ -104,8 +107,9 @@ def build_fallback_runtime_config(
     for node in (*input_nodes, *output_nodes):
         node.pop("__rail", None)
 
-    input_nodes.append(
-        {
+    if input_detector_ids:
+        input_nodes.append(
+            {
             "__template_key": "logic_gate",
             "rule_id": FALLBACK_INPUT_OR_ID,
             "enabled": True,
@@ -115,9 +119,9 @@ def build_fallback_runtime_config(
             "__allow_empty_inputs": True,
             "action_on_hit": "observe",
             "action_on_error": "default",
-        }
-    )
-    if settings.get("enable_llm_review_in_fallback_policy", False):
+            }
+        )
+    if input_detector_ids and settings.get("enable_llm_review_in_fallback_policy", False):
         input_nodes.append(
             {
                 "__template_key": "llm_review",
@@ -131,7 +135,7 @@ def build_fallback_runtime_config(
                 "action_on_error": "default",
             }
         )
-    else:
+    elif input_detector_ids:
         input_nodes.append(
             {
                 "__template_key": "logic_gate",
@@ -179,7 +183,7 @@ def build_fallback_runtime_config(
         # policy library falls back to this code-owned graph.
         "access_control": dict(access_control or {}),
         "input_rail": {
-            "__policy_step_settings": {"enabled": True},
+            "__policy_step_settings": {"enabled": input_checks_enabled},
             "rule_list": input_nodes,
         },
         "routing_rail": {
@@ -195,7 +199,7 @@ def build_fallback_runtime_config(
             "rule_list": [],
         },
         "output_rail": {
-            "__policy_step_settings": {"enabled": True},
+            "__policy_step_settings": {"enabled": output_checks_enabled},
             "rule_list": output_nodes,
         },
     }
