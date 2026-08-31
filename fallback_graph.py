@@ -97,7 +97,12 @@ FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
     FallbackDetectorSpec("__fallback_instruction_override", "input_rail", "instruction_override_detector"),
     FallbackDetectorSpec("__fallback_multi_turn_escalation", "input_rail", "multi_turn_escalation_detector"),
     FallbackDetectorSpec("__fallback_prompt_injection_combo", "input_rail", "prompt_injection_combo_detector"),
-    FallbackDetectorSpec("__fallback_format_violation", "output_rail", "format_violation_detector"),
+    FallbackDetectorSpec(
+        "__fallback_format_violation",
+        "output_rail",
+        "format_violation_detector",
+        requires_output_llm_review=True,
+    ),
     FallbackDetectorSpec("__fallback_poor_quality", "output_rail", "poor_quality_detector"),
     FallbackDetectorSpec(
         "__fallback_metadata_leakage",
@@ -123,6 +128,7 @@ IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
     FALLBACK_DETECTOR_CATALOGUE[2],
     FALLBACK_DETECTOR_CATALOGUE[3],
     FALLBACK_DETECTOR_CATALOGUE[4],
+    FALLBACK_DETECTOR_CATALOGUE[7],
     FALLBACK_DETECTOR_CATALOGUE[8],
     FALLBACK_DETECTOR_CATALOGUE[9],
     FALLBACK_DETECTOR_CATALOGUE[11],

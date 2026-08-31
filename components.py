@@ -456,6 +456,66 @@ _LANGUAGE_QUOTED_TEXT_PATTERN = re.compile(
 _LANGUAGE_URL_PATTERN = re.compile(
     r"\b(?:https?://|www\.)[^\s<>()\[\]{}]{1,2048}", re.IGNORECASE,
 )
+_FORMAT_DIRECTIVE_PREFIXES = tuple(
+    phrase.casefold()
+    for phrase in material_values(
+        CORE_MATERIALS, "format_response_directive", "directive_prefixes",
+    )
+)
+_FORMAT_DIRECTIVE_SUFFIXES = tuple(
+    phrase.casefold()
+    for phrase in material_values(
+        CORE_MATERIALS, "format_response_directive", "directive_suffixes",
+    )
+)
+_FORMAT_CONTRACT_TERMS = {
+    "json_object": material_values(
+        CORE_MATERIALS, "format_verifiable_contracts", "json_object_terms",
+    ),
+    "json_array": material_values(
+        CORE_MATERIALS, "format_verifiable_contracts", "json_array_terms",
+    ),
+    "single_line": material_values(
+        CORE_MATERIALS, "format_verifiable_contracts", "single_line_terms",
+    ),
+    "plain_text_no_markdown": (
+        material_values(
+            CORE_MATERIALS, "format_verifiable_contracts", "plain_text_terms",
+        )
+        + material_values(
+            CORE_MATERIALS,
+            "format_verifiable_contracts",
+            "plain_text_negative_terms",
+        )
+    ),
+    "code_fence_required": material_values(
+        CORE_MATERIALS,
+        "format_verifiable_contracts",
+        "code_fence_required_terms",
+    ),
+    "code_fence_forbidden": material_values(
+        CORE_MATERIALS,
+        "format_verifiable_contracts",
+        "code_fence_forbidden_terms",
+    ),
+}
+_FORMAT_SELF_DIRECTIVE_TERMS = frozenset(
+    term.casefold()
+    for term in (
+        material_values(
+            CORE_MATERIALS,
+            "format_verifiable_contracts",
+            "plain_text_negative_terms",
+        )
+        + material_values(
+            CORE_MATERIALS,
+            "format_verifiable_contracts",
+            "code_fence_forbidden_terms",
+        )
+    )
+)
+_MARKDOWN_LINK_PATTERN = re.compile(r"!?(?:\[[^\]\r\n]{1,256}\])\([^\)\r\n]{1,1024}\)")
+_MARKDOWN_LIST_PATTERN = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 
 MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
@@ -682,6 +742,10 @@ def evaluate_output_detector(
         matched, payload = _evaluate_metadata_leakage(node.config, text)
     elif node.template_key == "language_drift_detector":
         matched, payload = _evaluate_language_drift(
+            node.config, context.current_input, text,
+        )
+    elif node.template_key == "format_violation_detector":
+        matched, payload = _evaluate_format_violation(
             node.config, context.current_input, text,
         )
     else:
@@ -1079,6 +1143,208 @@ def _evaluate_language_drift(
         "output_raw_char_count": len(response_text or ""),
         "scan_truncated": request_truncated or response_truncated,
     }
+
+
+def _evaluate_format_violation(
+    config: dict, request_text: str, response_text: str,
+) -> tuple[bool, dict]:
+    """Compare only explicit, locally verifiable format contracts with output."""
+
+    request_scanned, request_truncated = _normalized_window(
+        request_text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    response_scanned, response_truncated = _normalized_window(
+        response_text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    contracts, candidate_count, candidate_limited = _extract_format_contracts(
+        _format_intent_text(request_scanned),
+        int(config["max_contract_candidates"]),
+    )
+    response_view = (
+        response_scanned.strip()
+        if bool(config["allow_surrounding_whitespace"])
+        else response_scanned
+    )
+    visible_line_count = (
+        sum(1 for line in response_view.splitlines() if line.strip())
+        if bool(config["allow_surrounding_whitespace"])
+        else len(response_view.splitlines())
+    )
+    complete_fence_count = _complete_code_fence_count(response_view)
+    code_fence_present = _has_code_fence_marker(response_view)
+    markdown_structure_count = _markdown_structure_count(response_view)
+    reason_codes: list[str] = []
+    for contract in contracts:
+        if contract in {"json_object", "json_array"}:
+            json_reason = _json_contract_reason(
+                response_view,
+                contract,
+                allow_surrounding_whitespace=bool(config["allow_surrounding_whitespace"]),
+            )
+            if json_reason and json_reason not in reason_codes:
+                reason_codes.append(json_reason)
+        elif contract == "single_line" and visible_line_count > 1:
+            reason_codes.append("requested_single_line_multiline")
+        elif contract == "plain_text_no_markdown" and markdown_structure_count:
+            reason_codes.append("requested_plain_text_markdown")
+        elif contract == "code_fence_required" and not complete_fence_count:
+            reason_codes.append("requested_fence_missing")
+        elif contract == "code_fence_forbidden" and code_fence_present:
+            reason_codes.append("requested_fence_present")
+
+    score = 0
+    if "requested_json_invalid" in reason_codes:
+        score = max(score, 80)
+    if "requested_json_wrong_top_level" in reason_codes:
+        score = max(score, 75)
+    if set(reason_codes) & {
+        "requested_single_line_multiline",
+        "requested_plain_text_markdown",
+        "requested_fence_missing",
+        "requested_fence_present",
+    }:
+        score = max(score, 65)
+    if len(reason_codes) > 1:
+        score = min(100, score + (len(reason_codes) - 1) * 5)
+
+    return bool(reason_codes), {
+        "reason_codes": reason_codes,
+        "score": score,
+        "contract_kinds": contracts,
+        "contract_candidate_count": candidate_count,
+        "contract_candidate_limited": candidate_limited,
+        "active_contract_count": len(contracts),
+        "visible_line_count": visible_line_count,
+        "markdown_structure_count": markdown_structure_count,
+        "complete_code_fence_count": complete_fence_count,
+        "request_raw_char_count": len(request_text or ""),
+        "output_raw_char_count": len(response_text or ""),
+        "scan_truncated": request_truncated or response_truncated,
+    }
+
+
+def _extract_format_contracts(
+    text: str, maximum: int,
+) -> tuple[list[str], int, bool]:
+    """Return non-conflicting command-qualified format kinds without source text."""
+
+    normalized = text.casefold()
+    matches: list[tuple[int, int, str]] = []
+    for contract, terms in _FORMAT_CONTRACT_TERMS.items():
+        for term in terms:
+            normalized_term = term.casefold()
+            for position in _semantic_term_positions(normalized, (normalized_term,)):
+                end = position + len(normalized_term)
+                if (
+                    normalized_term not in _FORMAT_SELF_DIRECTIVE_TERMS
+                    and not _has_format_directive(normalized, position, end)
+                ):
+                    continue
+                matches.append((position, end, contract))
+    matches.sort(key=lambda item: (item[0], -(item[1] - item[0]), item[2]))
+    candidate_limited = len(matches) > maximum
+    accepted_spans: list[tuple[int, int]] = []
+    contracts: list[str] = []
+    for start, end, contract in matches[:maximum]:
+        if any(start < other_end and end > other_start for other_start, other_end in accepted_spans):
+            continue
+        accepted_spans.append((start, end))
+        if contract not in contracts:
+            contracts.append(contract)
+
+    contract_set = set(contracts)
+    if {"json_object", "json_array"} <= contract_set:
+        contracts = [
+            contract
+            for contract in contracts
+            if contract not in {"json_object", "json_array"}
+        ]
+    if {"code_fence_required", "code_fence_forbidden"} <= set(contracts):
+        contracts = [
+            contract
+            for contract in contracts
+            if contract not in {"code_fence_required", "code_fence_forbidden"}
+        ]
+    return contracts, min(len(matches), maximum), candidate_limited
+
+
+def _has_format_directive(text: str, start: int, end: int) -> bool:
+    before = text[max(0, start - 80):start].rstrip()
+    before_without_article = re.sub(r"\s+(?:a|an|the)\s*$", "", before)
+    after = text[end:end + 48].lstrip()
+    if any(
+        before.endswith(prefix) or before_without_article.endswith(prefix)
+        for prefix in _FORMAT_DIRECTIVE_PREFIXES
+    ) or any(after.startswith(suffix) for suffix in _FORMAT_DIRECTIVE_SUFFIXES):
+        return True
+
+    # A single explicit command may join two format anchors: for example,
+    # "reply only in a JSON object and JSON array".  Carry the command
+    # qualifier across that short coordination so contradictory contracts can
+    # fail open instead of silently treating the first format as authoritative.
+    return any(
+        re.search(
+            rf"{re.escape(prefix)}\s+[^.!?;:\n]{{0,64}}(?:\band\b|\bor\b|,)\s*$",
+            before,
+        )
+        for prefix in _FORMAT_DIRECTIVE_PREFIXES
+    )
+
+
+def _format_intent_text(text: str) -> str:
+    """Exclude quoted and code examples from request-format extraction."""
+
+    intent_text = _without_fenced_code(text)
+    intent_text = _LANGUAGE_INLINE_CODE_PATTERN.sub(" ", intent_text)
+    return _LANGUAGE_QUOTED_TEXT_PATTERN.sub(" ", intent_text)
+
+
+def _json_contract_reason(
+    text: str, contract: str, *, allow_surrounding_whitespace: bool,
+) -> str:
+    if not allow_surrounding_whitespace and text != text.strip():
+        return "requested_json_invalid"
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return "requested_json_invalid"
+    if contract == "json_object" and not isinstance(value, dict):
+        return "requested_json_wrong_top_level"
+    if contract == "json_array" and not isinstance(value, list):
+        return "requested_json_wrong_top_level"
+    return ""
+
+
+def _complete_code_fence_count(text: str) -> int:
+    fence = ""
+    complete_count = 0
+    for line in text.splitlines():
+        marker = line.lstrip()
+        if not fence and marker.startswith(("```", "~~~")):
+            fence = marker[:3]
+        elif fence and marker.startswith(fence):
+            complete_count += 1
+            fence = ""
+    return complete_count
+
+
+def _has_code_fence_marker(text: str) -> bool:
+    return any(
+        line.lstrip().startswith(("```", "~~~")) for line in text.splitlines()
+    )
+
+
+def _markdown_structure_count(text: str) -> int:
+    count = 0
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if (
+            stripped.startswith(("#", "```", "~~~", "|"))
+            or _MARKDOWN_LIST_PATTERN.match(line)
+            or _MARKDOWN_LINK_PATTERN.search(line)
+        ):
+            count += 1
+    return count
 
 
 def _explicit_language_script(text: str) -> tuple[str, int]:

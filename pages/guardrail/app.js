@@ -265,6 +265,7 @@ const templateDescriptions = {
   role_marker_spoofing_detector: "角色标记伪造检测器",
   external_fetch_detector: "外部资源操作检测器",
   instruction_override_detector: "指令覆盖检测器",
+  format_violation_detector: "输出格式违约检测器",
   poor_quality_detector: "异常低质回复检测器",
   metadata_leakage_detector: "运行时工件泄漏检测器",
   language_drift_detector: "对话语言漂移检测器",
@@ -1255,7 +1256,7 @@ const supportedTemplatesByRail = {
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
   prompt_rail: new Set(["strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
-  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "poor_quality_detector", "metadata_leakage_detector", "language_drift_detector", "sensitive_echo_detector"]),
+  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "format_violation_detector", "poor_quality_detector", "metadata_leakage_detector", "language_drift_detector", "sensitive_echo_detector"]),
 };
 const inputRedirectTemplates = new Set([
   "plain_keywords",
@@ -1373,6 +1374,18 @@ const componentDefinitions = {
       { key: "detect_role_reassignment", label: "检测角色重设", hint: "仅在同时存在覆盖既有约束意图时命中。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, min_evidence: 2, max_token_gap: 12, detect_instruction_replacement: true, detect_hidden_content_request: true, detect_authority_claim: true, detect_role_reassignment: true }),
+  },
+  format_violation_detector: {
+    label: "输出格式违约检测器",
+    description: "从最终请求提取明确的 JSON、单行、纯文本或代码围栏要求，并只做确定性结构校验；不要求手填预期格式，建议交给输出 LLM 旁审裁决语境。",
+    rails: new Set(["output_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "请求和候选回复分别使用的最大文本窗口。", type: "integer", default: 12000 },
+      { key: "max_contract_candidates", label: "最大格式合同候选数", hint: "一次只处理有限数量的明确格式命令；达到上限时仅记录扫描受限。", type: "integer", default: 8 },
+      { key: "allow_surrounding_whitespace", label: "允许首尾空白", hint: "启用时，JSON 和可见行数校验忽略回复的首尾空白。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, max_contract_candidates: 8, allow_surrounding_whitespace: true }),
+    defaultAction: "observe",
   },
   poor_quality_detector: {
     label: "异常低质回复检测器",

@@ -696,6 +696,7 @@ class GuardrailPipeline:
                 result=evaluate_input_detector(rule, context, inspected_text)
             )
         elif rule.template_key in {
+            "format_violation_detector",
             "poor_quality_detector",
             "metadata_leakage_detector",
             "language_drift_detector",

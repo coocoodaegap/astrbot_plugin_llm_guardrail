@@ -50,7 +50,7 @@ class PoorQualityDetectorTests(unittest.TestCase):
                 result = evaluate_output_detector(node, context, text)
 
                 self.assertEqual(result.matched, expected_match)
-                self.assertIn("core-materials-v6", str(result.metadata))
+                self.assertIn("core-materials-v7", str(result.metadata))
 
     def test_detects_clear_generation_failures_without_returning_text(self):
         samples = {
@@ -150,7 +150,7 @@ class LanguageDriftDetectorTests(unittest.TestCase):
                     tuple(result.metadata["reason_codes"]), expected_codes,
                 )
                 self.assertEqual(result.metadata["expectation_source"], "explicit")
-                self.assertEqual(result.metadata["core_material_version"], "core-materials-v6")
+                self.assertEqual(result.metadata["core_material_version"], "core-materials-v7")
                 self.assertNotIn(response, str(result.metadata))
 
     def test_uses_an_unambiguous_inferred_baseline_and_ignores_technical_tokens(self):
@@ -240,6 +240,132 @@ class LanguageDriftDetectorTests(unittest.TestCase):
         korean_to_han = evaluate_output_detector(node, context, han_response)
         self.assertTrue(korean_to_han.matched)
         self.assertEqual(korean_to_han.metadata["expectation_source"], "explicit")
+
+
+class FormatViolationDetectorTests(unittest.TestCase):
+    def test_format_violation_materials_preserve_current_boundaries(self):
+        cases = (
+            ("Return a JSON object.", '{"answer":"ok"}', False, ()),
+            (
+                "Return a JSON object.",
+                "The answer is ready.",
+                True,
+                ("requested_json_invalid",),
+            ),
+            (
+                "Return a JSON object.",
+                '["answer"]',
+                True,
+                ("requested_json_wrong_top_level",),
+            ),
+            (
+                "Return a JSON array.",
+                '{"answer":"ok"}',
+                True,
+                ("requested_json_wrong_top_level",),
+            ),
+            (
+                "Please reply in a single line.",
+                "first line\nsecond line",
+                True,
+                ("requested_single_line_multiline",),
+            ),
+            (
+                "只输出纯文本。",
+                "# Heading\n- item",
+                True,
+                ("requested_plain_text_markdown",),
+            ),
+            (
+                "Please use a code fence.",
+                "plain answer",
+                True,
+                ("requested_fence_missing",),
+            ),
+            (
+                "Do not use a code fence.",
+                "```text\nexample\n```",
+                True,
+                ("requested_fence_present",),
+            ),
+        )
+        for request, response, expected_match, expected_codes in cases:
+            with self.subTest(request=request, expected_codes=expected_codes):
+                node, context = _output_node(
+                    "format_violation_detector", {}, request, response,
+                )
+                result = evaluate_output_detector(node, context, response)
+
+                self.assertEqual(result.matched, expected_match)
+                self.assertEqual(
+                    tuple(result.metadata["reason_codes"]), expected_codes,
+                )
+                self.assertEqual(result.metadata["core_material_version"], "core-materials-v7")
+                self.assertNotIn(request, str(result.metadata))
+                self.assertNotIn(response, str(result.metadata))
+
+    def test_requires_a_command_and_fails_open_for_conflicting_contracts(self):
+        no_command_request = (
+            "Explain the JSON format and compare a code fence with Markdown."
+        )
+        generic_json_request = "Return JSON."
+        conflicting_request = "Reply only in a JSON object and JSON array."
+        quoted_request = 'Explain why the example "reply only in JSON" is useful.'
+
+        for request in (
+            no_command_request,
+            generic_json_request,
+            conflicting_request,
+            quoted_request,
+        ):
+            with self.subTest(request=request):
+                node, context = _output_node(
+                    "format_violation_detector", {}, request, "ordinary explanation",
+                )
+                result = evaluate_output_detector(node, context, "ordinary explanation")
+
+                self.assertFalse(result.matched)
+                self.assertEqual(result.metadata["reason_codes"], [])
+                self.assertEqual(result.metadata["active_contract_count"], 0)
+
+    def test_surrounding_whitespace_behavior_is_explicitly_configurable(self):
+        request = "Return a JSON object."
+        response = "\n{}\n"
+        default_node, default_context = _output_node(
+            "format_violation_detector", {}, request, response,
+        )
+        strict_node, strict_context = _output_node(
+            "format_violation_detector",
+            {"allow_surrounding_whitespace": False},
+            request,
+            response,
+        )
+
+        self.assertFalse(
+            evaluate_output_detector(default_node, default_context, response).matched
+        )
+        strict_result = evaluate_output_detector(strict_node, strict_context, response)
+        self.assertTrue(strict_result.matched)
+        self.assertEqual(strict_result.metadata["reason_codes"], ["requested_json_invalid"])
+
+    def test_normalizes_all_public_parameters_and_rejects_sanitize(self):
+        node, _context = _output_node(
+            "format_violation_detector",
+            {
+                "scan_limit_chars": 1,
+                "max_contract_candidates": 0,
+                "allow_surrounding_whitespace": False,
+                "action_on_hit": "sanitize",
+            },
+            "Return a JSON object.",
+            "{}",
+        )
+
+        self.assertEqual(node.config["scan_limit_chars"], 12000)
+        self.assertEqual(node.config["max_contract_candidates"], 8)
+        self.assertFalse(node.config["allow_surrounding_whitespace"])
+        self.assertEqual(node.config["action_on_hit"], "default")
+        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
 
 
 if __name__ == "__main__":
