@@ -14,6 +14,7 @@ from core_materials import (
     MAX_ENTRIES_PER_CATEGORY,
     build_core_material_set,
     material_terms,
+    material_values,
     validate_core_material_set,
 )
 
@@ -21,11 +22,35 @@ from core_materials import (
 class CoreMaterialTests(unittest.TestCase):
     def test_builtin_materials_are_valid_and_immutable(self):
         self.assertEqual(validate_core_material_set(CORE_MATERIALS), ())
-        self.assertEqual(CORE_MATERIALS.version, "core-materials-v1")
+        self.assertEqual(CORE_MATERIALS.version, "core-materials-v4")
         self.assertIsInstance(CORE_MATERIALS.entries, tuple)
         self.assertEqual(
             material_terms(CORE_MATERIALS, "intent_override_operation"),
             ("ignore", "bypass", "discard", "disable", "forget", "忽略", "绕过", "废弃", "关闭", "忘记"),
+        )
+        self.assertEqual(
+            material_values(CORE_MATERIALS, "protocol_message_envelope", "role_fields"),
+            ("role",),
+        )
+        self.assertEqual(
+            material_values(CORE_MATERIALS, "protocol_chatml_envelope", "start_delimiters"),
+            ("<|im_start|>",),
+        )
+        self.assertEqual(
+            material_values(CORE_MATERIALS, "operation_http_fetch_execute", "schemes"),
+            ("http", "https"),
+        )
+        self.assertEqual(
+            material_values(CORE_MATERIALS, "encoding_base64_candidate", "padding_chars"),
+            ("=",),
+        )
+        self.assertEqual(
+            material_values(
+                CORE_MATERIALS,
+                "encoding_unicode_format_controls",
+                "unicode_categories",
+            ),
+            ("Cf",),
         )
 
     def test_validation_rejects_duplicate_material_ids(self):

@@ -13,7 +13,7 @@ try:
     from .adapters import MessageFactSnapshot
     from .config import NormalizedNode
     from .constants import INTERNAL_MARKER
-    from .core_materials import CORE_MATERIALS, material_terms
+    from .core_materials import CORE_MATERIALS, material_terms, material_values
     from .core import (
         NodeSignal,
         RailContext,
@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import MessageFactSnapshot
     from config import NormalizedNode
     from constants import INTERNAL_MARKER
-    from core_materials import CORE_MATERIALS, material_terms
+    from core_materials import CORE_MATERIALS, material_terms, material_values
     from core import (
         NodeSignal,
         RailContext,
@@ -106,41 +106,9 @@ OUTPUT_DETECTOR_TEMPLATES = {
     "metadata_leakage_detector",
 }
 
-_BASE64_CANDIDATE_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{16,}={0,2})(?![A-Za-z0-9+/_=-])"
-)
-_PERCENT_ESCAPE_PATTERN = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
-_UNICODE_ESCAPE_PATTERN = re.compile(r"(?:\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8})+")
-_HEX_BYTE_PATTERN = re.compile(
-    r"(?<![0-9A-Fa-f])(?:0x)?[0-9A-Fa-f]{2}(?:[\s,:-]+[0-9A-Fa-f]{2})+(?![0-9A-Fa-f])"
-)
-_ROT13_WRAPPER_PATTERN = re.compile(
-    r"\brot13\s*:\s*([A-Za-z]{8,})\b|\brot13\s*\(\s*([A-Za-z]{8,})\s*\)",
-    re.IGNORECASE,
-)
-_HTTP_RESOURCE_PATTERN = re.compile(
-    r"(?i)(?:(?:https?:)?//[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{1,5})?(?:/[^\s<>()\[\]\"']*)?)"
-)
 _MARKDOWN_IMAGE_PREFIX_PATTERN = re.compile(r"!\[[^\]\r\n]{0,120}\]\(\s*$")
-_COMMAND_FETCH_PATTERN = re.compile(
-    r"(?im)^\s*(?:curl|wget|invoke-webrequest|iwr)\b[^\r\n]*?(?:(?:https?:)?//)"
-)
-_COMMAND_EXECUTION_TAIL_PATTERN = re.compile(
-    r"(?i)(?:\||&&)\s*(?:sh|bash|zsh|python3?|pwsh|powershell|iex)\b"
-)
 _PYTHON_EXCEPTION_LINE_PATTERN = re.compile(
     r"^(?:[A-Za-z_]\w*\.)*(?:[A-Za-z_]\w*(?:Error|Exception|Exit)|KeyboardInterrupt)(?::.*)?$"
-)
-_FETCH_ACTION_TERMS = (
-    "fetch", "retrieve", "download", "load", "read", "open", "import",
-    "获取", "抓取", "下载", "读取", "加载", "打开", "导入",
-)
-_TRANSFER_ACTION_TERMS = (
-    "send", "upload", "post", "forward", "exfiltrate",
-    "发送", "上传", "转发", "外传",
-)
-_PROMPT_TARGET_TERMS = (
-    "prompt", "instruction", "system prompt", "提示词", "指令", "系统提示",
 )
 
 # These slots preserve the current instruction-override boundary.  They live
@@ -159,6 +127,182 @@ _INSTRUCTION_INTENT_TERMS = {
     category: material_terms(CORE_MATERIALS, material_id)
     for category, material_id in _INSTRUCTION_INTENT_MATERIAL_IDS.items()
 }
+
+_ROLE_HEADER_ROLE_NAMES = material_values(
+    CORE_MATERIALS, "protocol_role_header", "role_names",
+)
+_ROLE_HEADER_OPTIONAL_SUFFIXES = material_values(
+    CORE_MATERIALS, "protocol_role_header", "optional_suffixes",
+)
+_MESSAGE_ENVELOPE_ROLE_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_message_envelope", "role_fields",
+)
+_MESSAGE_ENVELOPE_CONTENT_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_message_envelope", "content_fields",
+)
+_MESSAGE_ENVELOPE_WEAK_ROLE_VALUES = material_values(
+    CORE_MATERIALS, "protocol_message_envelope", "weak_role_values",
+)
+_MESSAGE_ENVELOPE_STRONG_ROLE_VALUES = material_values(
+    CORE_MATERIALS, "protocol_message_envelope", "strong_role_values",
+)
+_TOOL_ENVELOPE_CALL_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_tool_envelope", "call_fields",
+)
+_TOOL_ENVELOPE_WEAK_ARGUMENT_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_tool_envelope", "weak_argument_fields",
+)
+_TOOL_ENVELOPE_STRONG_CALL_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_tool_envelope", "strong_call_fields",
+)
+_TOOL_ENVELOPE_STRONG_NONEMPTY_STRING_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_tool_envelope", "strong_nonempty_string_fields",
+)
+_TOOL_ENVELOPE_STRONG_PRESENCE_FIELDS = material_values(
+    CORE_MATERIALS, "protocol_tool_envelope", "strong_presence_fields",
+)
+_CHATML_START_DELIMITERS = material_values(
+    CORE_MATERIALS, "protocol_chatml_envelope", "start_delimiters",
+)
+_CHATML_STRONG_ROLE_VALUES = material_values(
+    CORE_MATERIALS, "protocol_chatml_envelope", "strong_role_values",
+)
+_RESERVED_DELIMITER_OPENS = material_values(
+    CORE_MATERIALS, "protocol_chatml_envelope", "open_delimiters",
+)
+_RESERVED_DELIMITER_CLOSES = material_values(
+    CORE_MATERIALS, "protocol_chatml_envelope", "close_delimiters",
+)
+_FETCH_ACTION_TERMS = material_terms(CORE_MATERIALS, "operation_external_fetch")
+_TRANSFER_ACTION_TERMS = material_terms(
+    CORE_MATERIALS, "operation_external_transfer",
+)
+_PROMPT_TARGET_TERMS = material_terms(
+    CORE_MATERIALS, "operation_external_prompt_target",
+)
+_HTTP_RESOURCE_SCHEMES = material_values(
+    CORE_MATERIALS, "operation_http_fetch_execute", "schemes",
+)
+_FETCH_COMMANDS = material_values(
+    CORE_MATERIALS, "operation_http_fetch_execute", "fetch_commands",
+)
+_FETCH_EXECUTE_INTERPRETERS = material_values(
+    CORE_MATERIALS, "operation_http_fetch_execute", "interpreters",
+)
+_HTTP_SCHEME_ALTERNATION = "|".join(
+    re.escape(scheme) for scheme in _HTTP_RESOURCE_SCHEMES
+)
+_FETCH_COMMAND_ALTERNATION = "|".join(
+    re.escape(command) for command in _FETCH_COMMANDS
+)
+_FETCH_EXECUTE_INTERPRETER_ALTERNATION = "|".join(
+    re.escape(interpreter) for interpreter in _FETCH_EXECUTE_INTERPRETERS
+)
+_HTTP_RESOURCE_PATTERN = re.compile(
+    rf"(?i)(?:(?:(?:{_HTTP_SCHEME_ALTERNATION}):)?//[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d{{1,5}})?(?:/[^\s<>()\[\]\"']*)?)"
+)
+_COMMAND_FETCH_PATTERN = re.compile(
+    rf"(?im)^\s*(?:{_FETCH_COMMAND_ALTERNATION})\b[^\r\n]*?(?:(?:(?:{_HTTP_SCHEME_ALTERNATION}):)?//)"
+)
+_COMMAND_EXECUTION_TAIL_PATTERN = re.compile(
+    rf"(?i)(?:\||&&)\s*(?:{_FETCH_EXECUTE_INTERPRETER_ALTERNATION})\b"
+)
+_BASE64_ALPHABET_EXTRAS = material_values(
+    CORE_MATERIALS, "encoding_base64_candidate", "alphabet_extras",
+)
+_BASE64_PADDING_CHARS = material_values(
+    CORE_MATERIALS, "encoding_base64_candidate", "padding_chars",
+)
+_BASE64_ALTCHARS = "".join(material_values(
+    CORE_MATERIALS, "encoding_base64_candidate", "decoder_altchars",
+)).encode("ascii")
+_BASE64_BODY_CHAR_CLASS = "A-Za-z0-9" + "".join(
+    re.escape(value) for value in _BASE64_ALPHABET_EXTRAS
+)
+_BASE64_PADDING_CHAR_CLASS = "".join(
+    re.escape(value) for value in _BASE64_PADDING_CHARS
+)
+_BASE64_DISTINCTIVE_CHARS = _BASE64_ALPHABET_EXTRAS + _BASE64_PADDING_CHARS
+_BASE64_PADDING_CHAR = _BASE64_PADDING_CHARS[0]
+_BASE64_CANDIDATE_PATTERN = re.compile(
+    rf"(?<![{_BASE64_BODY_CHAR_CLASS}])([{_BASE64_BODY_CHAR_CLASS}]{{16,}}[{_BASE64_PADDING_CHAR_CLASS}]{{0,2}})(?![{_BASE64_BODY_CHAR_CLASS}{_BASE64_PADDING_CHAR_CLASS}])"
+)
+_PERCENT_ESCAPE_PREFIX = material_values(
+    CORE_MATERIALS, "encoding_percent_escape", "prefixes",
+)[0]
+_PERCENT_ESCAPE_HEX_WIDTH = int(material_values(
+    CORE_MATERIALS, "encoding_percent_escape", "hex_widths",
+)[0])
+_PERCENT_ESCAPE_UNIT_PATTERN = (
+    rf"{re.escape(_PERCENT_ESCAPE_PREFIX)}[0-9A-Fa-f]{{{_PERCENT_ESCAPE_HEX_WIDTH}}}"
+)
+_PERCENT_ESCAPE_PATTERN = re.compile(rf"(?:{_PERCENT_ESCAPE_UNIT_PATTERN})+")
+_UNICODE_ESCAPE_SHORT_PREFIX = material_values(
+    CORE_MATERIALS, "encoding_unicode_escape", "short_prefixes",
+)[0]
+_UNICODE_ESCAPE_SHORT_HEX_WIDTH = int(material_values(
+    CORE_MATERIALS, "encoding_unicode_escape", "short_hex_widths",
+)[0])
+_UNICODE_ESCAPE_LONG_PREFIX = material_values(
+    CORE_MATERIALS, "encoding_unicode_escape", "long_prefixes",
+)[0]
+_UNICODE_ESCAPE_LONG_HEX_WIDTH = int(material_values(
+    CORE_MATERIALS, "encoding_unicode_escape", "long_hex_widths",
+)[0])
+_UNICODE_ESCAPE_UNIT_PATTERN = re.compile(
+    rf"{re.escape(_UNICODE_ESCAPE_SHORT_PREFIX)}[0-9A-Fa-f]{{{_UNICODE_ESCAPE_SHORT_HEX_WIDTH}}}|{re.escape(_UNICODE_ESCAPE_LONG_PREFIX)}[0-9A-Fa-f]{{{_UNICODE_ESCAPE_LONG_HEX_WIDTH}}}"
+)
+_UNICODE_ESCAPE_PATTERN = re.compile(
+    rf"(?:{_UNICODE_ESCAPE_UNIT_PATTERN.pattern})+"
+)
+_HEX_BYTE_OPTIONAL_PREFIXES = material_values(
+    CORE_MATERIALS, "encoding_hex_bytes", "optional_prefixes",
+)
+_HEX_BYTE_WIDTH = int(material_values(
+    CORE_MATERIALS, "encoding_hex_bytes", "byte_hex_widths",
+)[0])
+_HEX_BYTE_SEPARATOR_TOKENS = material_values(
+    CORE_MATERIALS, "encoding_hex_bytes", "separators",
+)
+_HEX_BYTE_PREFIX_ALTERNATION = "|".join(
+    re.escape(prefix) for prefix in _HEX_BYTE_OPTIONAL_PREFIXES
+)
+_HEX_BYTE_SEPARATOR_CLASS = "".join(
+    r"\s" if token == "whitespace" else re.escape(token)
+    for token in _HEX_BYTE_SEPARATOR_TOKENS
+)
+_HEX_BYTE_PATTERN = re.compile(
+    rf"(?<![0-9A-Fa-f])(?:{_HEX_BYTE_PREFIX_ALTERNATION})?[0-9A-Fa-f]{{{_HEX_BYTE_WIDTH}}}(?:[{_HEX_BYTE_SEPARATOR_CLASS}]+[0-9A-Fa-f]{{{_HEX_BYTE_WIDTH}}})+(?![0-9A-Fa-f])"
+)
+_ROT13_LABELS = material_values(
+    CORE_MATERIALS, "encoding_rot13_wrapper", "labels",
+)
+_ROT13_COLON_WRAPPERS = material_values(
+    CORE_MATERIALS, "encoding_rot13_wrapper", "colon_wrappers",
+)
+_ROT13_OPEN_WRAPPERS = material_values(
+    CORE_MATERIALS, "encoding_rot13_wrapper", "open_wrappers",
+)
+_ROT13_CLOSE_WRAPPERS = material_values(
+    CORE_MATERIALS, "encoding_rot13_wrapper", "close_wrappers",
+)
+_ROT13_LABEL_ALTERNATION = "|".join(re.escape(label) for label in _ROT13_LABELS)
+_ROT13_COLON_ALTERNATION = "|".join(
+    re.escape(wrapper) for wrapper in _ROT13_COLON_WRAPPERS
+)
+_ROT13_OPEN_ALTERNATION = "|".join(
+    re.escape(wrapper) for wrapper in _ROT13_OPEN_WRAPPERS
+)
+_ROT13_CLOSE_ALTERNATION = "|".join(
+    re.escape(wrapper) for wrapper in _ROT13_CLOSE_WRAPPERS
+)
+_ROT13_WRAPPER_PATTERN = re.compile(
+    rf"\b(?:{_ROT13_LABEL_ALTERNATION})\s*(?:{_ROT13_COLON_ALTERNATION})\s*([A-Za-z]{{8,}})\b|\b(?:{_ROT13_LABEL_ALTERNATION})\s*(?:{_ROT13_OPEN_ALTERNATION})\s*([A-Za-z]{{8,}})\s*(?:{_ROT13_CLOSE_ALTERNATION})",
+    re.IGNORECASE,
+)
+_ZERO_WIDTH_UNICODE_CATEGORIES = material_values(
+    CORE_MATERIALS, "encoding_unicode_format_controls", "unicode_categories",
+)
 
 MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
@@ -291,7 +435,7 @@ def _evaluate_encoded_payload(config: dict, text: str) -> tuple[bool, dict]:
                 continue
             if len(set(candidate.rstrip("="))) < int(config["min_base64_distinct_chars"]):
                 continue
-            if not any(char in candidate for char in "+/=_-"):
+            if not any(char in candidate for char in _BASE64_DISTINCTIVE_CHARS):
                 continue
             valid, limited = _validate_base64_candidate(
                 candidate, int(config["max_decode_bytes"]),
@@ -302,20 +446,22 @@ def _evaluate_encoded_payload(config: dict, text: str) -> tuple[bool, dict]:
 
     if config["detect_percent_encoding"]:
         for match in _PERCENT_ESCAPE_PATTERN.finditer(scanned):
-            if match.group(0).count("%") >= int(config["min_percent_escape_count"]):
+            if match.group(0).count(_PERCENT_ESCAPE_PREFIX) >= int(config["min_percent_escape_count"]):
                 add_candidate("percent_escape", match.start(), match.end())
 
     if config["detect_unicode_escape"]:
         for match in _UNICODE_ESCAPE_PATTERN.finditer(scanned):
             escape_count = len(
-                re.findall(r"\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}", match.group(0))
+                _UNICODE_ESCAPE_UNIT_PATTERN.findall(match.group(0))
             )
             if escape_count >= int(config["min_unicode_escape_count"]):
                 add_candidate("unicode_escape", match.start(), match.end())
 
     if config["detect_hex"]:
         for match in _HEX_BYTE_PATTERN.finditer(scanned):
-            byte_count = len(re.findall(r"[0-9A-Fa-f]{2}", match.group(0)))
+            byte_count = len(re.findall(
+                rf"[0-9A-Fa-f]{{{_HEX_BYTE_WIDTH}}}", match.group(0),
+            ))
             if byte_count >= int(config["min_hex_bytes"]):
                 add_candidate("hex_bytes", match.start(), match.end())
 
@@ -328,7 +474,8 @@ def _evaluate_encoded_payload(config: dict, text: str) -> tuple[bool, dict]:
     zero_width_count = 0
     if config["detect_zero_width"]:
         zero_width_count = sum(
-            1 for char in scanned if unicodedata.category(char) == "Cf"
+            1 for char in scanned
+            if unicodedata.category(char) in _ZERO_WIDTH_UNICODE_CATEGORIES
         )
     zero_width_ratio = zero_width_count / max(1, len(scanned))
     zero_width_match = (
@@ -404,15 +551,19 @@ def prepare_sensitive_echo_text(config: dict, text: str) -> tuple[str, bool]:
 
 
 def _validate_base64_candidate(value: str, max_decode_bytes: int) -> tuple[bool, bool]:
-    unpadded = value.rstrip("=")
-    if not unpadded or "=" in unpadded or len(unpadded) % 4 == 1:
+    unpadded = value.rstrip(_BASE64_PADDING_CHAR)
+    if (
+        not unpadded
+        or _BASE64_PADDING_CHAR in unpadded
+        or len(unpadded) % 4 == 1
+    ):
         return False, False
     estimated_size = (len(unpadded) * 3) // 4
     if estimated_size > max_decode_bytes:
         return True, True
-    padded = unpadded + "=" * (-len(unpadded) % 4)
+    padded = unpadded + _BASE64_PADDING_CHAR * (-len(unpadded) % 4)
     try:
-        base64.b64decode(padded, altchars=b"-_", validate=True)
+        base64.b64decode(padded, altchars=_BASE64_ALTCHARS, validate=True)
     except (binascii.Error, ValueError):
         return False, False
     return True, False
@@ -1088,19 +1239,22 @@ def _duplicate_line_stats(text: str, minimum_length: int) -> tuple[int, float]:
 def _looks_like_role_header(line: str) -> bool:
     stripped = line.strip().strip("[]<>{} ").casefold()
     name, separator, content = stripped.partition(":")
-    name = name.strip().removesuffix(" message")
-    return bool(separator and content.strip() and name in {"system", "developer", "assistant", "tool", "function", "系统", "开发者", "助手", "工具"})
+    name = name.strip()
+    for suffix in _ROLE_HEADER_OPTIONAL_SUFFIXES:
+        name = name.removesuffix(suffix)
+    return bool(separator and content.strip() and name in _ROLE_HEADER_ROLE_NAMES)
 
 
 def _looks_like_message_envelope(text: str) -> bool:
-    return all(token in text for token in ('"role"', '"content"')) and any(
-        token in text for token in ('"system"', '"developer"', '"assistant"', '"tool"')
+    fields = _MESSAGE_ENVELOPE_ROLE_FIELDS + _MESSAGE_ENVELOPE_CONTENT_FIELDS
+    return all(f'"{field}"' in text for field in fields) and any(
+        f'"{role}"' in text for role in _MESSAGE_ENVELOPE_WEAK_ROLE_VALUES
     )
 
 
 def _looks_like_tool_envelope(text: str) -> bool:
-    return any(token in text for token in ("function_call", "tool_call", "tool_use")) and any(
-        token in text for token in ("arguments", "parameters", "name")
+    return any(token in text for token in _TOOL_ENVELOPE_CALL_FIELDS) and any(
+        token in text for token in _TOOL_ENVELOPE_WEAK_ARGUMENT_FIELDS
     )
 
 
@@ -1108,28 +1262,40 @@ def _is_complete_message_envelope(text: str) -> bool:
     parsed = _parse_json_object(text)
     if not isinstance(parsed, dict):
         return False
-    role = parsed.get("role")
-    content = parsed.get("content")
-    return isinstance(role, str) and role.casefold() in {"system", "developer"} and isinstance(content, str) and bool(content.strip())
+    role = parsed.get(_MESSAGE_ENVELOPE_ROLE_FIELDS[0])
+    content = parsed.get(_MESSAGE_ENVELOPE_CONTENT_FIELDS[0])
+    return (
+        isinstance(role, str)
+        and role.casefold() in _MESSAGE_ENVELOPE_STRONG_ROLE_VALUES
+        and isinstance(content, str)
+        and bool(content.strip())
+    )
 
 
 def _is_complete_tool_envelope(text: str) -> bool:
     parsed = _parse_json_object(text)
     if not isinstance(parsed, dict):
         return False
-    call = parsed.get("function_call")
-    return isinstance(call, dict) and isinstance(call.get("name"), str) and bool(call["name"].strip()) and "arguments" in call
+    call = parsed.get(_TOOL_ENVELOPE_STRONG_CALL_FIELDS[0])
+    return (
+        isinstance(call, dict)
+        and all(
+            isinstance(call.get(field), str) and bool(call[field].strip())
+            for field in _TOOL_ENVELOPE_STRONG_NONEMPTY_STRING_FIELDS
+        )
+        and all(field in call for field in _TOOL_ENVELOPE_STRONG_PRESENCE_FIELDS)
+    )
 
 
 def _is_complete_chatml_envelope(text: str) -> bool:
-    prefix = "<|im_start|>"
+    prefix = _CHATML_START_DELIMITERS[0]
     if not text.startswith(prefix):
         return False
     remainder = text[len(prefix):].lstrip()
     role, separator, content = remainder.partition("\n")
     return bool(
         separator
-        and role.strip() in {"system", "developer", "tool"}
+        and role.strip() in _CHATML_STRONG_ROLE_VALUES
         and content.strip()
     )
 
@@ -1142,7 +1308,12 @@ def _parse_json_object(text: str):
 
 
 def _has_reserved_delimiters(text: str) -> bool:
-    return ("<|" in text and "|>" in text) or ("<<" in text and ">>" in text)
+    return any(
+        opening in text and closing in text
+        for opening, closing in zip(
+            _RESERVED_DELIMITER_OPENS, _RESERVED_DELIMITER_CLOSES,
+        )
+    )
 
 
 def _has_log_like_header(lines: list[str]) -> bool:
