@@ -88,6 +88,19 @@ def _install_astrbot_stubs():
 
 
 class MainHandlerSignatureTests(unittest.TestCase):
+    def test_log_node_summary_preserves_terminal_nodes_when_bounded(self):
+        _install_astrbot_stubs()
+        module = importlib.import_module("main")
+
+        self.assertEqual(module._format_log_node_ids([]), "-")
+        self.assertEqual(
+            module._format_log_node_ids(["first", "last"]), "first,last",
+        )
+        self.assertEqual(
+            module._format_log_node_ids([f"node_{index}" for index in range(12)]),
+            "...(+3),node_3,node_4,node_5,node_6,node_7,node_8,node_9,node_10,node_11",
+        )
+
     def test_message_handlers_accept_astrbot_extra_args(self):
         _install_astrbot_stubs()
         module = importlib.import_module("main")

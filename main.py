@@ -83,6 +83,22 @@ _PHASE_RAILS: dict[str, tuple[str, ...]] = {
     "request": ("request_rail", "prompt_rail"),
     "response": ("output_rail",),
 }
+_LOGGING_PHASE_RAILS: dict[str, tuple[str, ...]] = {
+    **_PHASE_RAILS,
+    "access_gate": ("input_rail",),
+    "waiting_rails": ("input_rail", "routing_rail"),
+}
+_LOG_NODE_DISPLAY_LIMIT = 10
+
+
+def _format_log_node_ids(node_ids: list[str]) -> str:
+    """Bound a node list while retaining terminal graph nodes at its tail."""
+
+    if len(node_ids) <= _LOG_NODE_DISPLAY_LIMIT:
+        return ",".join(node_ids) or "-"
+    visible_count = _LOG_NODE_DISPLAY_LIMIT - 1
+    hidden_count = len(node_ids) - visible_count
+    return ",".join([f"...(+{hidden_count})", *node_ids[-visible_count:]])
 
 
 @register(
@@ -1080,19 +1096,25 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     def _log_context_summary(self, phase: str, rail_context) -> None:
         if not self.normalized_config.debug_settings["logging"]:
             return
+        phase_rails = _LOGGING_PHASE_RAILS.get(phase, ())
+        phase_results = [
+            result
+            for result in rail_context.results.values()
+            if not phase_rails or result.rail in phase_rails
+        ]
         matched = [
             result.rule_id
-            for result in rail_context.results.values()
+            for result in phase_results
             if result.executed and result.matched
         ]
         executed = [
             result.rule_id
-            for result in rail_context.results.values()
+            for result in phase_results
             if result.executed
         ]
         errors = [
             result.rule_id
-            for result in rail_context.results.values()
+            for result in phase_results
             if result.executed and result.metadata.get("error")
         ]
         route_label = (
@@ -1125,9 +1147,9 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             rail_context.umo,
             policy_id,
             session_action,
-            ",".join(executed[:10]) or "-",
-            ",".join(matched[:10]) or "-",
-            ",".join(errors[:10]) or "-",
+            _format_log_node_ids(executed),
+            _format_log_node_ids(matched),
+            _format_log_node_ids(errors),
             rail_context.input_blocked,
             rail_context.output_blocked,
             route_label or "-",
