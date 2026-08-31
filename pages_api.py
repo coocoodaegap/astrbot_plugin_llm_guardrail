@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ try:
         REASON_CODE_LABELS,
         make_principal_identity,
     )
-    from .policy_library import PolicyDefinition, RuleDefinition
+    from .policy_library import PolicyDefinition, PolicyLibrary, RuleDefinition
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from access_control import (
         MANUAL_BAN_REASON_CODES,
@@ -38,7 +39,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         REASON_CODE_LABELS,
         make_principal_identity,
     )
-    from policy_library import PolicyDefinition, RuleDefinition
+    from policy_library import PolicyDefinition, PolicyLibrary, RuleDefinition
 
 
 class GuardrailPagesApiMixin:
@@ -75,6 +76,8 @@ class GuardrailPagesApiMixin:
             ("save_rule_library", self._pages_save_rule_library, ["POST"], "Save rule library"),
             ("get_policy_library", self._pages_get_policy_library, ["GET"], "Get policy library"),
             ("save_policy_library", self._pages_save_policy_library, ["POST"], "Save policy library"),
+            ("preview_config_import", self._pages_preview_config_import, ["POST"], "Preview a rule or policy configuration package"),
+            ("import_config_package", self._pages_import_config_package, ["POST"], "Validate and import a rule or policy configuration package"),
         )
         for endpoint, handler, methods, description in routes:
             register_web_api(f"/{plugin_name}/{endpoint}", handler, methods, description)
@@ -818,6 +821,74 @@ class GuardrailPagesApiMixin:
         )
         return self._pages_publish_response(result, "Policy library")
 
+    async def _pages_preview_config_import(self):
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        mode = str(payload.get("conflict_mode") or "copy").strip()
+        if mode not in {"copy", "replace"}:
+            return self._pages_error("conflict_mode must be copy or replace")
+        try:
+            parsed = _parse_configuration_package(payload.get("package"))
+            candidate = _merge_configuration_package(
+                self.snapshot_manager.current.policy_library,
+                parsed,
+                conflict_mode=mode,
+            )
+            validation = candidate.validate()
+            if not validation.valid:
+                raise ValueError("; ".join(validation.fatal_errors))
+        except ValueError as exc:
+            return self._pages_error("Invalid configuration package", 400, str(exc))
+
+        current = self.snapshot_manager.current.policy_library
+        rule_ids = {rule.rule_id for rule in current.rules}
+        policy_ids = {policy.policy_id for policy in current.policies}
+        return jsonify(
+            {
+                "success": True,
+                "preview": {
+                    "kind": parsed["kind"],
+                    "rules": [rule.to_dict() for rule in parsed["rules"]],
+                    "policies": [policy.to_dict() for policy in parsed["policies"]],
+                    "rule_conflicts": sorted(
+                        rule.rule_id for rule in parsed["rules"] if rule.rule_id in rule_ids
+                    ),
+                    "policy_conflicts": sorted(
+                        policy.policy_id for policy in parsed["policies"] if policy.policy_id in policy_ids
+                    ),
+                    "warnings": list(validation.warnings),
+                    "revision": self.snapshot_manager.current.revision,
+                },
+            }
+        )
+
+    async def _pages_import_config_package(self):
+        payload = await self._pages_json_payload()
+        if isinstance(payload, tuple):
+            return payload
+        expected_revision = payload.get("expected_revision")
+        if not isinstance(expected_revision, int):
+            return self._pages_error("expected_revision must be an integer")
+        mode = str(payload.get("conflict_mode") or "copy").strip()
+        if mode not in {"copy", "replace"}:
+            return self._pages_error("conflict_mode must be copy or replace")
+        try:
+            parsed = _parse_configuration_package(payload.get("package"))
+            library = _merge_configuration_package(
+                self.snapshot_manager.current.policy_library,
+                parsed,
+                conflict_mode=mode,
+            )
+        except ValueError as exc:
+            return self._pages_error("Invalid configuration package", 400, str(exc))
+
+        result = await self.snapshot_manager.publish_policy_library(
+            library,
+            expected_revision,
+        )
+        return self._pages_publish_response(result, "Configuration package")
+
     async def _pages_json_payload(self) -> dict[str, Any] | tuple[Any, int]:
         if request is None:
             return self._pages_error("Pages request context is unavailable", 503)
@@ -991,3 +1062,183 @@ def _validate_shared_constants(constants: dict[str, Any]) -> list[str]:
         if not isinstance(value, str):
             diagnostics.append(f"shared constant {name!r} must be a string")
     return diagnostics
+
+
+CONFIGURATION_PACKAGE_FORMAT_VERSION = 1
+CONFIGURATION_PACKAGE_KINDS = frozenset({"rules", "policies"})
+
+
+def _parse_configuration_package(value: Any) -> dict[str, Any]:
+    """Parse a portable, JSON-decoded rule or policy package without writes."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("package must be an object")
+    if value.get("format_version") != CONFIGURATION_PACKAGE_FORMAT_VERSION:
+        raise ValueError(
+            f"unsupported format_version: expected {CONFIGURATION_PACKAGE_FORMAT_VERSION}"
+        )
+    kind = str(value.get("kind") or "").strip()
+    if kind not in CONFIGURATION_PACKAGE_KINDS:
+        raise ValueError("package kind must be rules or policies")
+    raw_rules = value.get("rules")
+    raw_policies = value.get("policies", [])
+    if not isinstance(raw_rules, list) or not all(isinstance(item, Mapping) for item in raw_rules):
+        raise ValueError("package rules must be an array of objects")
+    if not isinstance(raw_policies, list) or not all(isinstance(item, Mapping) for item in raw_policies):
+        raise ValueError("package policies must be an array of objects")
+    if kind == "rules" and raw_policies:
+        raise ValueError("a rules package may not include policies")
+    if kind == "policies" and not raw_policies:
+        raise ValueError("a policies package must include at least one policy")
+
+    rules = tuple(RuleDefinition.from_dict(item) for item in raw_rules)
+    policies = tuple(PolicyDefinition.from_dict(item) for item in raw_policies)
+    rule_ids = [rule.rule_id for rule in rules]
+    policy_ids = [policy.policy_id for policy in policies]
+    if len(set(rule_ids)) != len(rule_ids) or not all(rule_ids):
+        raise ValueError("package rule IDs must be non-empty and unique")
+    if len(set(policy_ids)) != len(policy_ids) or not all(policy_ids):
+        raise ValueError("package policy IDs must be non-empty and unique")
+    package_rule_ids = set(rule_ids)
+    for policy in policies:
+        missing = sorted(
+            {binding.rule_id for binding in policy.bindings} - package_rule_ids
+        )
+        if missing:
+            raise ValueError(
+                f"policy {policy.policy_id} is missing packaged rules: {', '.join(missing)}"
+            )
+    return {"kind": kind, "rules": rules, "policies": policies}
+
+
+def _merge_configuration_package(
+    current: PolicyLibrary,
+    package: Mapping[str, Any],
+    *,
+    conflict_mode: str,
+) -> PolicyLibrary:
+    """Build one complete candidate library for an import's atomic publication."""
+
+    imported_rules = tuple(package["rules"])
+    imported_policies = tuple(package["policies"])
+    existing_rule_ids = {rule.rule_id for rule in current.rules}
+    existing_policy_ids = {policy.policy_id for policy in current.policies}
+    rule_id_map: dict[str, str] = {}
+    policy_id_map: dict[str, str] = {}
+    if conflict_mode == "copy":
+        occupied_rule_ids = set(existing_rule_ids)
+        for rule in imported_rules:
+            rule_id_map[rule.rule_id] = _copy_configuration_id(rule.rule_id, occupied_rule_ids)
+            occupied_rule_ids.add(rule_id_map[rule.rule_id])
+        occupied_policy_ids = set(existing_policy_ids)
+        for policy in imported_policies:
+            policy_id_map[policy.policy_id] = _copy_configuration_id(
+                policy.policy_id, occupied_policy_ids
+            )
+            occupied_policy_ids.add(policy_id_map[policy.policy_id])
+    else:
+        rule_id_map = {rule.rule_id: rule.rule_id for rule in imported_rules}
+        policy_id_map = {policy.policy_id: policy.policy_id for policy in imported_policies}
+
+    rewritten_rules = tuple(
+        RuleDefinition.from_dict({**rule.to_dict(), "rule_id": rule_id_map[rule.rule_id]})
+        for rule in imported_rules
+    )
+    rewritten_policies = tuple(
+        _rewrite_imported_policy(policy, policy_id_map[policy.policy_id], rule_id_map)
+        for policy in imported_policies
+    )
+    if conflict_mode == "copy":
+        rules = (*current.rules, *rewritten_rules)
+        policies = (*current.policies, *rewritten_policies)
+    else:
+        rules = _replace_library_entries(current.rules, rewritten_rules, "rule_id")
+        policies = _replace_library_entries(current.policies, rewritten_policies, "policy_id")
+    return PolicyLibrary(
+        rules=tuple(rules),
+        policies=tuple(policies),
+        active_policy_id=current.active_policy_id,
+        umo_policy_selections=current.umo_policy_selections,
+    )
+
+
+def _copy_configuration_id(source_id: str, occupied: set[str]) -> str:
+    """Keep a free source ID when possible, otherwise allocate a valid copy ID."""
+
+    if source_id not in occupied:
+        return source_id
+    suffix_number = 1
+    while True:
+        suffix = "_copy" if suffix_number == 1 else f"_copy{suffix_number}"
+        candidate = f"{source_id[:64 - len(suffix)]}{suffix}"
+        if candidate not in occupied:
+            return candidate
+        suffix_number += 1
+
+
+def _rewrite_imported_policy(
+    policy: PolicyDefinition,
+    policy_id: str,
+    rule_id_map: Mapping[str, str],
+) -> PolicyDefinition:
+    """Rewrite only imported rule references; policy-local component IDs stay stable."""
+
+    payload = policy.to_dict()
+    payload["policy_id"] = policy_id
+    payload["bindings"] = [
+        {
+            **binding,
+            "rule_id": rule_id_map.get(str(binding.get("rule_id") or ""), binding.get("rule_id")),
+            "depend_on": _rewrite_dependency_reference(binding.get("depend_on"), rule_id_map),
+        }
+        for binding in payload["bindings"]
+    ]
+    payload["components"] = [
+        {
+            **component,
+            "depend_on": _rewrite_dependency_reference(component.get("depend_on"), rule_id_map),
+            "config": _rewrite_component_config(component.get("config"), rule_id_map),
+        }
+        for component in payload["components"]
+    ]
+    payload["node_order"] = [rule_id_map.get(node_id, node_id) for node_id in payload["node_order"]]
+    return PolicyDefinition.from_dict(payload)
+
+
+def _rewrite_dependency_reference(value: Any, rule_id_map: Mapping[str, str]) -> str:
+    text = str(value or "").strip()
+    prefix = text[:1] if text[:1] in {"!", "?", "~"} else ""
+    target = text[1:] if prefix else text
+    return f"{prefix}{rule_id_map.get(target, target)}"
+
+
+def _rewrite_component_config(value: Any, rule_id_map: Mapping[str, str]) -> dict[str, Any]:
+    config = copy.deepcopy(dict(value)) if isinstance(value, Mapping) else {}
+    inputs = config.get("inputs")
+    if isinstance(inputs, list):
+        config["inputs"] = [
+            _rewrite_logic_gate_input(item, rule_id_map) for item in inputs
+        ]
+    return config
+
+
+def _rewrite_logic_gate_input(value: Any, rule_id_map: Mapping[str, str]) -> Any:
+    if not isinstance(value, str):
+        return value
+    prefix = value[:1] if value[:1] in {"!", "?", "~"} else ""
+    text = value[1:] if prefix else value
+    target, separator, remainder = text.partition(".")
+    return f"{prefix}{rule_id_map.get(target, target)}{separator}{remainder}"
+
+
+def _replace_library_entries(
+    existing: tuple[Any, ...],
+    replacements: tuple[Any, ...],
+    id_attribute: str,
+) -> tuple[Any, ...]:
+    replacement_by_id = {getattr(item, id_attribute): item for item in replacements}
+    retained = [
+        replacement_by_id.pop(getattr(item, id_attribute), item)
+        for item in existing
+    ]
+    return tuple((*retained, *replacement_by_id.values()))

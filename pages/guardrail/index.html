@@ -138,6 +138,8 @@
         </section>
       </div>
       <div class="floating-action-group" aria-label="规则库操作">
+        <button id="import-rules" type="button" class="button-secondary">导入规则</button>
+        <button id="export-rules" type="button" class="button-secondary">导出规则</button>
         <button id="new-rule" type="button" class="button-secondary">新建规则</button>
         <button id="save-rule-library" type="button">保存所有修改</button>
       </div>
@@ -208,6 +210,8 @@
           <div id="policy-list" class="policy-list"></div>
         </section>
         <div class="floating-action-group" aria-label="策略列表操作">
+          <button id="import-policies" type="button" class="button-secondary">导入策略</button>
+          <button id="export-policies" type="button" class="button-secondary">导出策略</button>
           <button id="new-policy" type="button" class="button-secondary">新建策略</button>
         </div>
       </section>
@@ -550,6 +554,24 @@
         <button id="save-system-settings" type="button">保存系统设置</button>
       </div>
     </section>
+    <dialog id="configuration-export-dialog" class="policy-rule-picker-dialog" aria-labelledby="configuration-export-title">
+      <form method="dialog">
+        <div class="form-heading"><div><p class="eyebrow">EXPORT CONFIGURATION</p><h3 id="configuration-export-title">导出配置</h3><p id="configuration-export-description">选择要写入 JSON 文件的项目。</p></div></div>
+        <p id="configuration-export-status" class="form-status" aria-live="polite"></p>
+        <div id="configuration-export-list" class="policy-rule-picker-list" aria-label="可导出项目"></div>
+        <div class="dialog-actions"><button id="cancel-configuration-export" type="button" class="button-secondary">取消</button><button id="confirm-configuration-export" type="button">生成 JSON 文件</button></div>
+      </form>
+    </dialog>
+    <dialog id="configuration-import-dialog" class="policy-rule-picker-dialog" aria-labelledby="configuration-import-title">
+      <form method="dialog">
+        <div class="form-heading"><div><p class="eyebrow">IMPORT CONFIGURATION</p><h3 id="configuration-import-title">导入配置</h3><p>先读取并校验 JSON 文件；确认后以一次快照发布写入。</p></div></div>
+        <label>JSON 文件<input id="configuration-import-file" type="file" accept="application/json,.json" /></label>
+        <label>发生同 ID 冲突时<select id="configuration-import-mode"><option value="copy">保留现有并导入副本</option><option value="replace">覆盖同 ID 项目</option></select></label>
+        <p id="configuration-import-status" class="form-status" aria-live="polite"></p>
+        <div id="configuration-import-preview" class="policy-graph-editor-note" hidden></div>
+        <div class="dialog-actions"><button id="cancel-configuration-import" type="button" class="button-secondary">取消</button><button id="confirm-configuration-import" type="button" disabled>确认导入</button></div>
+      </form>
+    </dialog>
   </main>
   <div id="report-stack" class="report-stack" aria-live="polite" aria-relevant="additions"></div>
   <script type="module" src="./app.js"></script>

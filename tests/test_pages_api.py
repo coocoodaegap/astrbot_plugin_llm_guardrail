@@ -153,6 +153,8 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/save_rule_library",
             "/astrbot_plugin_llm_guardrail/get_policy_library",
             "/astrbot_plugin_llm_guardrail/save_policy_library",
+            "/astrbot_plugin_llm_guardrail/preview_config_import",
+            "/astrbot_plugin_llm_guardrail/import_config_package",
         })
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/get_rule_library"][2], ["GET"])
         self.assertEqual(routes["/astrbot_plugin_llm_guardrail/save_policy_library"][2], ["POST"])
@@ -652,6 +654,93 @@ class GuardrailPagesApiTests(unittest.TestCase):
         library = plugin.snapshot_manager.current.policy_library
         self.assertEqual(library.rules[0].rule_id, "risk")
         self.assertEqual(library.active_policy_id, "input_policy")
+
+    def test_configuration_package_preview_and_copy_import_are_atomic(self):
+        plugin = _Plugin()
+        package = {
+            "format_version": 1,
+            "kind": "policies",
+            "rules": [
+                {
+                    "rule_id": "risk",
+                    "template_key": "plain_keywords",
+                    "template_config": {"keywords": ["secret"]},
+                }
+            ],
+            "policies": [
+                {
+                    "policy_id": "input_policy",
+                    "name": "Imported policy",
+                    "bindings": [{"rule_id": "risk", "rail": "input_rail"}],
+                    "node_order": ["risk"],
+                }
+            ],
+        }
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request({"package": package})):
+                preview = asyncio.run(plugin._pages_preview_config_import())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "package": package,
+                        "conflict_mode": "copy",
+                        "expected_revision": 0,
+                    }
+                ),
+            ):
+                imported = asyncio.run(plugin._pages_import_config_package())
+
+        self.assertTrue(preview["success"])
+        self.assertEqual(preview["preview"]["rule_conflicts"], [])
+        self.assertTrue(imported["success"])
+        self.assertEqual(imported["revision"], 1)
+        library = plugin.snapshot_manager.current.policy_library
+        self.assertEqual([rule.rule_id for rule in library.rules], ["risk"])
+        self.assertEqual([policy.policy_id for policy in library.policies], ["input_policy"])
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "package": package,
+                        "conflict_mode": "copy",
+                        "expected_revision": 1,
+                    }
+                ),
+            ):
+                copied = asyncio.run(plugin._pages_import_config_package())
+
+        self.assertTrue(copied["success"])
+        copied_library = plugin.snapshot_manager.current.policy_library
+        self.assertEqual(
+            [rule.rule_id for rule in copied_library.rules], ["risk", "risk_copy"]
+        )
+        copied_policy = copied_library.get_policy("input_policy_copy")
+        self.assertIsNotNone(copied_policy)
+        self.assertEqual(copied_policy.bindings[0].rule_id, "risk_copy")
+
+    def test_configuration_package_rejects_policy_without_packaged_rule(self):
+        plugin = _Plugin()
+        package = {
+            "format_version": 1,
+            "kind": "policies",
+            "rules": [],
+            "policies": [
+                {
+                    "policy_id": "input_policy",
+                    "name": "Broken policy",
+                    "bindings": [{"rule_id": "missing", "rail": "input_rail"}],
+                }
+            ],
+        }
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request({"package": package})):
+                rejected = asyncio.run(plugin._pages_preview_config_import())
+
+        self.assertEqual(rejected[1], 400)
+        self.assertIn("missing packaged rules", rejected[0]["detail"])
 
     def test_rule_deletion_is_rejected_when_a_policy_uses_it(self):
         plugin = _Plugin()

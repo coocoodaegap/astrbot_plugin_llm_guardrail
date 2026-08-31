@@ -186,6 +186,28 @@ const status = $("status"),
   cancelRagExperienceDelete = $("cancel-rag-experience-delete"),
   confirmRagExperienceDelete = $("confirm-rag-experience-delete");
 const reportStack = $("report-stack");
+const importRules = $("import-rules"),
+  exportRules = $("export-rules"),
+  importPolicies = $("import-policies"),
+  exportPolicies = $("export-policies"),
+  configurationExportDialog = $("configuration-export-dialog"),
+  configurationExportTitle = $("configuration-export-title"),
+  configurationExportDescription = $("configuration-export-description"),
+  configurationExportStatus = $("configuration-export-status"),
+  configurationExportList = $("configuration-export-list"),
+  cancelConfigurationExport = $("cancel-configuration-export"),
+  confirmConfigurationExport = $("confirm-configuration-export"),
+  configurationImportDialog = $("configuration-import-dialog"),
+  configurationImportFile = $("configuration-import-file"),
+  configurationImportMode = $("configuration-import-mode"),
+  configurationImportStatus = $("configuration-import-status"),
+  configurationImportPreview = $("configuration-import-preview"),
+  cancelConfigurationImport = $("cancel-configuration-import"),
+  confirmConfigurationImport = $("confirm-configuration-import");
+
+let configurationExportKind = null,
+  configurationImportKind = null,
+  pendingConfigurationPackage = null;
 
 function publishReport(message, { tone = "success", duration } = {}) {
   const text = String(message || "").trim();
@@ -216,6 +238,156 @@ function publishReport(message, { tone = "success", duration } = {}) {
   window.requestAnimationFrame(() => item.classList.add("is-visible"));
   const lifetime = duration ?? (tone === "error" ? 0 : tone === "warning" ? 6200 : 4200);
   if (lifetime > 0) window.setTimeout(dismiss, lifetime);
+}
+
+function openConfigurationExport(kind) {
+  const isRules = kind === "rules";
+  const items = isRules ? ruleLibrary.rules : policyLibrary.policies;
+  configurationExportKind = kind;
+  configurationExportTitle.textContent = isRules ? "导出规则" : "导出策略";
+  configurationExportDescription.textContent = isRules
+    ? "选择规则；导出文件只包含这些规则。"
+    : "选择策略；关联规则会自动一并写入自包含文件。";
+  configurationExportStatus.textContent = items.length ? "" : "当前没有可导出的项目。";
+  configurationExportList.replaceChildren();
+  for (const item of items) {
+    const id = isRules ? item.rule_id : item.policy_id;
+    const label = document.createElement("label");
+    label.className = "policy-rule-picker-item";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = String(id || "");
+    const content = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = isRules
+      ? `${id} · ${item.template_key || "未知模板"}`
+      : `${item.name || id} · ${id}`;
+    const description = document.createElement("small");
+    description.textContent = isRules
+      ? String(item.description || "未填写描述")
+      : `${Array.isArray(item.bindings) ? item.bindings.length : 0} 条规则绑定`;
+    content.append(title, description);
+    label.append(input, content);
+    configurationExportList.append(label);
+  }
+  confirmConfigurationExport.disabled = items.length === 0;
+  configurationExportDialog.showModal();
+}
+
+function selectedConfigurationExportIds() {
+  return [...configurationExportList.querySelectorAll("input:checked")]
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
+function buildConfigurationExportPackage(kind, selectedIds) {
+  if (kind === "rules") {
+    const selected = new Set(selectedIds);
+    return {
+      format_version: 1,
+      kind: "rules",
+      exported_at: new Date().toISOString(),
+      rules: ruleLibrary.rules.filter((rule) => selected.has(rule.rule_id)),
+      policies: [],
+    };
+  }
+  const selected = new Set(selectedIds);
+  const policies = policyLibrary.policies.filter((policy) => selected.has(policy.policy_id));
+  const requiredRuleIds = new Set(policies.flatMap((policy) =>
+    Array.isArray(policy.bindings) ? policy.bindings.map((binding) => binding.rule_id) : []));
+  return {
+    format_version: 1,
+    kind: "policies",
+    exported_at: new Date().toISOString(),
+    rules: ruleLibrary.rules.filter((rule) => requiredRuleIds.has(rule.rule_id)),
+    policies,
+  };
+}
+
+function downloadConfigurationPackage(packageValue) {
+  const json = `${JSON.stringify(packageValue, null, 2)}\n`;
+  const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const date = new Date().toISOString().slice(0, 10);
+  link.href = href;
+  link.download = `guardrail-${packageValue.kind}-${date}.json`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(href), 0);
+}
+
+function openConfigurationImport(kind) {
+  if (hasUnsavedRuleDrafts() || hasUnsavedPolicyDraft()) {
+    publishReport("请先保存或放弃当前规则/策略草稿，再导入配置包。", { tone: "warning" });
+    return;
+  }
+  configurationImportKind = kind;
+  pendingConfigurationPackage = null;
+  configurationImportFile.value = "";
+  configurationImportStatus.textContent = "请选择 JSON 文件。";
+  configurationImportPreview.hidden = true;
+  configurationImportPreview.textContent = "";
+  confirmConfigurationImport.disabled = true;
+  configurationImportDialog.showModal();
+}
+
+async function previewConfigurationImport() {
+  const [file] = configurationImportFile.files || [];
+  pendingConfigurationPackage = null;
+  confirmConfigurationImport.disabled = true;
+  configurationImportPreview.hidden = true;
+  if (!file) {
+    configurationImportStatus.textContent = "请选择 JSON 文件。";
+    return;
+  }
+  try {
+    const packageValue = JSON.parse(await file.text());
+    const result = await bridge.apiPost("preview_config_import", {
+      package: packageValue,
+      conflict_mode: configurationImportMode.value,
+    });
+    if (!result?.success) throw new Error(result?.detail || result?.error || "配置包校验失败。");
+    const preview = result.preview;
+    if (preview.kind !== configurationImportKind) {
+      throw new Error(`请选择${configurationImportKind === "rules" ? "规则" : "策略"}配置包。`);
+    }
+    pendingConfigurationPackage = packageValue;
+    const ruleConflicts = Array.isArray(preview.rule_conflicts) ? preview.rule_conflicts.length : 0;
+    const policyConflicts = Array.isArray(preview.policy_conflicts) ? preview.policy_conflicts.length : 0;
+    configurationImportStatus.textContent = "文件校验通过。确认后才会写入配置快照。";
+    const warnings = Array.isArray(preview.warnings) && preview.warnings.length
+      ? ` 警告：${preview.warnings.join("；")}` : "";
+    configurationImportPreview.textContent = `规则 ${preview.rules.length} 条，策略 ${preview.policies.length} 条；规则 ID 冲突 ${ruleConflicts} 个，策略 ID 冲突 ${policyConflicts} 个。${warnings}`;
+    configurationImportPreview.hidden = false;
+    confirmConfigurationImport.disabled = false;
+  } catch (error) {
+    configurationImportStatus.textContent = `无法导入：${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function importConfigurationPackage() {
+  if (!pendingConfigurationPackage || !Number.isInteger(currentRevision)) return;
+  confirmConfigurationImport.disabled = true;
+  try {
+    const result = await bridge.apiPost("import_config_package", {
+      package: pendingConfigurationPackage,
+      conflict_mode: configurationImportMode.value,
+      expected_revision: currentRevision,
+    });
+    if (!result?.success) throw new Error(result?.detail || result?.error || "导入失败。");
+    currentRevision = result.revision;
+    const [rules, policies] = await Promise.all([
+      bridge.apiGet("get_rule_library"), bridge.apiGet("get_policy_library"),
+    ]);
+    applyRuleLibraryPayload(rules);
+    applyPolicyLibraryPayload(policies);
+    configurationImportDialog.close();
+    publishReport(`配置包已导入为 revision ${result.revision}。`);
+    rerenderOverviewIfReady();
+  } catch (error) {
+    configurationImportStatus.textContent = `导入失败：${error instanceof Error ? error.message : String(error)}`;
+    confirmConfigurationImport.disabled = false;
+  }
 }
 
 const systemSettingHintOverrides = {
@@ -5008,6 +5180,27 @@ window.addEventListener("resize", schedulePolicyGraphRender);
 document.addEventListener("visibilitychange", updatePolicyGraphAnimation);
 showRuleLibraryRules.addEventListener("click", () => switchRuleLibrarySection("rules"));
 showSharedConstants.addEventListener("click", () => switchRuleLibrarySection("constants"));
+exportRules.addEventListener("click", () => openConfigurationExport("rules"));
+exportPolicies.addEventListener("click", () => openConfigurationExport("policies"));
+importRules.addEventListener("click", () => openConfigurationImport("rules"));
+importPolicies.addEventListener("click", () => openConfigurationImport("policies"));
+cancelConfigurationExport.addEventListener("click", () => configurationExportDialog.close());
+confirmConfigurationExport.addEventListener("click", () => {
+  const selectedIds = selectedConfigurationExportIds();
+  if (!selectedIds.length) {
+    configurationExportStatus.textContent = "请至少选择一项。";
+    return;
+  }
+  downloadConfigurationPackage(buildConfigurationExportPackage(configurationExportKind, selectedIds));
+  configurationExportDialog.close();
+  publishReport(`已生成 ${selectedIds.length} 项配置的 JSON 导出文件。`);
+});
+cancelConfigurationImport.addEventListener("click", () => configurationImportDialog.close());
+configurationImportFile.addEventListener("change", previewConfigurationImport);
+configurationImportMode.addEventListener("change", () => {
+  if (configurationImportFile.files?.length) previewConfigurationImport();
+});
+confirmConfigurationImport.addEventListener("click", importConfigurationPackage);
 newRule.addEventListener("click", startRuleCreation);
 cancelRuleCreation.addEventListener("click", cancelNewRuleCreation);
 confirmRuleCreation.addEventListener("click", createRule);
