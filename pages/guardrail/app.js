@@ -267,6 +267,7 @@ const templateDescriptions = {
   instruction_override_detector: "指令覆盖检测器",
   poor_quality_detector: "异常低质回复检测器",
   metadata_leakage_detector: "运行时工件泄漏检测器",
+  language_drift_detector: "对话语言漂移检测器",
   sensitive_echo_detector: "风险信号复判",
   contains_request_user_id: "请求者 ID 匹配规则",
   contains_forward: "转发消息检测器",
@@ -1254,7 +1255,7 @@ const supportedTemplatesByRail = {
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
   prompt_rail: new Set(["strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
-  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "poor_quality_detector", "metadata_leakage_detector", "sensitive_echo_detector"]),
+  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "poor_quality_detector", "metadata_leakage_detector", "language_drift_detector", "sensitive_echo_detector"]),
 };
 const inputRedirectTemplates = new Set([
   "plain_keywords",
@@ -1400,6 +1401,22 @@ const componentDefinitions = {
       { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "默认不把围栏中的 traceback 或调用示例当作运行时泄漏候选。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, max_structures: 24, ignore_fenced_code: true }),
+    defaultAction: "observe",
+  },
+  language_drift_detector: {
+    label: "对话语言漂移检测器",
+    description: "从最终请求中的明确回答语言命令或主导文字脚本推断期望，检测整体脚本漂移与连续异脚本文字污染；不要求预设语言，建议交给输出 LLM 旁审作语境裁决。",
+    rails: new Set(["output_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "请求与回复分别使用的最大文本窗口。", type: "integer", default: 12000 },
+      { key: "min_analyzable_chars", label: "最少可分析文字数", hint: "请求或回复达到该自然语言字符数后，才允许形成语言漂移候选。", type: "integer", default: 80 },
+      { key: "dominant_script_ratio", label: "主导脚本比例", hint: "用于确认请求基线、整体输出漂移和局部污染前的主导语言比例。", type: "number", default: 0.7 },
+      { key: "max_baseline_script_ratio", label: "整体漂移时的基线脚本上限", hint: "候选回复若仍保留超过此比例的期望脚本，不作为整体漂移候选。", type: "number", default: 0.2 },
+      { key: "min_foreign_script_run_chars", label: "异脚本连续最小长度", hint: "总体语言合格时，连续达到该长度的非期望文字脚本才形成污染候选。", type: "integer", default: 4 },
+      { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "不把 fenced code 中的多语言示例作为语言漂移证据。", type: "boolean", default: true },
+      { key: "ignore_inline_code", label: "忽略行内代码", hint: "不把反引号包裹的技术 token 或示例作为语言漂移证据。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, min_analyzable_chars: 80, dominant_script_ratio: 0.7, max_baseline_script_ratio: 0.2, min_foreign_script_run_chars: 4, ignore_fenced_code: true, ignore_inline_code: true }),
     defaultAction: "observe",
   },
   sensitive_echo_detector: {

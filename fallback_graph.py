@@ -106,7 +106,12 @@ FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
         requires_output_llm_review=True,
     ),
     FallbackDetectorSpec("__fallback_sensitive_echo", "output_rail", "sensitive_echo_detector"),
-    FallbackDetectorSpec("__fallback_language_drift", "output_rail", "language_drift_detector"),
+    FallbackDetectorSpec(
+        "__fallback_language_drift",
+        "output_rail",
+        "language_drift_detector",
+        requires_output_llm_review=True,
+    ),
     FallbackDetectorSpec("__fallback_prompt_leakage", "output_rail", "prompt_leakage_detector"),
 )
 
@@ -120,6 +125,7 @@ IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
     FALLBACK_DETECTOR_CATALOGUE[4],
     FALLBACK_DETECTOR_CATALOGUE[8],
     FALLBACK_DETECTOR_CATALOGUE[9],
+    FALLBACK_DETECTOR_CATALOGUE[11],
 )
 
 

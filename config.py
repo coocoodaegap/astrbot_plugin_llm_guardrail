@@ -78,6 +78,7 @@ COMPONENT_TEMPLATES["output_rail"].update(
         "poor_quality_detector",
         "metadata_leakage_detector",
         "sensitive_echo_detector",
+        "language_drift_detector",
     }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
@@ -98,6 +99,11 @@ OUTPUT_ACTIONS = {
     "retry_generation",
     "block",
     "sanitize",
+}
+DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
+    "metadata_leakage_detector",
+    "sensitive_echo_detector",
+    "language_drift_detector",
 }
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
@@ -534,6 +540,8 @@ def _normalize_node(
         _normalize_poor_quality_detector(rule_id, config, warnings)
     elif template_key == "metadata_leakage_detector":
         _normalize_metadata_leakage_detector(rule_id, config, warnings)
+    elif template_key == "language_drift_detector":
+        _normalize_language_drift_detector(rule_id, config, warnings)
     elif template_key == "sensitive_echo_detector":
         _normalize_sensitive_echo_detector(rule_id, config, warnings)
         if not config["source_node_ids"]:
@@ -572,12 +580,16 @@ def _normalize_node(
         "instruction_override_detector",
         "poor_quality_detector",
         "metadata_leakage_detector",
+        "language_drift_detector",
         "sensitive_echo_detector",
         *MESSAGE_FACT_TEMPLATES,
     }:
         raw_action = "observe" if (
-            template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
-            and raw_action_on_hit == "default"
+            raw_action_on_hit == "default"
+            and (
+                template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                or template_key in DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES
+            )
         ) else raw_action_on_hit
         action = raw_action
         config["action_on_hit"] = action
@@ -919,6 +931,40 @@ def _normalize_metadata_leakage_detector(
     )
     config["ignore_fenced_code"] = _as_bool(
         config.get("ignore_fenced_code"), True
+    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "observe")) or "observe"
+
+
+def _normalize_language_drift_detector(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize bounded script-drift risk-throttling parameters."""
+
+    config["scan_limit_chars"] = _bounded_int(
+        config.get("scan_limit_chars"), 12000, 256, 100000,
+        rule_id, "scan_limit_chars", warnings,
+    )
+    config["min_analyzable_chars"] = _bounded_int(
+        config.get("min_analyzable_chars"), 80, 8, 10000,
+        rule_id, "min_analyzable_chars", warnings,
+    )
+    config["dominant_script_ratio"] = _bounded_float(
+        config.get("dominant_script_ratio"), 0.7, 0.5, 1.0,
+        rule_id, "dominant_script_ratio", warnings,
+    )
+    config["max_baseline_script_ratio"] = _bounded_float(
+        config.get("max_baseline_script_ratio"), 0.2, 0.0, 0.5,
+        rule_id, "max_baseline_script_ratio", warnings,
+    )
+    config["min_foreign_script_run_chars"] = _bounded_int(
+        config.get("min_foreign_script_run_chars"), 4, 2, 256,
+        rule_id, "min_foreign_script_run_chars", warnings,
+    )
+    config["ignore_fenced_code"] = _as_bool(
+        config.get("ignore_fenced_code"), True
+    )
+    config["ignore_inline_code"] = _as_bool(
+        config.get("ignore_inline_code"), True
     )
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "observe")) or "observe"
 

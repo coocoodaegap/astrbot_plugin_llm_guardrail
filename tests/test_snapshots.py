@@ -319,11 +319,12 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             [
                 "__fallback_poor_quality",
                 "__fallback_metadata_leakage",
+                "__fallback_language_drift",
                 "__fallback_output_or",
                 "__fallback_output_llm_review",
             ],
         )
-        self.assertEqual(output_nodes[3].depend_on, "__fallback_output_or")
+        self.assertEqual(output_nodes[4].depend_on, "__fallback_output_or")
 
     def test_fallback_detector_registry_honors_its_rail_system_switch(self):
         detector = FallbackDetectorSpec(

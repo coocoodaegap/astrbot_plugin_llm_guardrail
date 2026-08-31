@@ -397,6 +397,65 @@ _RUNTIME_ERROR_EXCEPTION_LINE_PATTERN = re.compile(
 _RUNTIME_ERROR_TRACEBACK_FRAME_PATTERN = re.compile(
     rf'^(?:{_PYTHON_TRACEBACK_FRAME_LABEL_ALTERNATION}) ".+", line \d+',
 )
+_LANGUAGE_DIRECTIVE_PREFIXES = tuple(
+    phrase.casefold()
+    for phrase in material_values(
+        CORE_MATERIALS, "language_response_directive", "directive_prefixes",
+    )
+)
+_LANGUAGE_DIRECTIVE_SUFFIXES = tuple(
+    phrase.casefold()
+    for phrase in material_values(
+        CORE_MATERIALS, "language_response_directive", "directive_suffixes",
+    )
+)
+_LANGUAGE_CODE_MARKERS = tuple(
+    marker.casefold()
+    for marker in material_values(
+        CORE_MATERIALS, "language_response_directive", "code_markers",
+    )
+)
+_LANGUAGE_COORDINATION_MARKERS = tuple(
+    marker.casefold()
+    for marker in material_values(
+        CORE_MATERIALS, "language_response_directive", "coordination_markers",
+    )
+)
+_LANGUAGE_SCRIPT_CLASSES = material_values(
+    CORE_MATERIALS, "language_target_scripts", "script_classes",
+)
+_LANGUAGE_TARGET_ALIASES = {
+    script: tuple(
+        alias.casefold()
+        for alias in material_values(
+            CORE_MATERIALS, "language_target_scripts", f"{script}_aliases",
+        )
+    )
+    for script in _LANGUAGE_SCRIPT_CLASSES
+}
+_LANGUAGE_TECHNICAL_TOKENS = material_terms(
+    CORE_MATERIALS, "language_ignored_technical_tokens",
+)
+_LANGUAGE_CODE_MARKER_ALTERNATION = "|".join(
+    re.escape(marker) for marker in _LANGUAGE_CODE_MARKERS
+)
+_LANGUAGE_TECHNICAL_TOKEN_ALTERNATION = "|".join(
+    re.escape(token) for token in _LANGUAGE_TECHNICAL_TOKENS
+)
+_LANGUAGE_CODE_MARKER_PATTERN = re.compile(
+    rf"(?:{_LANGUAGE_CODE_MARKER_ALTERNATION})\s*[:=]\s*$", re.IGNORECASE,
+)
+_LANGUAGE_TECHNICAL_TOKEN_PATTERN = re.compile(
+    rf"(?<![A-Za-z0-9_])(?:{_LANGUAGE_TECHNICAL_TOKEN_ALTERNATION})(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_LANGUAGE_INLINE_CODE_PATTERN = re.compile(r"`[^`\r\n]{0,1024}`")
+_LANGUAGE_QUOTED_TEXT_PATTERN = re.compile(
+    r'(?:"[^"\r\n]{1,512}"|“[^”\r\n]{1,512}”)'
+)
+_LANGUAGE_URL_PATTERN = re.compile(
+    r"\b(?:https?://|www\.)[^\s<>()\[\]{}]{1,2048}", re.IGNORECASE,
+)
 
 MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
@@ -621,6 +680,10 @@ def evaluate_output_detector(
         matched, payload = _evaluate_poor_quality(node.config, text)
     elif node.template_key == "metadata_leakage_detector":
         matched, payload = _evaluate_metadata_leakage(node.config, text)
+    elif node.template_key == "language_drift_detector":
+        matched, payload = _evaluate_language_drift(
+            node.config, context.current_input, text,
+        )
     else:
         raise ValueError(f"unsupported output detector {node.template_key}")
     payload["detector"] = node.template_key
@@ -919,6 +982,292 @@ def _evaluate_metadata_leakage(config: dict, text: str) -> tuple[bool, dict]:
         "structure_scan_limited": structure_scan_limited,
         "scan_truncated": truncated,
     }
+
+
+def _evaluate_language_drift(
+    config: dict, request_text: str, response_text: str,
+) -> tuple[bool, dict]:
+    """Find strong script drift without treating language quality as a verdict."""
+
+    request_scanned, request_truncated = _normalized_window(
+        request_text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    response_scanned, response_truncated = _normalized_window(
+        response_text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    intent_text = _language_intent_text(request_scanned, config)
+    explicit_script, explicit_candidate_count = _explicit_language_script(intent_text)
+    request_analysis, request_ignored_segments = _language_analysis_text(
+        request_scanned, config,
+    )
+    response_analysis, response_ignored_segments = _language_analysis_text(
+        response_scanned, config,
+    )
+    request_counts = _language_script_counts(request_analysis)
+    response_counts = _language_script_counts(response_analysis)
+    request_analyzable_chars = sum(request_counts.values())
+    response_analyzable_chars = sum(response_counts.values())
+    request_primary, request_primary_ratio = _language_primary_script(request_counts)
+    response_primary, response_primary_ratio = _language_primary_script(response_counts)
+
+    minimum = int(config["min_analyzable_chars"])
+    baseline_script = ""
+    expectation_source = "unavailable"
+    if explicit_script:
+        baseline_script = explicit_script
+        expectation_source = "explicit"
+    elif (
+        request_analyzable_chars >= minimum
+        and request_primary
+        and request_primary_ratio >= float(config["dominant_script_ratio"])
+    ):
+        baseline_script = request_primary
+        expectation_source = "inferred"
+
+    baseline_count = _language_baseline_count(response_counts, baseline_script)
+    baseline_ratio = baseline_count / max(1, response_analyzable_chars)
+    output_is_foreign = bool(
+        response_primary
+        and not _language_script_is_compatible(baseline_script, response_primary)
+    )
+    dominant_drift = bool(
+        baseline_script
+        and response_analyzable_chars >= minimum
+        and output_is_foreign
+        and response_primary_ratio >= float(config["dominant_script_ratio"])
+        and baseline_ratio <= float(config["max_baseline_script_ratio"])
+    )
+    foreign_run_count = 0
+    if (
+        baseline_script
+        and response_analyzable_chars >= minimum
+        and baseline_ratio >= float(config["dominant_script_ratio"])
+    ):
+        foreign_run_count = _foreign_script_run_count(
+            response_analysis,
+            baseline_script,
+            int(config["min_foreign_script_run_chars"]),
+        )
+
+    reason_codes: list[str] = []
+    if dominant_drift:
+        reason_codes.append("dominant_script_drift")
+    if foreign_run_count:
+        reason_codes.append("foreign_script_contamination")
+    score = 0
+    if dominant_drift:
+        score = max(score, 85)
+    if foreign_run_count:
+        score = max(score, min(80, 65 + min(foreign_run_count, 3) * 5))
+    if len(reason_codes) > 1:
+        score = min(100, score + 10)
+
+    return bool(reason_codes), {
+        "reason_codes": reason_codes,
+        "score": score,
+        "expectation_source": expectation_source,
+        "request_script_class": request_primary or "unknown",
+        "output_script_class": response_primary or "unknown",
+        "explicit_language_candidate_count": explicit_candidate_count,
+        "request_analyzable_char_count": request_analyzable_chars,
+        "output_analyzable_char_count": response_analyzable_chars,
+        "baseline_script_ratio_bucket": _ratio_bucket(baseline_ratio),
+        "dominant_script_ratio_bucket": _ratio_bucket(response_primary_ratio),
+        "foreign_script_run_count": foreign_run_count,
+        "ignored_segment_count": request_ignored_segments + response_ignored_segments,
+        "request_raw_char_count": len(request_text or ""),
+        "output_raw_char_count": len(response_text or ""),
+        "scan_truncated": request_truncated or response_truncated,
+    }
+
+
+def _explicit_language_script(text: str) -> tuple[str, int]:
+    """Return one unambiguous, directive-qualified language script, if any."""
+
+    normalized = text.casefold()
+    matched_scripts: list[str] = []
+    candidate_count = 0
+    for script, aliases in _LANGUAGE_TARGET_ALIASES.items():
+        for alias in aliases:
+            for position in _semantic_term_positions(normalized, (alias,)):
+                end = position + len(alias)
+                before = normalized[max(0, position - 80):position].rstrip()
+                after = normalized[end:end + 48].lstrip()
+                prefix_matches = any(
+                    before.endswith(prefix) for prefix in _LANGUAGE_DIRECTIVE_PREFIXES
+                )
+                suffix_matches = any(
+                    after.startswith(suffix) for suffix in _LANGUAGE_DIRECTIVE_SUFFIXES
+                )
+                code_marker_matches = bool(
+                    alias.isascii()
+                    and len(alias) <= 3
+                    and _LANGUAGE_CODE_MARKER_PATTERN.search(before)
+                )
+                if not (prefix_matches or suffix_matches or code_marker_matches):
+                    continue
+                coordinated_scripts = _coordinated_language_scripts(normalized, end)
+                candidate_count = min(
+                    8, candidate_count + 1 + len(coordinated_scripts),
+                )
+                matched_scripts.append(script)
+                matched_scripts.extend(coordinated_scripts)
+    unique_scripts = tuple(dict.fromkeys(matched_scripts))
+    if len(unique_scripts) == 1:
+        return unique_scripts[0], candidate_count
+    return "", candidate_count
+
+
+def _coordinated_language_scripts(text: str, start: int) -> list[str]:
+    """Collect immediately coordinated language targets as an ambiguity guard."""
+
+    following = text[start:start + 48]
+    scripts: list[str] = []
+    for script, aliases in _LANGUAGE_TARGET_ALIASES.items():
+        for alias in aliases:
+            for position in _semantic_term_positions(following, (alias,)):
+                marker = following[:position].strip()
+                if marker in _LANGUAGE_COORDINATION_MARKERS:
+                    scripts.append(script)
+    return scripts
+
+
+def _language_analysis_text(text: str, config: dict) -> tuple[str, int]:
+    """Remove known non-natural-language segments from a bounded scan window."""
+
+    analysis = text
+    ignored_segments = 0
+    if bool(config["ignore_fenced_code"]):
+        fenced_line_count = sum(
+            1
+            for line in analysis.splitlines()
+            if line.lstrip().startswith(("```", "~~~"))
+        )
+        ignored_segments += fenced_line_count // 2
+        analysis = _without_fenced_code(analysis)
+    if bool(config["ignore_inline_code"]):
+        analysis, count = _LANGUAGE_INLINE_CODE_PATTERN.subn(" ", analysis)
+        ignored_segments += count
+    analysis, count = _LANGUAGE_URL_PATTERN.subn(" ", analysis)
+    ignored_segments += count
+    analysis, count = _LANGUAGE_TECHNICAL_TOKEN_PATTERN.subn(" ", analysis)
+    ignored_segments += count
+    ignored_segments += sum(
+        1
+        for line in analysis.splitlines()
+        if line.strip() and not any(_language_char_script(char) for char in line)
+    )
+    return analysis, ignored_segments
+
+
+def _language_intent_text(text: str, config: dict) -> str:
+    """Discard quoted and code examples before extracting a response directive."""
+
+    intent_text = text
+    if bool(config["ignore_fenced_code"]):
+        intent_text = _without_fenced_code(intent_text)
+    if bool(config["ignore_inline_code"]):
+        intent_text = _LANGUAGE_INLINE_CODE_PATTERN.sub(" ", intent_text)
+    return _LANGUAGE_QUOTED_TEXT_PATTERN.sub(" ", intent_text)
+
+
+def _language_script_counts(text: str) -> dict[str, int]:
+    counts = {script: 0 for script in _LANGUAGE_SCRIPT_CLASSES}
+    for char in text:
+        script = _language_char_script(char)
+        if script in counts:
+            counts[script] += 1
+    return counts
+
+
+def _language_char_script(char: str) -> str:
+    codepoint = ord(char)
+    if 0x3040 <= codepoint <= 0x30FF or 0x31F0 <= codepoint <= 0x31FF:
+        return "japanese"
+    if (
+        0x3400 <= codepoint <= 0x4DBF
+        or 0x4E00 <= codepoint <= 0x9FFF
+        or 0xF900 <= codepoint <= 0xFAFF
+    ):
+        return "han"
+    if 0xAC00 <= codepoint <= 0xD7AF or 0x1100 <= codepoint <= 0x11FF:
+        return "hangul"
+    if 0x0400 <= codepoint <= 0x052F:
+        return "cyrillic"
+    if 0x0600 <= codepoint <= 0x06FF or 0x0750 <= codepoint <= 0x077F:
+        return "arabic"
+    if char.isalpha() and "LATIN" in unicodedata.name(char, ""):
+        return "latin"
+    return ""
+
+
+def _language_primary_script(counts: dict[str, int]) -> tuple[str, float]:
+    total = sum(counts.values())
+    if not total:
+        return "", 0.0
+    candidates = dict(counts)
+    if counts.get("japanese", 0) >= 2:
+        candidates["japanese"] = counts["japanese"] + counts.get("han", 0)
+        candidates["han"] = 0
+    script, amount = max(candidates.items(), key=lambda item: item[1])
+    return (script, amount / total) if amount else ("", 0.0)
+
+
+def _language_baseline_count(counts: dict[str, int], baseline_script: str) -> int:
+    if not baseline_script:
+        return 0
+    if baseline_script == "japanese":
+        return counts.get("japanese", 0) + counts.get("han", 0)
+    if baseline_script == "han" and counts.get("japanese", 0) >= 2:
+        return 0
+    return counts.get(baseline_script, 0)
+
+
+def _language_script_is_compatible(baseline_script: str, script: str) -> bool:
+    return bool(
+        baseline_script
+        and (baseline_script == script or (baseline_script == "japanese" and script == "han"))
+    )
+
+
+def _foreign_script_run_count(
+    text: str, baseline_script: str, minimum_length: int,
+) -> int:
+    count = 0
+    run_script = ""
+    run_length = 0
+
+    def finish_run() -> None:
+        nonlocal count, run_script, run_length
+        if run_script and run_length >= minimum_length:
+            count += 1
+        run_script = ""
+        run_length = 0
+
+    for char in text:
+        script = _language_char_script(char)
+        if not script or _language_script_is_compatible(baseline_script, script):
+            finish_run()
+        elif script == run_script:
+            run_length += 1
+        else:
+            finish_run()
+            run_script = script
+            run_length = 1
+    finish_run()
+    return count
+
+
+def _ratio_bucket(ratio: float) -> str:
+    if ratio >= 0.8:
+        return "80_100"
+    if ratio >= 0.6:
+        return "60_79"
+    if ratio >= 0.4:
+        return "40_59"
+    if ratio >= 0.2:
+        return "20_39"
+    return "0_19"
 
 
 def _python_traceback_spans(text: str) -> list[tuple[int, int]]:

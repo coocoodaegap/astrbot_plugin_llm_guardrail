@@ -23,7 +23,7 @@ from core_materials import (
 class CoreMaterialTests(unittest.TestCase):
     def test_builtin_materials_are_valid_and_immutable(self):
         self.assertEqual(validate_core_material_set(CORE_MATERIALS), ())
-        self.assertEqual(CORE_MATERIALS.version, "core-materials-v5")
+        self.assertEqual(CORE_MATERIALS.version, "core-materials-v6")
         self.assertIsInstance(CORE_MATERIALS.entries, tuple)
         self.assertEqual(
             material_terms(CORE_MATERIALS, "intent_override_operation"),
@@ -64,6 +64,12 @@ class CoreMaterialTests(unittest.TestCase):
                 CORE_MATERIALS, "runtime_error_envelope", "header_labels",
             ),
             ("error", "exception", "错误"),
+        )
+        self.assertEqual(
+            material_values(
+                CORE_MATERIALS, "language_target_scripts", "script_classes",
+            ),
+            ("latin", "han", "japanese", "hangul", "cyrillic", "arabic"),
         )
 
     def test_builtin_materials_link_to_real_regression_tests(self):

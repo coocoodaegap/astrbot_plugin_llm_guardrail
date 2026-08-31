@@ -697,7 +697,7 @@ class PipelineTests(unittest.TestCase):
         result = traceback_context.results["metadata_guard"]
         self.assertTrue(result.matched)
         self.assertEqual(result.signal.payload["reason_codes"], ["traceback_envelope"])
-        self.assertEqual(result.signal.payload["core_material_version"], "core-materials-v5")
+        self.assertEqual(result.signal.payload["core_material_version"], "core-materials-v6")
         self.assertNotIn("worker.py", str(result.signal.payload))
 
         tool_response = FakeResponse(
@@ -741,6 +741,7 @@ class PipelineTests(unittest.TestCase):
             [
                 "__fallback_poor_quality",
                 "__fallback_metadata_leakage",
+                "__fallback_language_drift",
                 "__fallback_output_or",
                 "__fallback_output_llm_review",
             ],
@@ -763,6 +764,82 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(context.results["__fallback_output_llm_review"].matched)
         self.assertFalse(context.output_blocked)
         self.assertIn("traceback_envelope", adapter_context.llm_calls[0]["prompt"])
+
+    def test_language_drift_component_compiles_and_runs_through_output_pipeline(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition(
+                    "language_detector_policy",
+                    "Language detector policy",
+                    components=(
+                        PolicyComponent(
+                            "language_guard",
+                            "language_drift_detector",
+                            "output_rail",
+                        ),
+                    ),
+                    node_order=("language_guard",),
+                ),
+            ),
+            active_policy_id="language_detector_policy",
+        )
+        raw, validation = compile_policy_to_runtime_config({}, library)
+        cfg = normalize_config(raw)
+        event = FakeEvent("请用中文回答。")
+        pipeline = GuardrailPipeline(cfg)
+        asyncio.run(pipeline.run_request(event, FakeRequest("请用中文回答。")))
+
+        context = asyncio.run(
+            pipeline.run_response(
+                event,
+                FakeResponse("This answer is entirely in English instead. " * 8),
+            )
+        )
+
+        result = context.results["language_guard"]
+        self.assertTrue(validation.valid)
+        self.assertTrue(result.matched)
+        self.assertEqual(result.action_on_hit, "observe")
+        self.assertIn("dominant_script_drift", result.signal.payload["reason_codes"])
+        self.assertFalse(context.output_blocked)
+
+    def test_language_drift_joins_fallback_only_with_output_llm_review(self):
+        without_review = build_fallback_runtime_config({})
+        self.assertNotIn(
+            "__fallback_language_drift",
+            [node.node_id for node in without_review.rails["output_rail"].nodes],
+        )
+        with_review = build_fallback_runtime_config(
+            {"enable_output_llm_review_in_fallback_policy": True}
+        )
+        self.assertEqual(
+            [node.node_id for node in with_review.rails["output_rail"].nodes],
+            [
+                "__fallback_poor_quality",
+                "__fallback_metadata_leakage",
+                "__fallback_language_drift",
+                "__fallback_output_or",
+                "__fallback_output_llm_review",
+            ],
+        )
+
+        event = FakeEvent("请用中文回答。")
+        event.set_extra("_llm_guardrail_request_origin", "请用中文回答。")
+        adapter_context = FakeContext()
+        adapter_context.llm_responses = ['{"matched": false, "payload": {}}']
+        context = asyncio.run(
+            GuardrailPipeline(with_review, AstrBotAdapter(adapter_context)).run_response(
+                event,
+                FakeResponse("This answer is entirely in English instead. " * 8),
+            )
+        )
+
+        self.assertTrue(context.results["__fallback_language_drift"].matched)
+        self.assertTrue(context.results["__fallback_output_or"].matched)
+        self.assertFalse(context.results["__fallback_output_llm_review"].matched)
+        self.assertFalse(context.output_blocked)
+        self.assertIn("language drift", adapter_context.llm_calls[0]["prompt"])
+        self.assertIn("dominant_script_drift", adapter_context.llm_calls[0]["prompt"])
 
     def test_input_fallback_llm_receives_only_structural_signal_summary(self):
         cfg = build_fallback_runtime_config(

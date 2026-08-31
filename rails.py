@@ -698,6 +698,7 @@ class GuardrailPipeline:
         elif rule.template_key in {
             "poor_quality_detector",
             "metadata_leakage_detector",
+            "language_drift_detector",
         }:
             execution = NodeExecution(
                 result=evaluate_output_detector(rule, context, inspected_text)
