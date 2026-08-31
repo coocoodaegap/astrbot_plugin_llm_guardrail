@@ -699,6 +699,7 @@ class GuardrailPipeline:
             "format_violation_detector",
             "poor_quality_detector",
             "metadata_leakage_detector",
+            "refusal_leakage_detector",
             "language_drift_detector",
         }:
             execution = NodeExecution(

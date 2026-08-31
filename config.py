@@ -78,6 +78,7 @@ COMPONENT_TEMPLATES["output_rail"].update(
         "format_violation_detector",
         "poor_quality_detector",
         "metadata_leakage_detector",
+        "refusal_leakage_detector",
         "sensitive_echo_detector",
         "language_drift_detector",
     }
@@ -104,6 +105,7 @@ OUTPUT_ACTIONS = {
 DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "format_violation_detector",
     "metadata_leakage_detector",
+    "refusal_leakage_detector",
     "sensitive_echo_detector",
     "language_drift_detector",
 }
@@ -544,6 +546,8 @@ def _normalize_node(
         _normalize_metadata_leakage_detector(rule_id, config, warnings)
     elif template_key == "format_violation_detector":
         _normalize_format_violation_detector(rule_id, config, warnings)
+    elif template_key == "refusal_leakage_detector":
+        _normalize_refusal_leakage_detector(rule_id, config, warnings)
     elif template_key == "language_drift_detector":
         _normalize_language_drift_detector(rule_id, config, warnings)
     elif template_key == "sensitive_echo_detector":
@@ -585,6 +589,7 @@ def _normalize_node(
         "poor_quality_detector",
         "metadata_leakage_detector",
         "format_violation_detector",
+        "refusal_leakage_detector",
         "language_drift_detector",
         "sensitive_echo_detector",
         *MESSAGE_FACT_TEMPLATES,
@@ -955,6 +960,29 @@ def _normalize_format_violation_detector(
     )
     config["allow_surrounding_whitespace"] = _as_bool(
         config.get("allow_surrounding_whitespace"), True
+    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "observe")) or "observe"
+
+
+def _normalize_refusal_leakage_detector(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize bounded internal-boundary refusal candidate checks."""
+
+    config["scan_limit_chars"] = _bounded_int(
+        config.get("scan_limit_chars"), 12000, 256, 100000,
+        rule_id, "scan_limit_chars", warnings,
+    )
+    config["max_relation_gap_chars"] = _bounded_int(
+        config.get("max_relation_gap_chars"), 160, 8, 2048,
+        rule_id, "max_relation_gap_chars", warnings,
+    )
+    config["min_evidence_families"] = _bounded_int(
+        config.get("min_evidence_families"), 2, 2, 3,
+        rule_id, "min_evidence_families", warnings,
+    )
+    config["ignore_fenced_code"] = _as_bool(
+        config.get("ignore_fenced_code"), True
     )
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "observe")) or "observe"
 

@@ -51,8 +51,9 @@ FALLBACK_OUTPUT_LLM_REVIEW_PROMPT = (
     "signals are only candidates, not verdicts. Return matched=true only when "
     "the candidate should clearly be withheld or regenerated because it has a "
     "detected generation failure, violates an explicit output contract, exposes an "
-    "unrequested runtime artifact, or materially drifts from a clearly requested "
-    "language. Do not use this review for general content moderation, factual "
+    "unrequested runtime artifact, explains a refusal through protected internal "
+    "boundaries, or materially drifts from a clearly requested language. Do not use "
+    "this review for general content moderation, factual "
     "correctness, style preferences, or ordinary short answers. Legitimate code, "
     "JSON, logs, stack traces, quotations, translations, and bilingual content "
     "are not failures merely because of their form. If context is incomplete or "
@@ -65,6 +66,7 @@ FALLBACK_OUTPUT_LLM_REVIEW_TEMPLATE = (
     "- poor generation quality: ${__fallback_poor_quality.reason_codes}\n"
     "- format violation: ${__fallback_format_violation.reason_codes}\n"
     "- runtime metadata leakage: ${__fallback_metadata_leakage.reason_codes}\n"
+    "- refusal with internal-boundary explanation: ${__fallback_refusal_leakage.reason_codes}\n"
     "- language drift: ${__fallback_language_drift.reason_codes}"
 )
 
@@ -117,6 +119,12 @@ FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
         "language_drift_detector",
         requires_output_llm_review=True,
     ),
+    FallbackDetectorSpec(
+        "__fallback_refusal_leakage",
+        "output_rail",
+        "refusal_leakage_detector",
+        requires_output_llm_review=True,
+    ),
     FallbackDetectorSpec("__fallback_prompt_leakage", "output_rail", "prompt_leakage_detector"),
 )
 
@@ -132,6 +140,7 @@ IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
     FALLBACK_DETECTOR_CATALOGUE[8],
     FALLBACK_DETECTOR_CATALOGUE[9],
     FALLBACK_DETECTOR_CATALOGUE[11],
+    FALLBACK_DETECTOR_CATALOGUE[12],
 )
 
 

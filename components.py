@@ -104,6 +104,7 @@ INPUT_DETECTOR_TEMPLATES = {
 OUTPUT_DETECTOR_TEMPLATES = {
     "poor_quality_detector",
     "metadata_leakage_detector",
+    "refusal_leakage_detector",
 }
 
 _MARKDOWN_IMAGE_PREFIX_PATTERN = re.compile(r"!\[[^\]\r\n]{0,120}\]\(\s*$")
@@ -516,6 +517,12 @@ _FORMAT_SELF_DIRECTIVE_TERMS = frozenset(
 )
 _MARKDOWN_LINK_PATTERN = re.compile(r"!?(?:\[[^\]\r\n]{1,256}\])\([^\)\r\n]{1,1024}\)")
 _MARKDOWN_LIST_PATTERN = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+_REFUSAL_STANCE_TERMS = material_terms(CORE_MATERIALS, "refusal_response_stance")
+_REFUSAL_BOUNDARY_TERMS = material_terms(
+    CORE_MATERIALS, "refusal_protected_boundary",
+)
+_REFUSAL_CAUSAL_TERMS = material_terms(CORE_MATERIALS, "refusal_causal_connector")
+_REFUSAL_SENTENCE_BREAK_PATTERN = re.compile(r"[.!?。！？\r\n]")
 
 MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
@@ -748,6 +755,8 @@ def evaluate_output_detector(
         matched, payload = _evaluate_format_violation(
             node.config, context.current_input, text,
         )
+    elif node.template_key == "refusal_leakage_detector":
+        matched, payload = _evaluate_refusal_leakage(node.config, text)
     else:
         raise ValueError(f"unsupported output detector {node.template_key}")
     payload["detector"] = node.template_key
@@ -1221,6 +1230,156 @@ def _evaluate_format_violation(
         "output_raw_char_count": len(response_text or ""),
         "scan_truncated": request_truncated or response_truncated,
     }
+
+
+def _evaluate_refusal_leakage(config: dict, text: str) -> tuple[bool, dict]:
+    """Find a bounded refusal explanation of a protected internal boundary."""
+
+    scanned, truncated = _normalized_window(
+        text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    analysis_text = scanned
+    if bool(config["ignore_fenced_code"]):
+        analysis_text = _without_fenced_code(analysis_text)
+    # A quotation is commonly a teaching, reporting, or translation example;
+    # it is not this assistant's refusal explanation.
+    analysis_text = _LANGUAGE_QUOTED_TEXT_PATTERN.sub(" ", analysis_text)
+    normalized = analysis_text.casefold()
+    refusal_spans = _refusal_term_spans(normalized, _REFUSAL_STANCE_TERMS)
+    boundary_spans = _refusal_term_spans(normalized, _REFUSAL_BOUNDARY_TERMS)
+    causal_spans = _refusal_term_spans(normalized, _REFUSAL_CAUSAL_TERMS)
+    relations = _refusal_relations(
+        normalized,
+        refusal_spans,
+        boundary_spans,
+        causal_spans,
+        int(config["max_relation_gap_chars"]),
+    )
+    best_relation = max(
+        relations,
+        key=lambda item: (item[0], -item[1]),
+        default=None,
+    )
+    evidence_family_count = best_relation[0] if best_relation else 0
+    relation_gap = best_relation[1] if best_relation else None
+    matched = bool(
+        best_relation
+        and evidence_family_count >= int(config["min_evidence_families"])
+    )
+    score = 0
+    if matched:
+        score = 90 if evidence_family_count >= 3 else 80
+        score = min(100, score + min(max(0, len(relations) - 1), 2) * 5)
+
+    return matched, {
+        "reason_codes": ["refusal_policy_exposure"] if matched else [],
+        "score": score,
+        "evidence_family_count": evidence_family_count,
+        "refusal_evidence_count": len(refusal_spans),
+        "boundary_evidence_count": len(boundary_spans),
+        "causal_evidence_count": len(causal_spans),
+        "relation_candidate_count": len(relations),
+        "relation_gap_bucket": _refusal_relation_gap_bucket(
+            relation_gap, int(config["max_relation_gap_chars"]),
+        ),
+        "raw_char_count": len(text or ""),
+        "scanned_char_count": len(scanned),
+        "scan_truncated": truncated,
+    }
+
+
+def _refusal_term_spans(
+    text: str, terms: tuple[str, ...],
+) -> list[tuple[int, int]]:
+    """Return the longest non-overlapping material matches in stable order."""
+
+    matches = sorted(
+        (
+            (position, position + len(term.casefold()))
+            for term in terms
+            for position in _semantic_term_positions(text, (term.casefold(),))
+        ),
+        key=lambda item: (item[0], -(item[1] - item[0])),
+    )
+    spans: list[tuple[int, int]] = []
+    for start, end in matches:
+        if any(start < other_end and end > other_start for other_start, other_end in spans):
+            continue
+        spans.append((start, end))
+    return spans
+
+
+def _refusal_relations(
+    text: str,
+    refusal_spans: list[tuple[int, int]],
+    boundary_spans: list[tuple[int, int]],
+    causal_spans: list[tuple[int, int]],
+    maximum_gap: int,
+) -> list[tuple[int, int]]:
+    """Return relation evidence-family counts and anchor gaps without text."""
+
+    relations: list[tuple[int, int]] = []
+    for refusal_start, refusal_end in refusal_spans:
+        for boundary_start, boundary_end in boundary_spans:
+            gap = _span_gap(
+                refusal_start,
+                refusal_end,
+                boundary_start,
+                boundary_end,
+            )
+            if gap > maximum_gap:
+                continue
+            relation_start = min(refusal_start, boundary_start)
+            relation_end = max(refusal_end, boundary_end)
+            same_sentence = _REFUSAL_SENTENCE_BREAK_PATTERN.search(
+                text[relation_start:relation_end]
+            ) is None
+            if same_sentence:
+                sentence_start = _refusal_sentence_start(text, relation_start)
+                sentence_end = _refusal_sentence_end(text, relation_end)
+                causal_linked = any(
+                    causal_start >= sentence_start and causal_end <= sentence_end
+                    for causal_start, causal_end in causal_spans
+                )
+            else:
+                causal_linked = any(
+                    causal_start <= relation_end and causal_end >= relation_start
+                    for causal_start, causal_end in causal_spans
+                )
+            if not (same_sentence or causal_linked):
+                continue
+            relations.append((2 + int(causal_linked), gap))
+    return relations
+
+
+def _refusal_sentence_start(text: str, position: int) -> int:
+    latest = -1
+    for match in _REFUSAL_SENTENCE_BREAK_PATTERN.finditer(text, 0, position):
+        latest = match.end()
+    return latest
+
+
+def _refusal_sentence_end(text: str, position: int) -> int:
+    match = _REFUSAL_SENTENCE_BREAK_PATTERN.search(text, position)
+    return match.start() if match else len(text)
+
+
+def _span_gap(first_start: int, first_end: int, second_start: int, second_end: int) -> int:
+    if first_end < second_start:
+        return second_start - first_end
+    if second_end < first_start:
+        return first_start - second_end
+    return 0
+
+
+def _refusal_relation_gap_bucket(gap: int | None, maximum_gap: int) -> str:
+    if gap is None:
+        return "none"
+    if gap <= 8:
+        return "adjacent"
+    if gap <= min(32, maximum_gap):
+        return "near"
+    return "within_limit"
 
 
 def _extract_format_contracts(

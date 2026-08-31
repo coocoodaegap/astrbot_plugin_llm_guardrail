@@ -50,7 +50,7 @@ class PoorQualityDetectorTests(unittest.TestCase):
                 result = evaluate_output_detector(node, context, text)
 
                 self.assertEqual(result.matched, expected_match)
-                self.assertIn("core-materials-v7", str(result.metadata))
+                self.assertIn("core-materials-v8", str(result.metadata))
 
     def test_detects_clear_generation_failures_without_returning_text(self):
         samples = {
@@ -150,7 +150,7 @@ class LanguageDriftDetectorTests(unittest.TestCase):
                     tuple(result.metadata["reason_codes"]), expected_codes,
                 )
                 self.assertEqual(result.metadata["expectation_source"], "explicit")
-                self.assertEqual(result.metadata["core_material_version"], "core-materials-v7")
+                self.assertEqual(result.metadata["core_material_version"], "core-materials-v8")
                 self.assertNotIn(response, str(result.metadata))
 
     def test_uses_an_unambiguous_inferred_baseline_and_ignores_technical_tokens(self):
@@ -300,7 +300,7 @@ class FormatViolationDetectorTests(unittest.TestCase):
                 self.assertEqual(
                     tuple(result.metadata["reason_codes"]), expected_codes,
                 )
-                self.assertEqual(result.metadata["core_material_version"], "core-materials-v7")
+                self.assertEqual(result.metadata["core_material_version"], "core-materials-v8")
                 self.assertNotIn(request, str(result.metadata))
                 self.assertNotIn(response, str(result.metadata))
 
@@ -364,6 +364,109 @@ class FormatViolationDetectorTests(unittest.TestCase):
         self.assertEqual(node.config["scan_limit_chars"], 12000)
         self.assertEqual(node.config["max_contract_candidates"], 8)
         self.assertFalse(node.config["allow_surrounding_whitespace"])
+        self.assertEqual(node.config["action_on_hit"], "default")
+        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+
+
+class RefusalLeakageDetectorTests(unittest.TestCase):
+    def test_refusal_leakage_materials_preserve_current_boundaries(self):
+        cases = (
+            (
+                "I cannot provide that because my system instructions are private.",
+                True,
+            ),
+            ("我无法提供，因为这涉及内部安全策略。", True),
+            ("I cannot disclose my developer instructions.", True),
+            ("I cannot help with that request.", False),
+            ("I cannot help because it could cause harm.", False),
+            ("System instructions are a prompt-design concept.", False),
+            ('The quoted example says "I cannot disclose my system prompt."', False),
+            (
+                "```text\nI cannot disclose my system prompt because it is private.\n```",
+                False,
+            ),
+        )
+        for response, expected_match in cases:
+            with self.subTest(response=response):
+                node, context = _output_node(
+                    "refusal_leakage_detector", {}, "request", response,
+                )
+                result = evaluate_output_detector(node, context, response)
+
+                self.assertEqual(result.matched, expected_match)
+                self.assertEqual(
+                    result.metadata["reason_codes"],
+                    ["refusal_policy_exposure"] if expected_match else [],
+                )
+                self.assertEqual(result.metadata["core_material_version"], "core-materials-v8")
+                self.assertNotIn(response, str(result.metadata))
+
+    def test_relation_window_and_evidence_threshold_are_configurable(self):
+        two_family_response = "I cannot disclose my system instructions."
+        default_node, default_context = _output_node(
+            "refusal_leakage_detector", {}, "request", two_family_response,
+        )
+        strict_node, strict_context = _output_node(
+            "refusal_leakage_detector",
+            {"min_evidence_families": 3},
+            "request",
+            two_family_response,
+        )
+        self.assertTrue(
+            evaluate_output_detector(default_node, default_context, two_family_response).matched
+        )
+        self.assertFalse(
+            evaluate_output_detector(strict_node, strict_context, two_family_response).matched
+        )
+
+        three_family_response = (
+            "Because of my system instructions, I cannot provide that."
+        )
+        causal_node, causal_context = _output_node(
+            "refusal_leakage_detector",
+            {"min_evidence_families": 3},
+            "request",
+            three_family_response,
+        )
+        self.assertTrue(
+            evaluate_output_detector(causal_node, causal_context, three_family_response).matched
+        )
+
+        distant_response = "I cannot comply " + ("x" * 180) + " system instructions"
+        bounded_node, bounded_context = _output_node(
+            "refusal_leakage_detector", {}, "request", distant_response,
+        )
+        expanded_node, expanded_context = _output_node(
+            "refusal_leakage_detector",
+            {"max_relation_gap_chars": 256},
+            "request",
+            distant_response,
+        )
+        self.assertFalse(
+            evaluate_output_detector(bounded_node, bounded_context, distant_response).matched
+        )
+        self.assertTrue(
+            evaluate_output_detector(expanded_node, expanded_context, distant_response).matched
+        )
+
+    def test_normalizes_all_public_parameters_and_rejects_sanitize(self):
+        node, _context = _output_node(
+            "refusal_leakage_detector",
+            {
+                "scan_limit_chars": 1,
+                "max_relation_gap_chars": 1,
+                "min_evidence_families": 99,
+                "ignore_fenced_code": False,
+                "action_on_hit": "sanitize",
+            },
+            "request",
+            "I cannot disclose my system instructions.",
+        )
+
+        self.assertEqual(node.config["scan_limit_chars"], 12000)
+        self.assertEqual(node.config["max_relation_gap_chars"], 160)
+        self.assertEqual(node.config["min_evidence_families"], 2)
+        self.assertFalse(node.config["ignore_fenced_code"])
         self.assertEqual(node.config["action_on_hit"], "default")
         self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
 

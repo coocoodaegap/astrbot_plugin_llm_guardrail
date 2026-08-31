@@ -268,6 +268,7 @@ const templateDescriptions = {
   format_violation_detector: "输出格式违约检测器",
   poor_quality_detector: "异常低质回复检测器",
   metadata_leakage_detector: "运行时工件泄漏检测器",
+  refusal_leakage_detector: "拒答内部边界泄漏检测器",
   language_drift_detector: "对话语言漂移检测器",
   sensitive_echo_detector: "风险信号复判",
   contains_request_user_id: "请求者 ID 匹配规则",
@@ -1256,7 +1257,7 @@ const supportedTemplatesByRail = {
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
   prompt_rail: new Set(["strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
-  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "format_violation_detector", "poor_quality_detector", "metadata_leakage_detector", "language_drift_detector", "sensitive_echo_detector"]),
+  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "format_violation_detector", "poor_quality_detector", "metadata_leakage_detector", "refusal_leakage_detector", "language_drift_detector", "sensitive_echo_detector"]),
 };
 const inputRedirectTemplates = new Set([
   "plain_keywords",
@@ -1414,6 +1415,19 @@ const componentDefinitions = {
       { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "默认不把围栏中的 traceback 或调用示例当作运行时泄漏候选。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, max_structures: 24, ignore_fenced_code: true }),
+    defaultAction: "observe",
+  },
+  refusal_leakage_detector: {
+    label: "拒答内部边界泄漏检测器",
+    description: "识别拒答同时解释 system、developer、tool 指令或其他内部边界的风险候选；普通拒答和一般安全说明不会单独命中，建议由输出 LLM 旁审结合语境裁决。",
+    rails: new Set(["output_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "对候选回复使用的最大文本窗口。", type: "integer", default: 12000 },
+      { key: "max_relation_gap_chars", label: "拒答与边界最大关系距离", hint: "拒答姿态和内部边界锚点相距不超过该字符数时，才作为同一说明关系评估。", type: "integer", default: 160 },
+      { key: "min_evidence_families", label: "最少证据族数", hint: "默认要求拒答和内部边界两类；设为 3 时还要求明确的因果或依据连接词。", type: "integer", default: 2 },
+      { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "默认不把代码或教学示例中的拒答文本当作候选。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, max_relation_gap_chars: 160, min_evidence_families: 2, ignore_fenced_code: true }),
     defaultAction: "observe",
   },
   language_drift_detector: {

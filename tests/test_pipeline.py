@@ -697,7 +697,7 @@ class PipelineTests(unittest.TestCase):
         result = traceback_context.results["metadata_guard"]
         self.assertTrue(result.matched)
         self.assertEqual(result.signal.payload["reason_codes"], ["traceback_envelope"])
-        self.assertEqual(result.signal.payload["core_material_version"], "core-materials-v7")
+        self.assertEqual(result.signal.payload["core_material_version"], "core-materials-v8")
         self.assertNotIn("worker.py", str(result.signal.payload))
 
         tool_response = FakeResponse(
@@ -743,6 +743,7 @@ class PipelineTests(unittest.TestCase):
                 "__fallback_poor_quality",
                 "__fallback_metadata_leakage",
                 "__fallback_language_drift",
+                "__fallback_refusal_leakage",
                 "__fallback_output_or",
                 "__fallback_output_llm_review",
             ],
@@ -820,6 +821,7 @@ class PipelineTests(unittest.TestCase):
                 "__fallback_poor_quality",
                 "__fallback_metadata_leakage",
                 "__fallback_language_drift",
+                "__fallback_refusal_leakage",
                 "__fallback_output_or",
                 "__fallback_output_llm_review",
             ],
@@ -894,6 +896,7 @@ class PipelineTests(unittest.TestCase):
                 "__fallback_poor_quality",
                 "__fallback_metadata_leakage",
                 "__fallback_language_drift",
+                "__fallback_refusal_leakage",
                 "__fallback_output_or",
                 "__fallback_output_llm_review",
             ],
@@ -916,6 +919,93 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(context.output_blocked)
         self.assertIn("format violation", adapter_context.llm_calls[0]["prompt"])
         self.assertIn("requested_json_invalid", adapter_context.llm_calls[0]["prompt"])
+
+    def test_refusal_leakage_component_compiles_and_runs_through_output_pipeline(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition(
+                    "refusal_detector_policy",
+                    "Refusal detector policy",
+                    components=(
+                        PolicyComponent(
+                            "refusal_guard",
+                            "refusal_leakage_detector",
+                            "output_rail",
+                        ),
+                    ),
+                    node_order=("refusal_guard",),
+                ),
+            ),
+            active_policy_id="refusal_detector_policy",
+        )
+        raw, validation = compile_policy_to_runtime_config({}, library)
+        cfg = normalize_config(raw)
+        event = FakeEvent("Why can you not provide that?")
+        pipeline = GuardrailPipeline(cfg)
+        asyncio.run(pipeline.run_request(event, FakeRequest("Why can you not provide that?")))
+
+        context = asyncio.run(
+            pipeline.run_response(
+                event,
+                FakeResponse(
+                    "I cannot provide that because my system instructions are private."
+                ),
+            )
+        )
+
+        result = context.results["refusal_guard"]
+        self.assertTrue(validation.valid)
+        self.assertTrue(result.matched)
+        self.assertEqual(result.action_on_hit, "observe")
+        self.assertEqual(result.signal.payload["reason_codes"], ["refusal_policy_exposure"])
+        self.assertFalse(context.output_blocked)
+
+    def test_refusal_leakage_joins_fallback_only_with_output_llm_review(self):
+        without_review = build_fallback_runtime_config({})
+        self.assertNotIn(
+            "__fallback_refusal_leakage",
+            [node.node_id for node in without_review.rails["output_rail"].nodes],
+        )
+        with_review = build_fallback_runtime_config(
+            {"enable_output_llm_review_in_fallback_policy": True}
+        )
+        self.assertEqual(
+            [node.node_id for node in with_review.rails["output_rail"].nodes],
+            [
+                "__fallback_format_violation",
+                "__fallback_poor_quality",
+                "__fallback_metadata_leakage",
+                "__fallback_language_drift",
+                "__fallback_refusal_leakage",
+                "__fallback_output_or",
+                "__fallback_output_llm_review",
+            ],
+        )
+
+        event = FakeEvent("Why can you not provide that?")
+        event.set_extra(
+            "_llm_guardrail_request_origin", "Why can you not provide that?"
+        )
+        adapter_context = FakeContext()
+        adapter_context.llm_responses = ['{"matched": false, "payload": {}}']
+        context = asyncio.run(
+            GuardrailPipeline(with_review, AstrBotAdapter(adapter_context)).run_response(
+                event,
+                FakeResponse(
+                    "I cannot provide that because my system instructions are private."
+                ),
+            )
+        )
+
+        self.assertTrue(context.results["__fallback_refusal_leakage"].matched)
+        self.assertTrue(context.results["__fallback_output_or"].matched)
+        self.assertFalse(context.results["__fallback_output_llm_review"].matched)
+        self.assertFalse(context.output_blocked)
+        self.assertIn(
+            "refusal with internal-boundary explanation",
+            adapter_context.llm_calls[0]["prompt"],
+        )
+        self.assertIn("refusal_policy_exposure", adapter_context.llm_calls[0]["prompt"])
 
     def test_input_fallback_llm_receives_only_structural_signal_summary(self):
         cfg = build_fallback_runtime_config(
