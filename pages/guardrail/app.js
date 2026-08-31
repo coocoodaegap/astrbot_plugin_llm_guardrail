@@ -3143,9 +3143,9 @@ function createPolicyComponent() {
   const rail = pendingPolicyComponentRail;
   const type = selectedNewComponentType;
   const id = newPolicyComponentId.value.trim();
-  const definition = componentDefinitions[type];
-  if (!rail || !definition?.rails.has(rail)) {
-    policyComponentCreationStatus.textContent = "当前 Step 不支持所选电子元件。";
+  if (!id) {
+    policyComponentCreationStatus.textContent = "请输入元件 ID。";
+    newPolicyComponentId.focus();
     return;
   }
   if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) {
@@ -3157,6 +3157,15 @@ function createPolicyComponent() {
   if (policyGraphDraftNodeIds(draft).has(id)) {
     policyComponentCreationStatus.textContent = "元件 ID 已被当前策略中的节点使用。";
     newPolicyComponentId.focus();
+    return;
+  }
+  if (!type) {
+    policyComponentCreationStatus.textContent = "请选择元件类型。";
+    return;
+  }
+  const definition = componentDefinitions[type];
+  if (!rail || !definition?.rails.has(rail)) {
+    policyComponentCreationStatus.textContent = "所选元件不适用于当前 Step。";
     return;
   }
   const nodeOrder = completePolicyGraphNodeOrder(draft);

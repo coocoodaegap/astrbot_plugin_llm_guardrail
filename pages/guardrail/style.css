@@ -888,6 +888,10 @@ button:disabled {
     margin-top: 12px
 }
 
+.policy-rule-picker-dialog .form-status {
+    margin: 14px 0 0;
+}
+
 .policy-rule-picker-item {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -1692,6 +1696,11 @@ textarea {
 .session-policy-list-item span:nth-of-type(2) {
     color: #748198;
     font-size: .78rem
+}
+
+.session-policy-state-list,
+.rag-experience-list {
+    margin-top: 14px;
 }
 
 .session-policy-pagination {
