@@ -9,6 +9,7 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from components import evaluate_output_detector
 from config import normalize_config
+from constants import INTERNAL_MARKER
 from core import RailContext
 
 
@@ -116,6 +117,41 @@ class PoorQualityDetectorTests(unittest.TestCase):
         self.assertEqual(node.config["min_signal_families"], 1)
         self.assertEqual(node.config["max_punctuation_ratio"], 0.95)
         self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+
+
+class MetadataLeakageDetectorTests(unittest.TestCase):
+    def test_detects_internal_control_marker_without_returning_it(self):
+        response = f"Unexpected control value: {INTERNAL_MARKER}"
+        node, context = _output_node(
+            "metadata_leakage_detector", {}, "request", response,
+        )
+        result = evaluate_output_detector(node, context, response)
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.metadata["reason_codes"], ["internal_control_marker"])
+        self.assertEqual(result.metadata["core_material_version"], "core-materials-v8")
+        self.assertNotIn(INTERNAL_MARKER, str(result.metadata))
+
+    def test_bounds_tool_structure_scanning_before_later_candidates(self):
+        response = (
+            '{"title":"ordinary object"} '
+            '{"name":"calendar.create","arguments":{"title":"meeting"}}'
+        )
+        limited_node, limited_context = _output_node(
+            "metadata_leakage_detector", {"max_structures": 1}, "request", response,
+        )
+        complete_node, complete_context = _output_node(
+            "metadata_leakage_detector", {"max_structures": 3}, "request", response,
+        )
+
+        limited = evaluate_output_detector(limited_node, limited_context, response)
+        complete = evaluate_output_detector(complete_node, complete_context, response)
+
+        self.assertFalse(limited.matched)
+        self.assertTrue(limited.metadata["structure_scan_limited"])
+        self.assertTrue(complete.matched)
+        self.assertFalse(complete.metadata["structure_scan_limited"])
+        self.assertEqual(complete.metadata["reason_codes"], ["tool_call_envelope"])
 
 
 class LanguageDriftDetectorTests(unittest.TestCase):

@@ -552,9 +552,6 @@ def _normalize_node(
         _normalize_language_drift_detector(rule_id, config, warnings)
     elif template_key == "sensitive_echo_detector":
         _normalize_sensitive_echo_detector(rule_id, config, warnings)
-        if not config["source_node_ids"]:
-            valid = False
-            enabled = False
     elif template_key in MESSAGE_FACT_TEMPLATES:
         _normalize_message_fact_component(rule_id, template_key, config, warnings)
         if template_key == "contains_request_user_id" and not config["user_ids"]:
@@ -1024,12 +1021,15 @@ def _normalize_language_drift_detector(
 def _normalize_sensitive_echo_detector(
     rule_id: str, config: dict[str, Any], warnings: list[str]
 ) -> None:
-    """Normalize the policy-local Step 5 source-rule recheck component."""
+    """Normalize automatic Step 1/3 replay with optional source skips."""
 
-    source_ids = _clean_string_list(config.get("source_node_ids", []))
-    config["source_node_ids"] = list(dict.fromkeys(source_ids))
-    if not config["source_node_ids"]:
-        warnings.append(f"{rule_id}.source_node_ids is empty; component skipped")
+    if "source_node_ids" in config:
+        warnings.append(
+            f"{rule_id}.source_node_ids is obsolete; all eligible Step 1/3 sources are rechecked"
+        )
+        config.pop("source_node_ids", None)
+    skip_ids = _clean_string_list(config.get("skip_source_node_ids", []))
+    config["skip_source_node_ids"] = list(dict.fromkeys(skip_ids))
     config["scan_limit_chars"] = _bounded_int(
         config.get("scan_limit_chars"), 12000, 256, 100000,
         rule_id, "scan_limit_chars", warnings,
@@ -1038,14 +1038,9 @@ def _normalize_sensitive_echo_detector(
         config.get("max_rechecked_sources"), 4, 1, 32,
         rule_id, "max_rechecked_sources", warnings,
     )
-    max_required_sources = min(
-        int(config["max_rechecked_sources"]), len(config["source_node_ids"])
-    )
-    if max_required_sources < 1:
-        max_required_sources = int(config["max_rechecked_sources"])
     config["min_rechecked_sources"] = _bounded_int(
         config.get("min_rechecked_sources"), 1, 1,
-        max_required_sources,
+        int(config["max_rechecked_sources"]),
         rule_id, "min_rechecked_sources", warnings,
     )
     config["max_external_rechecks"] = _bounded_int(

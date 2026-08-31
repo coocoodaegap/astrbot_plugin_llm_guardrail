@@ -1448,17 +1448,17 @@ const componentDefinitions = {
   },
   sensitive_echo_detector: {
     label: "风险信号复判",
-    description: "仅复判本轮已命中的 Step 1/3 指定规则是否也命中最终输出；不做片段相似度或语义泄漏推断。",
+    description: "自动复判本轮全部已命中的 Step 1/3 可重放规则是否也命中最终输出；可按节点 ID 跳过个别来源，不做片段相似度或语义泄漏推断。",
     rails: new Set(["output_rail"]),
     fields: [
-      { key: "source_node_ids", label: "来源规则节点 ID", hint: "每行一个同策略 Step 1/3 的 plain_keywords、regex_pattern、rag_judge 或 llm_review 规则节点 ID。", type: "list", default: [] },
+      { key: "skip_source_node_ids", label: "跳过来源规则节点 ID", hint: "可选。每行一个不参与复判的同策略 Step 1/3 可重放规则节点 ID；其余本轮命中来源自动复判。", type: "list", default: [] },
       { key: "scan_limit_chars", label: "扫描字符上限", hint: "复判输出时使用的最大文本窗口。", type: "integer", default: 12000 },
       { key: "min_rechecked_sources", label: "最少复判命中来源", hint: "达到该数量的来源规则在输出上再次命中才命中。", type: "integer", default: 1 },
-      { key: "max_rechecked_sources", label: "最大来源规则数", hint: "本元件允许配置的来源规则 ID 上限。", type: "integer", default: 4 },
+      { key: "max_rechecked_sources", label: "最大来源复判数", hint: "运行时按节点 ID 稳定排序后，最多复判该数量的未跳过命中来源。", type: "integer", default: 4 },
       { key: "max_external_rechecks", label: "最大外部复判次数", hint: "RAG 与 LLM 来源合计最多重跑次数；超出的来源仅记录为未执行。", type: "integer", default: 2 },
       { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "不把代码示例中的风险文本当作输出复判命中。", type: "boolean", default: true },
     ],
-    defaultConfig: () => ({ source_node_ids: [], scan_limit_chars: 12000, min_rechecked_sources: 1, max_rechecked_sources: 4, max_external_rechecks: 2, ignore_fenced_code: true }),
+    defaultConfig: () => ({ skip_source_node_ids: [], scan_limit_chars: 12000, min_rechecked_sources: 1, max_rechecked_sources: 4, max_external_rechecks: 2, ignore_fenced_code: true }),
   },
   contains_forward: {
     label: "转发消息检测器",

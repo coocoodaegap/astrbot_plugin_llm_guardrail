@@ -859,23 +859,23 @@ def _validate_sensitive_echo_component(
     component: PolicyComponent,
     rule_by_id: Mapping[str, RuleDefinition],
 ) -> list[str]:
-    """Validate source-rule replay references before a policy is published."""
+    """Validate optional source skips before a policy is published."""
 
     errors: list[str] = []
     config = component.config if isinstance(component.config, Mapping) else {}
-    raw_sources = config.get("source_node_ids")
-    if not isinstance(raw_sources, list):
+    if "source_node_ids" in config:
         return [
-            f"component {component.component_id} source_node_ids must be a non-empty list"
+            f"component {component.component_id} source_node_ids has been replaced by skip_source_node_ids"
         ]
-    source_ids = [str(value).strip() for value in raw_sources if str(value).strip()]
-    if not source_ids:
+    raw_skips = config.get("skip_source_node_ids", [])
+    if not isinstance(raw_skips, list):
         errors.append(
-            f"component {component.component_id} source_node_ids must not be empty"
+            f"component {component.component_id} skip_source_node_ids must be a list"
         )
-    if len(source_ids) != len(set(source_ids)):
+    skip_ids = [str(value).strip() for value in raw_skips if str(value).strip()]
+    if len(skip_ids) != len(set(skip_ids)):
         errors.append(
-            f"component {component.component_id} source_node_ids must not contain duplicates"
+            f"component {component.component_id} skip_source_node_ids must not contain duplicates"
         )
 
     max_sources = _as_int(config.get("max_rechecked_sources"), 4)
@@ -889,41 +889,32 @@ def _validate_sensitive_echo_component(
         errors.append(
             f"component {component.component_id} min_rechecked_sources must be 1..max_rechecked_sources"
         )
-    elif source_ids and min_sources > len(source_ids):
-        errors.append(
-            f"component {component.component_id} min_rechecked_sources exceeds source_node_ids"
-        )
     if not 0 <= max_external <= 16:
         errors.append(
             f"component {component.component_id} max_external_rechecks must be 0..16"
         )
-    if len(source_ids) > max_sources:
-        errors.append(
-            f"component {component.component_id} has more source_node_ids than max_rechecked_sources"
-        )
-
     bindings_by_id = {binding.rule_id: binding for binding in policy.bindings}
-    for source_id in sorted(set(source_ids)):
+    for source_id in sorted(set(skip_ids)):
         binding = bindings_by_id.get(source_id)
         if binding is None:
             errors.append(
-                f"component {component.component_id} source {source_id} is not a rule binding in this policy"
+                f"component {component.component_id} skip source {source_id} is not a rule binding in this policy"
             )
             continue
         if not binding.enabled:
             errors.append(
-                f"component {component.component_id} source {source_id} is disabled"
+                f"component {component.component_id} skip source {source_id} is disabled"
             )
             continue
         if binding.rail not in {"input_rail", "request_rail"}:
             errors.append(
-                f"component {component.component_id} source {source_id} must be in Step 1 or Step 3"
+                f"component {component.component_id} skip source {source_id} must be in Step 1 or Step 3"
             )
             continue
         rule = rule_by_id.get(source_id)
         if rule is None or rule.template_key not in SENSITIVE_ECHO_SOURCE_TEMPLATES:
             errors.append(
-                f"component {component.component_id} source {source_id} is not a replayable rule"
+                f"component {component.component_id} skip source {source_id} is not a replayable rule"
             )
     return errors
 

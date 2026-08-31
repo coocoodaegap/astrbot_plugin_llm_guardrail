@@ -1687,7 +1687,12 @@ class GuardrailPipeline:
             inspected_text, scan_truncated = prepare_sensitive_echo_text(
                 detector.config, output_text
             )
-            sources = self._eligible_sensitive_echo_sources(detector, context)
+            eligible_sources, skipped_source_count = self._eligible_sensitive_echo_sources(
+                detector, context
+            )
+            source_limit = int(detector.config["max_rechecked_sources"])
+            source_recheck_limit_reached = len(eligible_sources) > source_limit
+            sources = eligible_sources[:source_limit]
             external_limit = int(detector.config["max_external_rechecks"])
             external_rechecks = 0
             external_limit_reached = False
@@ -1717,7 +1722,9 @@ class GuardrailPipeline:
             payload = {
                 "detector": detector.template_key,
                 "reason_codes": ["rechecked_input_signal"] if matched else [],
-                "eligible_source_count": len(sources),
+                "eligible_source_count": len(eligible_sources),
+                "skipped_source_count": skipped_source_count,
+                "source_recheck_limit_reached": source_recheck_limit_reached,
                 "rechecked_source_count": rechecked_source_count,
                 "rechecked_match_count": rechecked_match_count,
                 "rechecked_kind_counts": dict(sorted(rechecked_kind_counts.items())),
@@ -1744,13 +1751,12 @@ class GuardrailPipeline:
 
     def _eligible_sensitive_echo_sources(
         self, detector: NormalizedRule, context: RailContext
-    ) -> list[NormalizedRule]:
-        source_ids = set(detector.config.get("source_node_ids", []))
+    ) -> tuple[list[NormalizedRule], int]:
+        skipped_ids = set(detector.config.get("skip_source_node_ids", []))
         sources: list[NormalizedRule] = []
+        skipped_source_count = 0
         for rail_name in ("input_rail", "request_rail"):
             for source in self.config.rails[rail_name].nodes:
-                if source.node_id not in source_ids:
-                    continue
                 if source.template_key not in {
                     "plain_keywords", "regex_pattern", "rag_judge", "llm_review",
                 }:
@@ -1763,8 +1769,11 @@ class GuardrailPipeline:
                     or not result.matched
                 ):
                     continue
+                if source.node_id in skipped_ids:
+                    skipped_source_count += 1
+                    continue
                 sources.append(source)
-        return sorted(sources, key=lambda source: source.node_id)
+        return sorted(sources, key=lambda source: source.node_id), skipped_source_count
 
     async def _virtual_sensitive_echo_recheck(
         self, source: NormalizedRule, context: RailContext, text: str

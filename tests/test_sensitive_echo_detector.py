@@ -81,6 +81,16 @@ class _Response:
         self.is_chunk = False
 
 
+class _Request:
+    def __init__(self, prompt):
+        self.prompt = prompt
+        self.system_prompt = "system"
+        self.extra_user_content_parts = []
+        self.contexts = []
+        self.image_urls = []
+        self.tools = None
+
+
 class _KbManager:
     def __init__(self):
         self.retrieve_calls = []
@@ -121,6 +131,20 @@ class _Context:
         return _Response(text)
 
 
+class _SlowSecondLlmContext(_Context):
+    async def llm_generate(self, chat_provider_id, prompt, system_prompt=None):
+        self.llm_calls.append(
+            {
+                "provider_id": chat_provider_id,
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+            }
+        )
+        if len(self.llm_calls) == 2:
+            await asyncio.sleep(0.05)
+        return _Response('{"matched": true, "payload": {}}')
+
+
 class _CaptureService:
     def __init__(self):
         self.calls = []
@@ -130,9 +154,9 @@ class _CaptureService:
         return types.SimpleNamespace(success=True, warning="")
 
 
-def _echo_config(sources, **options):
+def _echo_config(*, skip_sources=(), **options):
     return {
-        "source_node_ids": sources,
+        "skip_source_node_ids": list(skip_sources),
         "scan_limit_chars": options.get("scan_limit_chars", 12000),
         "min_rechecked_sources": options.get("min_rechecked_sources", 1),
         "max_rechecked_sources": options.get("max_rechecked_sources", 4),
@@ -142,7 +166,7 @@ def _echo_config(sources, **options):
 
 
 class SensitiveEchoDetectorTests(unittest.TestCase):
-    def test_rechecks_matched_plain_and_regex_sources_without_exposing_text(self):
+    def test_automatically_rechecks_matched_plain_and_regex_sources_without_exposing_text(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -169,7 +193,6 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "action_on_hit": "observe",
                             "inspection_template": "must not replace the output snapshot",
                             **_echo_config(
-                                ["risk_terms", "risk_pattern"],
                                 min_rechecked_sources=2,
                             ),
                         }
@@ -195,6 +218,94 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
         self.assertNotIn("secret", str(result.metadata))
         self.assertNotIn("RISK-7", str(result.signal.payload))
 
+    def test_skip_list_excludes_an_otherwise_eligible_source(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "alpha_signal",
+                            "keywords": ["alpha"],
+                            "action_on_hit": "observe",
+                        },
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "beta_signal",
+                            "keywords": ["beta"],
+                            "action_on_hit": "observe",
+                        },
+                    ]
+                },
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "sensitive_echo_detector",
+                            "rule_id": "echo_guard",
+                            "action_on_hit": "observe",
+                            **_echo_config(skip_sources=["beta_signal"]),
+                        }
+                    ]
+                },
+            }
+        )
+        event = _Event("alpha beta")
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(_Context()))
+        asyncio.run(pipeline.run_message_input(event))
+        context = asyncio.run(
+            pipeline.run_response(event, _Response("alpha beta"))
+        )
+
+        result = context.results["echo_guard"]
+        self.assertTrue(result.matched)
+        self.assertEqual(result.metadata["eligible_source_count"], 1)
+        self.assertEqual(result.metadata["skipped_source_count"], 1)
+        self.assertEqual(result.metadata["rechecked_source_count"], 1)
+
+    def test_runtime_caps_eligible_sources_in_stable_node_order(self):
+        source_nodes = [
+            {
+                "__template_key": "plain_keywords",
+                "rule_id": rule_id,
+                "keywords": [term],
+                "action_on_hit": "observe",
+            }
+            for rule_id, term in (
+                ("alpha_signal", "alpha"),
+                ("beta_signal", "beta"),
+                ("gamma_signal", "gamma"),
+            )
+        ]
+        cfg = normalize_config(
+            {
+                "input_rail": {"rule_list": source_nodes},
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "sensitive_echo_detector",
+                            "rule_id": "echo_guard",
+                            "action_on_hit": "observe",
+                            **_echo_config(max_rechecked_sources=2),
+                        }
+                    ]
+                },
+            }
+        )
+        event = _Event("alpha beta gamma")
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(_Context()))
+        asyncio.run(pipeline.run_message_input(event))
+        context = asyncio.run(
+            pipeline.run_response(event, _Response("alpha beta gamma"))
+        )
+
+        result = context.results["echo_guard"]
+        self.assertTrue(result.matched)
+        self.assertEqual(result.metadata["eligible_source_count"], 3)
+        self.assertTrue(result.metadata["source_recheck_limit_reached"])
+        self.assertEqual(result.metadata["rechecked_source_count"], 2)
+        self.assertEqual(result.metadata["rechecked_match_count"], 2)
+        self.assertEqual(result.metadata["rechecked_kind_counts"], {"plain_keywords": 2})
+
     def test_unmatched_or_fenced_output_does_not_trigger_recheck(self):
         cfg = normalize_config(
             {
@@ -214,7 +325,7 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "__template_key": "sensitive_echo_detector",
                             "rule_id": "echo_guard",
                             "action_on_hit": "observe",
-                            **_echo_config(["risk_terms"]),
+                            **_echo_config(),
                         }
                     ]
                 },
@@ -229,6 +340,93 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
 
                 self.assertFalse(context.results["echo_guard"].matched)
                 self.assertEqual(context.results["echo_guard"].metadata["score"], 0)
+
+    def test_minimum_rechecked_source_threshold_is_applied_at_its_boundary(self):
+        for minimum, expected_match in ((1, True), (2, False)):
+            with self.subTest(minimum=minimum):
+                cfg = normalize_config(
+                    {
+                        "input_rail": {
+                            "rule_list": [
+                                {
+                                    "__template_key": "plain_keywords",
+                                    "rule_id": "alpha_signal",
+                                    "keywords": ["alpha"],
+                                    "action_on_hit": "observe",
+                                },
+                                {
+                                    "__template_key": "plain_keywords",
+                                    "rule_id": "beta_signal",
+                                    "keywords": ["beta"],
+                                    "action_on_hit": "observe",
+                                },
+                            ]
+                        },
+                        "output_rail": {
+                            "rule_list": [
+                                {
+                                    "__template_key": "sensitive_echo_detector",
+                                    "rule_id": "echo_guard",
+                                    "action_on_hit": "observe",
+                                    **_echo_config(
+                                        min_rechecked_sources=minimum,
+                                    ),
+                                }
+                            ]
+                        },
+                    }
+                )
+                event = _Event("alpha beta")
+                pipeline = GuardrailPipeline(cfg, AstrBotAdapter(_Context()))
+                asyncio.run(pipeline.run_message_input(event))
+                context = asyncio.run(
+                    pipeline.run_response(event, _Response("alpha only"))
+                )
+
+                result = context.results["echo_guard"]
+                self.assertEqual(result.matched, expected_match)
+                self.assertEqual(result.metadata["rechecked_source_count"], 2)
+                self.assertEqual(result.metadata["rechecked_match_count"], 1)
+
+    def test_rechecks_a_matched_step_three_request_source(self):
+        cfg = normalize_config(
+            {
+                "request_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "request_signal",
+                            "keywords": ["secret"],
+                            "action_on_hit": "observe",
+                        }
+                    ]
+                },
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "sensitive_echo_detector",
+                            "rule_id": "echo_guard",
+                            "action_on_hit": "observe",
+                            **_echo_config(),
+                        }
+                    ]
+                },
+            }
+        )
+        event = _Event("normal message")
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(_Context()))
+
+        asyncio.run(pipeline.run_request(event, _Request("secret request")))
+        context = asyncio.run(
+            pipeline.run_response(event, _Response("secret response"))
+        )
+
+        self.assertTrue(context.results["request_signal"].matched)
+        self.assertTrue(context.results["echo_guard"].matched)
+        self.assertEqual(
+            context.results["echo_guard"].metadata["rechecked_kind_counts"],
+            {"plain_keywords": 1},
+        )
 
     def test_rag_recheck_is_virtual_and_does_not_capture_an_experience(self):
         cfg = normalize_config(
@@ -250,7 +448,7 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "__template_key": "sensitive_echo_detector",
                             "rule_id": "echo_guard",
                             "action_on_hit": "observe",
-                            **_echo_config(["rag_signal"]),
+                            **_echo_config(),
                         }
                     ]
                 },
@@ -292,7 +490,6 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "rule_id": "echo_guard",
                             "action_on_hit": "observe",
                             **_echo_config(
-                                ["review_a", "review_b"],
                                 max_external_rechecks=1,
                             ),
                         }
@@ -328,7 +525,7 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "__template_key": "sensitive_echo_detector",
                             "rule_id": "echo_guard",
                             "action_on_error": "block",
-                            **_echo_config(["review_a"]),
+                            **_echo_config(),
                         }
                     ]
                 },
@@ -352,7 +549,47 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
         self.assertEqual(output_context.results["echo_guard"].status, "failed")
         self.assertNotIn("not valid JSON", str(output_context.results["echo_guard"].metadata))
 
-    def test_policy_sources_must_be_replayable_step_one_or_three_rules(self):
+    def test_virtual_recheck_timeout_uses_the_component_error_action(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "review_signal",
+                            "audit_prompt": "Return matched for this safety signal.",
+                            "timeout_seconds": 0.001,
+                            "action_on_hit": "observe",
+                        }
+                    ]
+                },
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "sensitive_echo_detector",
+                            "rule_id": "echo_guard",
+                            "action_on_error": "record",
+                            **_echo_config(),
+                        }
+                    ]
+                },
+            }
+        )
+        event = _Event("risk input")
+        fake_context = _SlowSecondLlmContext()
+        pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
+
+        input_context = asyncio.run(pipeline.run_message_input(event))
+        output_context = asyncio.run(
+            pipeline.run_response(event, _Response("risk output"))
+        )
+
+        self.assertTrue(input_context.results["review_signal"].matched)
+        self.assertEqual(output_context.results["echo_guard"].status, "failed")
+        self.assertFalse(output_context.output_blocked)
+        self.assertEqual(len(fake_context.llm_calls), 2)
+
+    def test_policy_skip_sources_must_be_replayable_step_one_or_three_rules(self):
         library = PolicyLibrary(
             rules=(
                 RuleDefinition("risk_terms", "plain_keywords", {"keywords": ["risk"]}),
@@ -371,7 +608,7 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "echo_guard",
                             "sensitive_echo_detector",
                             "output_rail",
-                            config=_echo_config(["risk_terms"]),
+                            config=_echo_config(),
                         ),
                     ),
                 ),
@@ -401,7 +638,7 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
                             "echo_guard",
                             "sensitive_echo_detector",
                             "output_rail",
-                            config=_echo_config(["output_rule"]),
+                            config=_echo_config(skip_sources=["output_rule"]),
                         ),
                     ),
                 ),
@@ -413,6 +650,40 @@ class SensitiveEchoDetectorTests(unittest.TestCase):
         self.assertIn(
             "must be in Step 1 or Step 3",
             " ".join(invalid.validate().fatal_errors),
+        )
+
+    def test_policy_rejects_legacy_manual_source_list(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("risk_terms", "plain_keywords", {"keywords": ["risk"]}),
+            ),
+            policies=(
+                PolicyDefinition(
+                    "echo_policy",
+                    "Echo policy",
+                    bindings=(PolicyRuleBinding("risk_terms", "input_rail"),),
+                    components=(
+                        PolicyComponent(
+                            "echo_guard",
+                            "sensitive_echo_detector",
+                            "output_rail",
+                            config={
+                                **_echo_config(),
+                                "source_node_ids": ["risk_terms"],
+                            },
+                        ),
+                    ),
+                ),
+            ),
+            active_policy_id="echo_policy",
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertIn(
+            "replaced by skip_source_node_ids",
+            " ".join(validation.fatal_errors),
         )
 
 
