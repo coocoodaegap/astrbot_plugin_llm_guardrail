@@ -13,6 +13,7 @@ try:
     from .adapters import MessageFactSnapshot
     from .config import NormalizedNode
     from .constants import INTERNAL_MARKER
+    from .core_materials import CORE_MATERIALS, material_terms
     from .core import (
         NodeSignal,
         RailContext,
@@ -25,6 +26,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import MessageFactSnapshot
     from config import NormalizedNode
     from constants import INTERNAL_MARKER
+    from core_materials import CORE_MATERIALS, material_terms
     from core import (
         NodeSignal,
         RailContext,
@@ -141,6 +143,23 @@ _PROMPT_TARGET_TERMS = (
     "prompt", "instruction", "system prompt", "提示词", "指令", "系统提示",
 )
 
+# These slots preserve the current instruction-override boundary.  They live
+# in the versioned, code-owned material set so later refinements have a small,
+# auditable source of truth rather than another implicit detector wordlist.
+_INSTRUCTION_INTENT_MATERIAL_IDS = {
+    "override_operation": "intent_override_operation",
+    "protected_target": "intent_protected_target",
+    "reveal_operation": "intent_reveal_operation",
+    "authority_claim": "intent_authority_claim",
+    "role_reassignment": "intent_role_reassignment",
+    "protected_reference": "intent_protected_reference",
+    "override_scope": "intent_override_scope",
+}
+_INSTRUCTION_INTENT_TERMS = {
+    category: material_terms(CORE_MATERIALS, material_id)
+    for category, material_id in _INSTRUCTION_INTENT_MATERIAL_IDS.items()
+}
+
 MESSAGE_FACT_TEMPLATES = {
     "contains_request_user_id",
     "contains_forward",
@@ -181,6 +200,7 @@ def evaluate_input_detector(
     else:
         raise ValueError(f"unsupported input detector {node.template_key}")
     payload["detector"] = node.template_key
+    payload["core_material_version"] = CORE_MATERIALS.version
     return make_node_result(
         node,
         matched=matched,
@@ -936,13 +956,8 @@ def _evaluate_instruction_override(config: dict, text: str) -> tuple[bool, dict]
     scanned, truncated = _normalized_window(text, int(config["scan_limit_chars"]))
     gap = int(config["max_token_gap"]) * 8
     categories = {
-        "override_operation": _positions(scanned, ("ignore", "bypass", "discard", "disable", "forget", "忽略", "绕过", "废弃", "关闭", "忘记")),
-        "protected_target": _positions(scanned, ("instruction", "rule", "prompt", "policy", "system", "指令", "规则", "提示词", "系统")),
-        "reveal_operation": _positions(scanned, ("reveal", "show", "expose", "泄露", "展示", "公开")),
-        "authority_claim": _positions(scanned, ("administrator", "admin", "highest authority", "管理员", "最高权限")),
-        "role_reassignment": _positions(scanned, ("you are now", "become", "act as", "你现在是", "改为", "扮演")),
-        "protected_reference": _positions(scanned, ("your", "previous", "prior", "above", "hidden", "internal", "private", "secret", "你的", "此前", "之前", "上文", "隐藏", "内部", "私密")),
-        "override_scope": _positions(scanned, ("all", "every", "全部", "所有")),
+        category: _positions(scanned, terms)
+        for category, terms in _INSTRUCTION_INTENT_TERMS.items()
     }
     evidence: list[str] = []
     protected_target_referenced = _near(

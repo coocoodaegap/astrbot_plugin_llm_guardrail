@@ -11,6 +11,7 @@ if str(PLUGIN_DIR) not in sys.path:
 from components import evaluate_input_detector
 from config import normalize_config
 from core import RailContext
+from core_materials import CORE_MATERIALS
 
 
 def _node(template_key, config, text):
@@ -172,6 +173,23 @@ class InputDetectorTests(unittest.TestCase):
         self.assertIn("override_intent", result.metadata["evidence_codes"])
         self.assertIn("protected_reference", result.metadata["evidence_codes"])
         self.assertGreater(result.metadata["score"], 0)
+
+    def test_input_detector_payload_identifies_core_material_version(self):
+        for template_key in (
+            "encoded_payload_detector",
+            "length_anomaly_detector",
+            "role_marker_spoofing_detector",
+            "external_fetch_detector",
+            "instruction_override_detector",
+        ):
+            with self.subTest(template_key=template_key):
+                text = "An ordinary discussion about product documentation."
+                node, context = _node(template_key, {}, text)
+                result = evaluate_input_detector(node, context, text)
+                self.assertEqual(
+                    result.metadata["core_material_version"], CORE_MATERIALS.version
+                )
+                self.assertNotIn("intent_override_operation", str(result.metadata))
 
     def test_instruction_override_does_not_flag_safety_discussion(self):
         text = "Explain how system instructions differ from user instructions."
