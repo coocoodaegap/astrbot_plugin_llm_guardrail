@@ -74,7 +74,11 @@ COMPONENT_TEMPLATES["request_rail"].update(
     }
 )
 COMPONENT_TEMPLATES["output_rail"].update(
-    {"poor_quality_detector", "sensitive_echo_detector"}
+    {
+        "poor_quality_detector",
+        "metadata_leakage_detector",
+        "sensitive_echo_detector",
+    }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     rail_name: RULE_TEMPLATES[rail_name] | COMPONENT_TEMPLATES[rail_name]
@@ -528,6 +532,8 @@ def _normalize_node(
         _normalize_input_detector(rule_id, template_key, config, warnings)
     elif template_key == "poor_quality_detector":
         _normalize_poor_quality_detector(rule_id, config, warnings)
+    elif template_key == "metadata_leakage_detector":
+        _normalize_metadata_leakage_detector(rule_id, config, warnings)
     elif template_key == "sensitive_echo_detector":
         _normalize_sensitive_echo_detector(rule_id, config, warnings)
         if not config["source_node_ids"]:
@@ -565,6 +571,7 @@ def _normalize_node(
         "external_fetch_detector",
         "instruction_override_detector",
         "poor_quality_detector",
+        "metadata_leakage_detector",
         "sensitive_echo_detector",
         *MESSAGE_FACT_TEMPLATES,
     }:
@@ -895,6 +902,25 @@ def _normalize_poor_quality_detector(
     }.items():
         config[key] = _as_bool(config.get(key), default)
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _normalize_metadata_leakage_detector(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the bounded runtime-artefact candidate detector."""
+
+    config["scan_limit_chars"] = _bounded_int(
+        config.get("scan_limit_chars"), 12000, 256, 100000,
+        rule_id, "scan_limit_chars", warnings,
+    )
+    config["max_structures"] = _bounded_int(
+        config.get("max_structures"), 24, 1, 256,
+        rule_id, "max_structures", warnings,
+    )
+    config["ignore_fenced_code"] = _as_bool(
+        config.get("ignore_fenced_code"), True
+    )
+    config["action_on_hit"] = _as_str(config.get("action_on_hit", "observe")) or "observe"
 
 
 def _normalize_sensitive_echo_detector(

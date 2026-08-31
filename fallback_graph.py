@@ -83,6 +83,7 @@ class FallbackDetectorSpec:
     rail: str
     template_key: str
     config: Mapping[str, Any] = field(default_factory=dict)
+    requires_output_llm_review: bool = False
 
 
 # The catalogue preserves the intended fallback composition before every
@@ -98,7 +99,12 @@ FALLBACK_DETECTOR_CATALOGUE: tuple[FallbackDetectorSpec, ...] = (
     FallbackDetectorSpec("__fallback_prompt_injection_combo", "input_rail", "prompt_injection_combo_detector"),
     FallbackDetectorSpec("__fallback_format_violation", "output_rail", "format_violation_detector"),
     FallbackDetectorSpec("__fallback_poor_quality", "output_rail", "poor_quality_detector"),
-    FallbackDetectorSpec("__fallback_metadata_leakage", "output_rail", "metadata_leakage_detector"),
+    FallbackDetectorSpec(
+        "__fallback_metadata_leakage",
+        "output_rail",
+        "metadata_leakage_detector",
+        requires_output_llm_review=True,
+    ),
     FallbackDetectorSpec("__fallback_sensitive_echo", "output_rail", "sensitive_echo_detector"),
     FallbackDetectorSpec("__fallback_language_drift", "output_rail", "language_drift_detector"),
     FallbackDetectorSpec("__fallback_prompt_leakage", "output_rail", "prompt_leakage_detector"),
@@ -113,6 +119,7 @@ IMPLEMENTED_FALLBACK_DETECTORS: tuple[FallbackDetectorSpec, ...] = (
     FALLBACK_DETECTOR_CATALOGUE[3],
     FALLBACK_DETECTOR_CATALOGUE[4],
     FALLBACK_DETECTOR_CATALOGUE[8],
+    FALLBACK_DETECTOR_CATALOGUE[9],
 )
 
 
@@ -138,6 +145,10 @@ def build_fallback_runtime_config(
         for spec in implemented_detectors
         if (spec.rail == "input_rail" and input_checks_enabled)
         or (spec.rail == "output_rail" and output_checks_enabled)
+        if not (
+            spec.requires_output_llm_review
+            and not settings.get("enable_output_llm_review_in_fallback_policy", False)
+        )
     ]
     input_detector_ids = [
         node["rule_id"] for node in detector_nodes if node["__rail"] == "input_rail"

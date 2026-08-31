@@ -12,6 +12,7 @@ import unicodedata
 try:
     from .adapters import MessageFactSnapshot
     from .config import NormalizedNode
+    from .constants import INTERNAL_MARKER
     from .core import (
         NodeSignal,
         RailContext,
@@ -23,6 +24,7 @@ try:
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import MessageFactSnapshot
     from config import NormalizedNode
+    from constants import INTERNAL_MARKER
     from core import (
         NodeSignal,
         RailContext,
@@ -97,7 +99,10 @@ INPUT_DETECTOR_TEMPLATES = {
     "instruction_override_detector",
 }
 
-OUTPUT_DETECTOR_TEMPLATES = {"poor_quality_detector"}
+OUTPUT_DETECTOR_TEMPLATES = {
+    "poor_quality_detector",
+    "metadata_leakage_detector",
+}
 
 _BASE64_CANDIDATE_PATTERN = re.compile(
     r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{16,}={0,2})(?![A-Za-z0-9+/_=-])"
@@ -120,6 +125,9 @@ _COMMAND_FETCH_PATTERN = re.compile(
 )
 _COMMAND_EXECUTION_TAIL_PATTERN = re.compile(
     r"(?i)(?:\||&&)\s*(?:sh|bash|zsh|python3?|pwsh|powershell|iex)\b"
+)
+_PYTHON_EXCEPTION_LINE_PATTERN = re.compile(
+    r"^(?:[A-Za-z_]\w*\.)*(?:[A-Za-z_]\w*(?:Error|Exception|Exit)|KeyboardInterrupt)(?::.*)?$"
 )
 _FETCH_ACTION_TERMS = (
     "fetch", "retrieve", "download", "load", "read", "open", "import",
@@ -348,9 +356,12 @@ def evaluate_output_detector(
 ):
     """Evaluate one deterministic, policy-local Step 5 detector."""
 
-    if node.template_key != "poor_quality_detector":
+    if node.template_key == "poor_quality_detector":
+        matched, payload = _evaluate_poor_quality(node.config, text)
+    elif node.template_key == "metadata_leakage_detector":
+        matched, payload = _evaluate_metadata_leakage(node.config, text)
+    else:
         raise ValueError(f"unsupported output detector {node.template_key}")
-    matched, payload = _evaluate_poor_quality(node.config, text)
     payload["detector"] = node.template_key
     return make_node_result(
         node,
@@ -579,6 +590,195 @@ def _evaluate_poor_quality(config: dict, text: str) -> tuple[bool, dict]:
         "error_envelope_detected": error_envelope,
         "scan_truncated": truncated,
     }
+
+
+def _evaluate_metadata_leakage(config: dict, text: str) -> tuple[bool, dict]:
+    """Find complete runtime artefact shapes without retaining their contents."""
+
+    scanned, truncated = _normalized_window(
+        text, int(config["scan_limit_chars"]), casefold=False,
+    )
+    analysis_text = (
+        _without_fenced_code(scanned)
+        if bool(config["ignore_fenced_code"])
+        else scanned
+    )
+    reason_codes: list[str] = []
+    artifact_spans: list[tuple[int, int]] = []
+    traceback_spans = _python_traceback_spans(analysis_text)
+    if traceback_spans:
+        reason_codes.append("traceback_envelope")
+        artifact_spans.extend(traceback_spans)
+    tool_spans, structure_scan_limited = _tool_call_envelope_spans(
+        analysis_text, int(config["max_structures"]),
+    )
+    if tool_spans:
+        reason_codes.append("tool_call_envelope")
+        artifact_spans.extend(tool_spans)
+    marker_count = analysis_text.count(INTERNAL_MARKER)
+    if marker_count:
+        reason_codes.append("internal_control_marker")
+        marker_length = len(INTERNAL_MARKER)
+        start = 0
+        for _ in range(marker_count):
+            start = analysis_text.find(INTERNAL_MARKER, start)
+            if start < 0:
+                break
+            artifact_spans.append((start, start + marker_length))
+            start += marker_length
+
+    visible_count = sum(
+        1 for char in analysis_text
+        if not char.isspace() and not unicodedata.category(char).startswith("C")
+    )
+    artifact_char_count = _merged_span_length(artifact_spans)
+    coverage = artifact_char_count / max(1, visible_count)
+    score = 0
+    if "internal_control_marker" in reason_codes:
+        score = max(score, 100)
+    if "traceback_envelope" in reason_codes:
+        score = max(score, 90)
+    if "tool_call_envelope" in reason_codes:
+        score = max(score, 85)
+    if len(reason_codes) > 1:
+        score = min(100, score + (len(reason_codes) - 1) * 5)
+
+    return bool(reason_codes), {
+        "reason_codes": reason_codes,
+        "score": score,
+        "raw_char_count": len(text or ""),
+        "scanned_char_count": len(scanned),
+        "artifact_count": len(artifact_spans),
+        "artifact_coverage_bucket": _coverage_bucket(coverage),
+        "structure_scan_limited": structure_scan_limited,
+        "scan_truncated": truncated,
+    }
+
+
+def _python_traceback_spans(text: str) -> list[tuple[int, int]]:
+    """Recognize canonical Python tracebacks by layout, not exception words."""
+
+    lines = text.splitlines(keepends=True)
+    offsets: list[int] = []
+    offset = 0
+    for line in lines:
+        offsets.append(offset)
+        offset += len(line)
+    spans: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        if line.strip() != "Traceback (most recent call last):":
+            continue
+        frame_count = 0
+        end_index: int | None = None
+        for candidate_index in range(index + 1, min(len(lines), index + 65)):
+            candidate = lines[candidate_index].strip()
+            if re.match(r'^File "[^"\\n]{1,512}", line \d+(?:, in .+)?$', candidate):
+                frame_count += 1
+                continue
+            if frame_count and _PYTHON_EXCEPTION_LINE_PATTERN.fullmatch(candidate):
+                end_index = candidate_index + 1
+                break
+        if frame_count and end_index is not None:
+            start = offsets[index]
+            end = offsets[end_index] if end_index < len(offsets) else len(text)
+            spans.append((start, end))
+    return spans
+
+
+def _tool_call_envelope_spans(text: str, max_structures: int) -> tuple[list[tuple[int, int]], bool]:
+    spans: list[tuple[int, int]] = []
+    candidates, limited = _balanced_json_object_spans(text, max_structures)
+    for start, end in candidates:
+        try:
+            value = json.loads(text[start:end])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if _is_tool_call_envelope(value):
+            spans.append((start, end))
+    return spans, limited
+
+
+def _balanced_json_object_spans(text: str, max_structures: int) -> tuple[list[tuple[int, int]], bool]:
+    """Extract bounded balanced JSON-object candidates without regex harvesting."""
+
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if start is None:
+            if char == "{":
+                start = index
+                depth = 1
+            continue
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                spans.append((start, index + 1))
+                if len(spans) >= max_structures:
+                    return spans, True
+                start = None
+            elif depth < 0:
+                start = None
+                depth = 0
+    return spans, False
+
+
+def _is_tool_call_envelope(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    method = value.get("method")
+    params = value.get("params")
+    if isinstance(method, str) and method.strip() and isinstance(params, (dict, list)):
+        return True
+    name = value.get("name")
+    arguments = value.get("arguments", value.get("args"))
+    if isinstance(name, str) and name.strip() and isinstance(arguments, (dict, list, str)):
+        return True
+    function = value.get("function")
+    if isinstance(function, dict):
+        return _is_tool_call_envelope(function)
+    tool_calls = value.get("tool_calls")
+    return isinstance(tool_calls, list) and any(
+        _is_tool_call_envelope(item) for item in tool_calls
+    )
+
+
+def _merged_span_length(spans: list[tuple[int, int]]) -> int:
+    if not spans:
+        return 0
+    total = 0
+    previous_start, previous_end = sorted(spans)[0]
+    for start, end in sorted(spans)[1:]:
+        if start > previous_end:
+            total += previous_end - previous_start
+            previous_start, previous_end = start, end
+        else:
+            previous_end = max(previous_end, end)
+    return total + previous_end - previous_start
+
+
+def _coverage_bucket(coverage: float) -> str:
+    if coverage >= 0.9:
+        return "90_100"
+    if coverage >= 0.6:
+        return "60_89"
+    if coverage >= 0.3:
+        return "30_59"
+    return "0_29"
 
 
 def _evaluate_external_fetch(config: dict, text: str) -> tuple[bool, dict]:

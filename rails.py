@@ -695,7 +695,10 @@ class GuardrailPipeline:
             execution = NodeExecution(
                 result=evaluate_input_detector(rule, context, inspected_text)
             )
-        elif rule.template_key == "poor_quality_detector":
+        elif rule.template_key in {
+            "poor_quality_detector",
+            "metadata_leakage_detector",
+        }:
             execution = NodeExecution(
                 result=evaluate_output_detector(rule, context, inspected_text)
             )

@@ -670,6 +670,99 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Deterministic candidate signals", adapter_context.llm_calls[0]["prompt"])
         self.assertIn("punctuation_only", adapter_context.llm_calls[0]["prompt"])
 
+    def test_metadata_leakage_detects_complete_runtime_artifacts_only(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "metadata_leakage_detector",
+                            "rule_id": "metadata_guard",
+                            "action_on_hit": "observe",
+                        }
+                    ]
+                }
+            }
+        )
+        pipeline = GuardrailPipeline(cfg)
+        traceback_response = FakeResponse(
+            'Traceback (most recent call last):\n'
+            '  File "worker.py", line 12, in run\n'
+            'ValueError: unavailable\n'
+        )
+        traceback_context = asyncio.run(
+            pipeline.run_response(FakeEvent("normal request"), traceback_response)
+        )
+
+        result = traceback_context.results["metadata_guard"]
+        self.assertTrue(result.matched)
+        self.assertEqual(result.signal.payload["reason_codes"], ["traceback_envelope"])
+        self.assertNotIn("worker.py", str(result.signal.payload))
+
+        tool_response = FakeResponse(
+            '{"method":"calendar.create","params":{"title":"meeting"}}'
+        )
+        tool_context = asyncio.run(
+            pipeline.run_response(FakeEvent("normal request"), tool_response)
+        )
+        self.assertTrue(tool_context.results["metadata_guard"].matched)
+        self.assertEqual(
+            tool_context.results["metadata_guard"].signal.payload["reason_codes"],
+            ["tool_call_envelope"],
+        )
+
+        normal_json_response = FakeResponse('{"title":"meeting","count":1}')
+        normal_json_context = asyncio.run(
+            pipeline.run_response(FakeEvent("normal request"), normal_json_response)
+        )
+        self.assertFalse(normal_json_context.results["metadata_guard"].matched)
+
+        fenced_response = FakeResponse(
+            '```text\nTraceback (most recent call last):\n'
+            '  File "worker.py", line 12, in run\nValueError: unavailable\n```'
+        )
+        fenced_context = asyncio.run(
+            pipeline.run_response(FakeEvent("normal request"), fenced_response)
+        )
+        self.assertFalse(fenced_context.results["metadata_guard"].matched)
+
+    def test_metadata_leakage_joins_fallback_only_with_output_llm_review(self):
+        without_review = build_fallback_runtime_config({})
+        self.assertNotIn(
+            "__fallback_metadata_leakage",
+            [node.node_id for node in without_review.rails["output_rail"].nodes],
+        )
+        with_review = build_fallback_runtime_config(
+            {"enable_output_llm_review_in_fallback_policy": True}
+        )
+        self.assertEqual(
+            [node.node_id for node in with_review.rails["output_rail"].nodes],
+            [
+                "__fallback_poor_quality",
+                "__fallback_metadata_leakage",
+                "__fallback_output_or",
+                "__fallback_output_llm_review",
+            ],
+        )
+
+        adapter_context = FakeContext()
+        adapter_context.llm_responses = ['{"matched": false, "payload": {}}']
+        context = asyncio.run(
+            GuardrailPipeline(with_review, AstrBotAdapter(adapter_context)).run_response(
+                FakeEvent("Explain the error output."),
+                FakeResponse(
+                    'Traceback (most recent call last):\n'
+                    '  File "worker.py", line 12, in run\n'
+                    'ValueError: unavailable\n'
+                ),
+            )
+        )
+        self.assertTrue(context.results["__fallback_metadata_leakage"].matched)
+        self.assertTrue(context.results["__fallback_output_or"].matched)
+        self.assertFalse(context.results["__fallback_output_llm_review"].matched)
+        self.assertFalse(context.output_blocked)
+        self.assertIn("traceback_envelope", adapter_context.llm_calls[0]["prompt"])
+
     def test_input_fallback_llm_receives_only_structural_signal_summary(self):
         cfg = build_fallback_runtime_config(
             {

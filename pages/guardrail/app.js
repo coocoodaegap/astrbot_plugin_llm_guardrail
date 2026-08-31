@@ -266,6 +266,7 @@ const templateDescriptions = {
   external_fetch_detector: "外部资源操作检测器",
   instruction_override_detector: "指令覆盖检测器",
   poor_quality_detector: "异常低质回复检测器",
+  metadata_leakage_detector: "运行时工件泄漏检测器",
   sensitive_echo_detector: "风险信号复判",
   contains_request_user_id: "请求者 ID 匹配规则",
   contains_forward: "转发消息检测器",
@@ -1253,7 +1254,7 @@ const supportedTemplatesByRail = {
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
   prompt_rail: new Set(["strengthen_prompt"]),
   routing_rail: new Set(["route_policy"]),
-  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "poor_quality_detector", "sensitive_echo_detector"]),
+  output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "poor_quality_detector", "metadata_leakage_detector", "sensitive_echo_detector"]),
 };
 const inputRedirectTemplates = new Set([
   "plain_keywords",
@@ -1388,6 +1389,18 @@ const componentDefinitions = {
       { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "不把教学代码或错误示例当作异常回复。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, min_visible_chars: 1, max_punctuation_ratio: 0.95, min_repeat_run: 80, duplicate_line_min_chars: 16, duplicate_line_min_count: 4, min_signal_families: 1, detect_unformatted_error_envelope: true, ignore_fenced_code: true }),
+  },
+  metadata_leakage_detector: {
+    label: "运行时工件泄漏检测器",
+    description: "识别完整 traceback、工具调用包络或内部控制标记等机器运行时工件候选；不按技术术语或普通 JSON 命中。建议交给 LLM 旁审作语境裁决。",
+    rails: new Set(["output_rail"]),
+    fields: [
+      { key: "scan_limit_chars", label: "扫描字符上限", hint: "机器工件结构扫描的最大窗口。", type: "integer", default: 12000 },
+      { key: "max_structures", label: "最大 JSON 结构数", hint: "最多解析的平衡 JSON 对象数量，达到上限时只报告扫描受限。", type: "integer", default: 24 },
+      { key: "ignore_fenced_code", label: "忽略代码围栏", hint: "默认不把围栏中的 traceback 或调用示例当作运行时泄漏候选。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ scan_limit_chars: 12000, max_structures: 24, ignore_fenced_code: true }),
+    defaultAction: "observe",
   },
   sensitive_echo_detector: {
     label: "风险信号复判",
