@@ -1,3 +1,4 @@
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -22,7 +23,7 @@ from core_materials import (
 class CoreMaterialTests(unittest.TestCase):
     def test_builtin_materials_are_valid_and_immutable(self):
         self.assertEqual(validate_core_material_set(CORE_MATERIALS), ())
-        self.assertEqual(CORE_MATERIALS.version, "core-materials-v4")
+        self.assertEqual(CORE_MATERIALS.version, "core-materials-v5")
         self.assertIsInstance(CORE_MATERIALS.entries, tuple)
         self.assertEqual(
             material_terms(CORE_MATERIALS, "intent_override_operation"),
@@ -52,6 +53,29 @@ class CoreMaterialTests(unittest.TestCase):
             ),
             ("Cf",),
         )
+        self.assertEqual(
+            material_values(
+                CORE_MATERIALS, "runtime_python_traceback", "frame_labels",
+            ),
+            ("File",),
+        )
+        self.assertEqual(
+            material_values(
+                CORE_MATERIALS, "runtime_error_envelope", "header_labels",
+            ),
+            ("error", "exception", "错误"),
+        )
+
+    def test_builtin_materials_link_to_real_regression_tests(self):
+        test_function_ids = {
+            node.name
+            for path in Path(__file__).parent.glob("test_*.py")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig")))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for entry in CORE_MATERIALS.entries:
+            with self.subTest(material_id=entry.material_id):
+                self.assertIn(entry.test_id, test_function_ids)
 
     def test_validation_rejects_duplicate_material_ids(self):
         entry = CORE_MATERIALS.entries[0]

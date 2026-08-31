@@ -1,8 +1,9 @@
 """Versioned, code-owned facts used by local detector implementations.
 
-The core material set is intentionally small.  It records protocol and intent
-facts needed by deterministic structural checks; it is not a configurable
-keyword list, a RAG corpus, or a standalone risk decision engine.
+The core material set is intentionally small.  It records protocol, intent,
+and runtime-artifact facts needed by deterministic structural checks; it is
+not a configurable keyword list, a RAG corpus, or a standalone risk decision
+engine.
 """
 
 from __future__ import annotations
@@ -18,6 +19,10 @@ MaterialCategory = Literal[
     "intent_slot",
     "operation_grammar",
     "encoding_format",
+    "runtime_artifact",
+    "language_intent",
+    "format_contract",
+    "refusal_structure",
 ]
 MaterialSourceKind = Literal[
     "public_standard",
@@ -32,14 +37,18 @@ _ALLOWED_CATEGORIES = {
     "intent_slot",
     "operation_grammar",
     "encoding_format",
+    "runtime_artifact",
+    "language_intent",
+    "format_contract",
+    "refusal_structure",
 }
 _ALLOWED_SOURCE_KINDS = {
     "public_standard",
     "first_party_observation",
     "first_party_design",
 }
-MAX_ENTRIES_PER_CATEGORY = 64
-MAX_SERIALIZED_BYTES = 32 * 1024
+MAX_ENTRIES_PER_CATEGORY = 32
+MAX_SERIALIZED_BYTES = 16 * 1024
 
 
 @dataclass(frozen=True)
@@ -168,7 +177,7 @@ def _serialized_size(materials: CoreMaterialSet) -> int:
 
 
 CORE_MATERIALS = build_core_material_set(
-    "core-materials-v4",
+    "core-materials-v5",
     (
         CoreMaterialEntry(
             "intent_override_operation",
@@ -409,6 +418,52 @@ CORE_MATERIALS = build_core_material_set(
             "test_encoded_payload_materials_preserve_current_boundaries",
             (
                 ("unicode_categories", ("Cf",)),
+            ),
+        ),
+        CoreMaterialEntry(
+            "runtime_python_traceback",
+            "runtime_artifact",
+            "core-materials-v5",
+            "public_standard",
+            "Describe the canonical Python traceback header, frame label, and exception terminators.",
+            "test_metadata_leakage_materials_preserve_current_boundaries",
+            (
+                ("headers", ("Traceback (most recent call last):",)),
+                ("header_prefixes", ("traceback",)),
+                ("frame_labels", ("File",)),
+                ("exception_suffixes", ("Error", "Exception", "Exit")),
+                ("exception_names", ("KeyboardInterrupt",)),
+            ),
+        ),
+        CoreMaterialEntry(
+            "runtime_tool_call_envelope",
+            "runtime_artifact",
+            "core-materials-v5",
+            "first_party_design",
+            "Describe closed JSON relationships that represent a callable tool or function envelope.",
+            "test_metadata_leakage_materials_preserve_current_boundaries",
+            (
+                ("method_fields", ("method",)),
+                ("parameter_fields", ("params",)),
+                ("name_fields", ("name",)),
+                ("argument_fields", ("arguments", "args")),
+                ("function_fields", ("function",)),
+                ("tool_calls_fields", ("tool_calls",)),
+            ),
+        ),
+        CoreMaterialEntry(
+            "runtime_error_envelope",
+            "runtime_artifact",
+            "core-materials-v5",
+            "first_party_design",
+            "Describe the bounded error-object and textual-error relationships used for generation-failure detection.",
+            "test_poor_quality_error_envelope_materials_preserve_current_boundaries",
+            (
+                ("object_error_fields", ("error",)),
+                ("object_structure_fields", ("code", "status", "type")),
+                ("header_labels", ("error", "exception", "错误")),
+                ("http_error_hundreds", ("4", "5")),
+                ("exception_suffixes", ("Error", "Exception")),
             ),
         ),
     ),

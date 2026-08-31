@@ -32,6 +32,22 @@ def _node(config, text):
 
 
 class PoorQualityDetectorTests(unittest.TestCase):
+    def test_poor_quality_error_envelope_materials_preserve_current_boundaries(self):
+        samples = {
+            '{"error":"upstream unavailable","status":503}': True,
+            "Error: upstream unavailable (HTTP 503)": True,
+            "ValueError: invalid response": True,
+            "The word error does not mean this reply failed.": False,
+            '{"title":"error budget","count":1}': False,
+        }
+        for text, expected_match in samples.items():
+            with self.subTest(text=text):
+                node, context = _node({}, text)
+                result = evaluate_output_detector(node, context, text)
+
+                self.assertEqual(result.matched, expected_match)
+                self.assertIn("core-materials-v5", str(result.metadata))
+
     def test_detects_clear_generation_failures_without_returning_text(self):
         samples = {
             "   \u200b\n": "empty_output",

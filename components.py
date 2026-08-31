@@ -107,9 +107,6 @@ OUTPUT_DETECTOR_TEMPLATES = {
 }
 
 _MARKDOWN_IMAGE_PREFIX_PATTERN = re.compile(r"!\[[^\]\r\n]{0,120}\]\(\s*$")
-_PYTHON_EXCEPTION_LINE_PATTERN = re.compile(
-    r"^(?:[A-Za-z_]\w*\.)*(?:[A-Za-z_]\w*(?:Error|Exception|Exit)|KeyboardInterrupt)(?::.*)?$"
-)
 
 # These slots preserve the current instruction-override boundary.  They live
 # in the versioned, code-owned material set so later refinements have a small,
@@ -302,6 +299,103 @@ _ROT13_WRAPPER_PATTERN = re.compile(
 )
 _ZERO_WIDTH_UNICODE_CATEGORIES = material_values(
     CORE_MATERIALS, "encoding_unicode_format_controls", "unicode_categories",
+)
+_PYTHON_TRACEBACK_HEADERS = material_values(
+    CORE_MATERIALS, "runtime_python_traceback", "headers",
+)
+_PYTHON_TRACEBACK_HEADER_PREFIXES = tuple(
+    prefix.casefold()
+    for prefix in material_values(
+        CORE_MATERIALS, "runtime_python_traceback", "header_prefixes",
+    )
+)
+_PYTHON_TRACEBACK_FRAME_LABELS = material_values(
+    CORE_MATERIALS, "runtime_python_traceback", "frame_labels",
+)
+_PYTHON_TRACEBACK_EXCEPTION_SUFFIXES = material_values(
+    CORE_MATERIALS, "runtime_python_traceback", "exception_suffixes",
+)
+_PYTHON_TRACEBACK_EXCEPTION_NAMES = material_values(
+    CORE_MATERIALS, "runtime_python_traceback", "exception_names",
+)
+_PYTHON_TRACEBACK_FRAME_LABEL_ALTERNATION = "|".join(
+    re.escape(label) for label in _PYTHON_TRACEBACK_FRAME_LABELS
+)
+_PYTHON_TRACEBACK_EXCEPTION_SUFFIX_ALTERNATION = "|".join(
+    re.escape(suffix) for suffix in _PYTHON_TRACEBACK_EXCEPTION_SUFFIXES
+)
+_PYTHON_TRACEBACK_EXCEPTION_NAME_ALTERNATION = "|".join(
+    re.escape(name) for name in _PYTHON_TRACEBACK_EXCEPTION_NAMES
+)
+_PYTHON_TRACEBACK_FRAME_PATTERN = re.compile(
+    rf'^(?:{_PYTHON_TRACEBACK_FRAME_LABEL_ALTERNATION}) "[^"\\n]{{1,512}}", '
+    r"line \d+(?:, in .+)?$"
+)
+_PYTHON_EXCEPTION_LINE_PATTERN = re.compile(
+    rf"^(?:[A-Za-z_]\w*\.)*(?:[A-Za-z_]\w*"
+    rf"(?:{_PYTHON_TRACEBACK_EXCEPTION_SUFFIX_ALTERNATION})|"
+    rf"{_PYTHON_TRACEBACK_EXCEPTION_NAME_ALTERNATION})(?::.*)?$"
+)
+_RUNTIME_TOOL_METHOD_FIELDS = material_values(
+    CORE_MATERIALS, "runtime_tool_call_envelope", "method_fields",
+)
+_RUNTIME_TOOL_PARAMETER_FIELDS = material_values(
+    CORE_MATERIALS, "runtime_tool_call_envelope", "parameter_fields",
+)
+_RUNTIME_TOOL_NAME_FIELDS = material_values(
+    CORE_MATERIALS, "runtime_tool_call_envelope", "name_fields",
+)
+_RUNTIME_TOOL_ARGUMENT_FIELDS = material_values(
+    CORE_MATERIALS, "runtime_tool_call_envelope", "argument_fields",
+)
+_RUNTIME_TOOL_FUNCTION_FIELDS = material_values(
+    CORE_MATERIALS, "runtime_tool_call_envelope", "function_fields",
+)
+_RUNTIME_TOOL_CALLS_FIELDS = material_values(
+    CORE_MATERIALS, "runtime_tool_call_envelope", "tool_calls_fields",
+)
+_RUNTIME_ERROR_OBJECT_FIELDS = frozenset(
+    field.casefold()
+    for field in material_values(
+        CORE_MATERIALS, "runtime_error_envelope", "object_error_fields",
+    )
+)
+_RUNTIME_ERROR_OBJECT_STRUCTURE_FIELDS = frozenset(
+    field.casefold()
+    for field in material_values(
+        CORE_MATERIALS, "runtime_error_envelope", "object_structure_fields",
+    )
+)
+_RUNTIME_ERROR_HEADER_LABELS = material_values(
+    CORE_MATERIALS, "runtime_error_envelope", "header_labels",
+)
+_RUNTIME_ERROR_STATUS_HUNDREDS = material_values(
+    CORE_MATERIALS, "runtime_error_envelope", "http_error_hundreds",
+)
+_RUNTIME_ERROR_EXCEPTION_SUFFIXES = material_values(
+    CORE_MATERIALS, "runtime_error_envelope", "exception_suffixes",
+)
+_RUNTIME_ERROR_HEADER_ALTERNATION = "|".join(
+    re.escape(label) for label in _RUNTIME_ERROR_HEADER_LABELS
+)
+_RUNTIME_ERROR_STATUS_HUNDREDS_CLASS = "".join(
+    re.escape(value) for value in _RUNTIME_ERROR_STATUS_HUNDREDS
+)
+_RUNTIME_ERROR_EXCEPTION_SUFFIX_ALTERNATION = "|".join(
+    re.escape(suffix) for suffix in _RUNTIME_ERROR_EXCEPTION_SUFFIXES
+)
+_RUNTIME_ERROR_HEADER_PATTERN = re.compile(
+    rf"^(?:{_RUNTIME_ERROR_HEADER_ALTERNATION})\s*[:\[]", re.IGNORECASE,
+)
+_RUNTIME_ERROR_STATUS_PATTERN = re.compile(
+    rf"\b(?:HTTP\s*)?[{_RUNTIME_ERROR_STATUS_HUNDREDS_CLASS}]\d{{2}}\b",
+    re.IGNORECASE,
+)
+_RUNTIME_ERROR_EXCEPTION_LINE_PATTERN = re.compile(
+    rf"^[A-Za-z_][A-Za-z0-9_]*(?:{_RUNTIME_ERROR_EXCEPTION_SUFFIX_ALTERNATION})\s*:",
+)
+_RUNTIME_ERROR_TRACEBACK_FRAME_PATTERN = re.compile(
+    rf'^(?:{_PYTHON_TRACEBACK_FRAME_LABEL_ALTERNATION}) ".+", line \d+',
 )
 
 MESSAGE_FACT_TEMPLATES = {
@@ -530,6 +624,7 @@ def evaluate_output_detector(
     else:
         raise ValueError(f"unsupported output detector {node.template_key}")
     payload["detector"] = node.template_key
+    payload["core_material_version"] = CORE_MATERIALS.version
     return make_node_result(
         node,
         matched=matched,
@@ -837,13 +932,13 @@ def _python_traceback_spans(text: str) -> list[tuple[int, int]]:
         offset += len(line)
     spans: list[tuple[int, int]] = []
     for index, line in enumerate(lines):
-        if line.strip() != "Traceback (most recent call last):":
+        if line.strip() not in _PYTHON_TRACEBACK_HEADERS:
             continue
         frame_count = 0
         end_index: int | None = None
         for candidate_index in range(index + 1, min(len(lines), index + 65)):
             candidate = lines[candidate_index].strip()
-            if re.match(r'^File "[^"\\n]{1,512}", line \d+(?:, in .+)?$', candidate):
+            if _PYTHON_TRACEBACK_FRAME_PATTERN.fullmatch(candidate):
                 frame_count += 1
                 continue
             if frame_count and _PYTHON_EXCEPTION_LINE_PATTERN.fullmatch(candidate):
@@ -911,21 +1006,35 @@ def _balanced_json_object_spans(text: str, max_structures: int) -> tuple[list[tu
 def _is_tool_call_envelope(value: object) -> bool:
     if not isinstance(value, dict):
         return False
-    method = value.get("method")
-    params = value.get("params")
-    if isinstance(method, str) and method.strip() and isinstance(params, (dict, list)):
-        return True
-    name = value.get("name")
-    arguments = value.get("arguments", value.get("args"))
-    if isinstance(name, str) and name.strip() and isinstance(arguments, (dict, list, str)):
-        return True
-    function = value.get("function")
-    if isinstance(function, dict):
-        return _is_tool_call_envelope(function)
-    tool_calls = value.get("tool_calls")
-    return isinstance(tool_calls, list) and any(
-        _is_tool_call_envelope(item) for item in tool_calls
-    )
+    for method_field in _RUNTIME_TOOL_METHOD_FIELDS:
+        method = value.get(method_field)
+        for parameter_field in _RUNTIME_TOOL_PARAMETER_FIELDS:
+            parameters = value.get(parameter_field)
+            if (
+                isinstance(method, str)
+                and method.strip()
+                and isinstance(parameters, (dict, list))
+            ):
+                return True
+    for name_field in _RUNTIME_TOOL_NAME_FIELDS:
+        name = value.get(name_field)
+        for argument_field in _RUNTIME_TOOL_ARGUMENT_FIELDS:
+            arguments = value.get(argument_field)
+            if (
+                isinstance(name, str)
+                and name.strip()
+                and isinstance(arguments, (dict, list, str))
+            ):
+                return True
+    for function_field in _RUNTIME_TOOL_FUNCTION_FIELDS:
+        function = value.get(function_field)
+        if isinstance(function, dict):
+            return _is_tool_call_envelope(function)
+    for tool_calls_field in _RUNTIME_TOOL_CALLS_FIELDS:
+        tool_calls = value.get(tool_calls_field)
+        if isinstance(tool_calls, list):
+            return any(_is_tool_call_envelope(item) for item in tool_calls)
+    return False
 
 
 def _merged_span_length(spans: list[tuple[int, int]]) -> int:
@@ -1182,23 +1291,24 @@ def _has_unformatted_error_envelope(text: str) -> bool:
     parsed = _parse_json_object(stripped)
     if isinstance(parsed, dict):
         keys = {str(key).casefold() for key in parsed}
-        if "error" in keys and bool(keys & {"code", "status", "type"}):
+        if (
+            bool(keys & _RUNTIME_ERROR_OBJECT_FIELDS)
+            and bool(keys & _RUNTIME_ERROR_OBJECT_STRUCTURE_FIELDS)
+        ):
             return True
 
     lines = [line.strip() for line in stripped.splitlines() if line.strip()]
     first_line = lines[0] if lines else ""
-    has_traceback = first_line.casefold().startswith("traceback") and any(
-        re.match(r'^File ".+", line \d+', line) for line in lines[1:]
+    has_traceback = first_line.casefold().startswith(
+        _PYTHON_TRACEBACK_HEADER_PREFIXES
+    ) and any(
+        _RUNTIME_ERROR_TRACEBACK_FRAME_PATTERN.match(line) for line in lines[1:]
     )
     if has_traceback:
         return True
-    has_error_header = bool(
-        re.match(r"(?i)^(?:error|exception|错误)\s*[:\[]", first_line)
-    )
-    has_status = bool(re.search(r"\b(?:HTTP\s*)?[45]\d{2}\b", stripped, re.IGNORECASE))
-    has_exception_type = bool(
-        re.match(r"^[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)\s*:", first_line)
-    )
+    has_error_header = bool(_RUNTIME_ERROR_HEADER_PATTERN.match(first_line))
+    has_status = bool(_RUNTIME_ERROR_STATUS_PATTERN.search(stripped))
+    has_exception_type = bool(_RUNTIME_ERROR_EXCEPTION_LINE_PATTERN.match(first_line))
     return has_exception_type or (has_error_header and has_status)
 
 

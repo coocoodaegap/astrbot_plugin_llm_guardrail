@@ -670,7 +670,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Deterministic candidate signals", adapter_context.llm_calls[0]["prompt"])
         self.assertIn("punctuation_only", adapter_context.llm_calls[0]["prompt"])
 
-    def test_metadata_leakage_detects_complete_runtime_artifacts_only(self):
+    def test_metadata_leakage_materials_preserve_current_boundaries(self):
         cfg = normalize_config(
             {
                 "output_rail": {
@@ -697,6 +697,7 @@ class PipelineTests(unittest.TestCase):
         result = traceback_context.results["metadata_guard"]
         self.assertTrue(result.matched)
         self.assertEqual(result.signal.payload["reason_codes"], ["traceback_envelope"])
+        self.assertEqual(result.signal.payload["core_material_version"], "core-materials-v5")
         self.assertNotIn("worker.py", str(result.signal.payload))
 
         tool_response = FakeResponse(
