@@ -38,6 +38,22 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('apiGet("get_registered_providers")', javascript)
         self.assertIn('"save_shared_constants"', javascript)
         self.assertIn("公用常量", html)
+        self.assertIn('id="export-shared-constants"', html)
+        self.assertIn('id="import-shared-constants"', html)
+        shared_constants_start = html.index('id="shared-constants-panel"')
+        self.assertGreater(
+            html.index('class="floating-action-group"', shared_constants_start),
+            shared_constants_start,
+        )
+        self.assertIn("function buildSharedConstantsExportPackage", javascript)
+        self.assertIn("function collectReferencedSharedConstants", javascript)
+        self.assertIn("system_constants: collectReferencedSharedConstants", javascript)
+        self.assertIn('kind: "shared_constants"', javascript)
+        self.assertIn("exportSharedConstants.addEventListener", javascript)
+        self.assertIn("importSharedConstants.addEventListener", javascript)
+        self.assertIn("拷贝副本映射", javascript)
+        self.assertIn("规则：${copiedRuleIds}", javascript)
+        self.assertIn("策略：${copiedPolicyIds}", javascript)
         self.assertIn('"save_rule_library"', javascript)
         self.assertIn("expected_revision: currentRevision", javascript)
         self.assertIn("function switchTab", javascript)

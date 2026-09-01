@@ -15,6 +15,8 @@ const status = $("status"),
   systemSettingsStatus = $("system-settings-status"),
   saveSystemSettings = $("save-system-settings"),
   sharedConstants = $("shared-constants"),
+  importSharedConstants = $("import-shared-constants"),
+  exportSharedConstants = $("export-shared-constants"),
   saveSharedConstants = $("save-shared-constants"),
   ruleList = $("rule-list"),
   ruleCount = $("rule-count"),
@@ -280,15 +282,53 @@ function selectedConfigurationExportIds() {
     .filter(Boolean);
 }
 
-function buildConfigurationExportPackage(kind, selectedIds) {
+const SHARED_CONSTANT_REFERENCE_PATTERN = /\$\{\s*([A-Z0-9_]{1,64})\s*\}/g;
+
+function collectSharedConstantReferences(value, references = new Set()) {
+  if (typeof value === "string") {
+    for (const match of value.matchAll(SHARED_CONSTANT_REFERENCE_PATTERN)) {
+      references.add(match[1]);
+    }
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => collectSharedConstantReferences(item, references));
+  } else if (value && typeof value === "object") {
+    Object.values(value).forEach((item) => collectSharedConstantReferences(item, references));
+  }
+  return references;
+}
+
+function collectReferencedSharedConstants(rules, policies, constants) {
+  const references = collectSharedConstantReferences([...rules, ...policies]);
+  return Object.fromEntries(
+    [...references]
+      .sort()
+      .filter((name) => Object.prototype.hasOwnProperty.call(constants, name))
+      .map((name) => [name, constants[name]]),
+  );
+}
+
+function buildSharedConstantsExportPackage(constants) {
+  return {
+    format_version: 1,
+    kind: "shared_constants",
+    exported_at: new Date().toISOString(),
+    rules: [],
+    policies: [],
+    system_constants: constants,
+  };
+}
+
+function buildConfigurationExportPackage(kind, selectedIds, constants) {
   if (kind === "rules") {
     const selected = new Set(selectedIds);
+    const rules = ruleLibrary.rules.filter((rule) => selected.has(rule.rule_id));
     return {
       format_version: 1,
       kind: "rules",
       exported_at: new Date().toISOString(),
-      rules: ruleLibrary.rules.filter((rule) => selected.has(rule.rule_id)),
+      rules,
       policies: [],
+      system_constants: collectReferencedSharedConstants(rules, [], constants),
     };
   }
   const selected = new Set(selectedIds);
@@ -301,7 +341,21 @@ function buildConfigurationExportPackage(kind, selectedIds) {
     exported_at: new Date().toISOString(),
     rules: ruleLibrary.rules.filter((rule) => requiredRuleIds.has(rule.rule_id)),
     policies,
+    system_constants: collectReferencedSharedConstants(
+      ruleLibrary.rules.filter((rule) => requiredRuleIds.has(rule.rule_id)),
+      policies,
+      constants,
+    ),
   };
+}
+
+async function getSharedConstantsForExport() {
+  if (sharedConstantsDirty) return collectSharedConstants();
+  const result = await bridge.apiGet("get_shared_constants");
+  if (!result?.success || !result.constants || typeof result.constants !== "object") {
+    throw new Error(result?.detail || result?.error || "无法读取公用常量。");
+  }
+  return result.constants;
 }
 
 function downloadConfigurationPackage(packageValue) {
@@ -311,20 +365,26 @@ function downloadConfigurationPackage(packageValue) {
   const link = document.createElement("a");
   const date = new Date().toISOString().slice(0, 10);
   link.href = href;
-  link.download = `guardrail-${packageValue.kind}-${date}.json`;
+  const filenameKind = packageValue.kind === "shared_constants" ? "constants" : packageValue.kind;
+  link.download = `guardrail-${filenameKind}-${date}.json`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(href), 0);
 }
 
 function openConfigurationImport(kind) {
-  if (hasUnsavedRuleDrafts() || hasUnsavedPolicyDraft()) {
+  if (hasUnsavedRuleDrafts() || hasUnsavedPolicyDraft() || sharedConstantsDirty) {
     publishReport("请先保存或放弃当前规则/策略草稿，再导入配置包。", { tone: "warning" });
     return;
   }
+  const labels = {
+    rules: "规则",
+    policies: "策略",
+    shared_constants: "公用常量",
+  };
   configurationImportKind = kind;
   pendingConfigurationPackage = null;
   configurationImportFile.value = "";
-  configurationImportStatus.textContent = "请选择 JSON 文件。";
+  configurationImportStatus.textContent = `请选择${labels[kind] || "配置"} JSON 文件。`;
   configurationImportPreview.hidden = true;
   configurationImportPreview.textContent = "";
   confirmConfigurationImport.disabled = true;
@@ -349,15 +409,38 @@ async function previewConfigurationImport() {
     if (!result?.success) throw new Error(result?.detail || result?.error || "配置包校验失败。");
     const preview = result.preview;
     if (preview.kind !== configurationImportKind) {
-      throw new Error(`请选择${configurationImportKind === "rules" ? "规则" : "策略"}配置包。`);
+      const expectedLabel = {
+        rules: "规则",
+        policies: "策略",
+        shared_constants: "公用常量",
+      }[configurationImportKind] || "配置";
+      throw new Error(`请选择${expectedLabel}配置包。`);
     }
     pendingConfigurationPackage = packageValue;
     const ruleConflicts = Array.isArray(preview.rule_conflicts) ? preview.rule_conflicts.length : 0;
     const policyConflicts = Array.isArray(preview.policy_conflicts) ? preview.policy_conflicts.length : 0;
+    const constantConflicts = Array.isArray(preview.constant_conflicts) ? preview.constant_conflicts.length : 0;
+    const constantCount = preview.constants && typeof preview.constants === "object"
+      ? Object.keys(preview.constants).length : 0;
+    const constantConflictNames = Array.isArray(preview.constant_conflicts)
+      ? preview.constant_conflicts.join(", ") : "";
+    const copiedIdentifierMappings = (mapping) => mapping && typeof mapping === "object"
+      ? Object.entries(mapping)
+        .filter(([source, target]) => source !== target)
+        .map(([source, target]) => `${source} → ${target}`)
+        .join(", ") : "";
+    const copiedRuleIds = copiedIdentifierMappings(preview.rule_id_map);
+    const copiedPolicyIds = copiedIdentifierMappings(preview.policy_id_map);
+    const copiedConstantIds = copiedIdentifierMappings(preview.constant_name_map);
+    const copyMappings = [
+      copiedRuleIds && `规则：${copiedRuleIds}`,
+      copiedPolicyIds && `策略：${copiedPolicyIds}`,
+      copiedConstantIds && `常量：${copiedConstantIds}`,
+    ].filter(Boolean).join("；");
     configurationImportStatus.textContent = "文件校验通过。确认后才会写入配置快照。";
     const warnings = Array.isArray(preview.warnings) && preview.warnings.length
       ? ` 警告：${preview.warnings.join("；")}` : "";
-    configurationImportPreview.textContent = `规则 ${preview.rules.length} 条，策略 ${preview.policies.length} 条；规则 ID 冲突 ${ruleConflicts} 个，策略 ID 冲突 ${policyConflicts} 个。${warnings}`;
+    configurationImportPreview.textContent = `规则 ${preview.rules.length} 条，策略 ${preview.policies.length} 条，公用常量 ${constantCount} 项；规则 ID 冲突 ${ruleConflicts} 个，策略 ID 冲突 ${policyConflicts} 个，常量名冲突 ${constantConflicts} 个${constantConflictNames ? `（${constantConflictNames}）` : ""}。${copyMappings ? ` 拷贝副本映射：${copyMappings}。` : ""}${warnings}`;
     configurationImportPreview.hidden = false;
     confirmConfigurationImport.disabled = false;
   } catch (error) {
@@ -376,11 +459,13 @@ async function importConfigurationPackage() {
     });
     if (!result?.success) throw new Error(result?.detail || result?.error || "导入失败。");
     currentRevision = result.revision;
-    const [rules, policies] = await Promise.all([
-      bridge.apiGet("get_rule_library"), bridge.apiGet("get_policy_library"),
+    const [rules, policies, constants] = await Promise.all([
+      bridge.apiGet("get_rule_library"), bridge.apiGet("get_policy_library"), bridge.apiGet("get_shared_constants"),
     ]);
     applyRuleLibraryPayload(rules);
     applyPolicyLibraryPayload(policies);
+    sharedConstantsDirty = false;
+    applySharedConstantsPayload(constants);
     configurationImportDialog.close();
     publishReport(`配置包已导入为 revision ${result.revision}。`);
     rerenderOverviewIfReady();
@@ -5191,18 +5276,38 @@ showRuleLibraryRules.addEventListener("click", () => switchRuleLibrarySection("r
 showSharedConstants.addEventListener("click", () => switchRuleLibrarySection("constants"));
 exportRules.addEventListener("click", () => openConfigurationExport("rules"));
 exportPolicies.addEventListener("click", () => openConfigurationExport("policies"));
+importSharedConstants.addEventListener("click", () => openConfigurationImport("shared_constants"));
+exportSharedConstants.addEventListener("click", async () => {
+  try {
+    const constants = await getSharedConstantsForExport();
+    downloadConfigurationPackage(buildSharedConstantsExportPackage(constants));
+    publishReport(`已生成 ${Object.keys(constants).length} 项公用常量的 JSON 导出文件。`);
+  } catch (error) {
+    publishReport(`无法导出公用常量：${error instanceof Error ? error.message : String(error)}`, { tone: "error" });
+  }
+});
 importRules.addEventListener("click", () => openConfigurationImport("rules"));
 importPolicies.addEventListener("click", () => openConfigurationImport("policies"));
 cancelConfigurationExport.addEventListener("click", () => configurationExportDialog.close());
-confirmConfigurationExport.addEventListener("click", () => {
+confirmConfigurationExport.addEventListener("click", async () => {
   const selectedIds = selectedConfigurationExportIds();
   if (!selectedIds.length) {
     configurationExportStatus.textContent = "请至少选择一项。";
     return;
   }
-  downloadConfigurationPackage(buildConfigurationExportPackage(configurationExportKind, selectedIds));
-  configurationExportDialog.close();
-  publishReport(`已生成 ${selectedIds.length} 项配置的 JSON 导出文件。`);
+  confirmConfigurationExport.disabled = true;
+  try {
+    const constants = await getSharedConstantsForExport();
+    downloadConfigurationPackage(
+      buildConfigurationExportPackage(configurationExportKind, selectedIds, constants),
+    );
+    configurationExportDialog.close();
+    publishReport(`已生成 ${selectedIds.length} 项配置的 JSON 导出文件。`);
+  } catch (error) {
+    configurationExportStatus.textContent = `无法导出配置：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    confirmConfigurationExport.disabled = false;
+  }
 });
 cancelConfigurationImport.addEventListener("click", () => configurationImportDialog.close());
 configurationImportFile.addEventListener("change", previewConfigurationImport);

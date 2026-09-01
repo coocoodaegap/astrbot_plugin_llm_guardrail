@@ -830,8 +830,9 @@ class GuardrailPagesApiMixin:
             return self._pages_error("conflict_mode must be copy or replace")
         try:
             parsed = _parse_configuration_package(payload.get("package"))
-            candidate = _merge_configuration_package(
+            candidate, constants, rule_id_map, policy_id_map, constant_name_map = _merge_configuration_package(
                 self.snapshot_manager.current.policy_library,
+                self.snapshot_manager.current.runtime_config.system_constants,
                 parsed,
                 conflict_mode=mode,
             )
@@ -842,6 +843,7 @@ class GuardrailPagesApiMixin:
             return self._pages_error("Invalid configuration package", 400, str(exc))
 
         current = self.snapshot_manager.current.policy_library
+        current_constants = self.snapshot_manager.current.runtime_config.system_constants
         rule_ids = {rule.rule_id for rule in current.rules}
         policy_ids = {policy.policy_id for policy in current.policies}
         return jsonify(
@@ -857,6 +859,15 @@ class GuardrailPagesApiMixin:
                     "policy_conflicts": sorted(
                         policy.policy_id for policy in parsed["policies"] if policy.policy_id in policy_ids
                     ),
+                    "rule_id_map": dict(rule_id_map),
+                    "policy_id_map": dict(policy_id_map),
+                    "constants": dict(parsed["constants"]),
+                    "constant_conflicts": sorted(
+                        name
+                        for name in parsed["constants"]
+                        if name in current_constants
+                    ),
+                    "constant_name_map": dict(constant_name_map),
                     "warnings": list(validation.warnings),
                     "revision": self.snapshot_manager.current.revision,
                 },
@@ -875,16 +886,18 @@ class GuardrailPagesApiMixin:
             return self._pages_error("conflict_mode must be copy or replace")
         try:
             parsed = _parse_configuration_package(payload.get("package"))
-            library = _merge_configuration_package(
+            library, constants, _, _, _ = _merge_configuration_package(
                 self.snapshot_manager.current.policy_library,
+                self.snapshot_manager.current.runtime_config.system_constants,
                 parsed,
                 conflict_mode=mode,
             )
         except ValueError as exc:
             return self._pages_error("Invalid configuration package", 400, str(exc))
 
-        result = await self.snapshot_manager.publish_policy_library(
+        result = await self.snapshot_manager.publish_configuration_package(
             library,
+            constants,
             expected_revision,
         )
         return self._pages_publish_response(result, "Configuration package")
@@ -1065,7 +1078,8 @@ def _validate_shared_constants(constants: dict[str, Any]) -> list[str]:
 
 
 CONFIGURATION_PACKAGE_FORMAT_VERSION = 1
-CONFIGURATION_PACKAGE_KINDS = frozenset({"rules", "policies"})
+CONFIGURATION_PACKAGE_KINDS = frozenset({"rules", "policies", "shared_constants"})
+SHARED_CONSTANT_REFERENCE_PATTERN = re.compile(r"\$\{\s*([A-Z0-9_]{1,64})\s*\}")
 
 
 def _parse_configuration_package(value: Any) -> dict[str, Any]:
@@ -1079,17 +1093,25 @@ def _parse_configuration_package(value: Any) -> dict[str, Any]:
         )
     kind = str(value.get("kind") or "").strip()
     if kind not in CONFIGURATION_PACKAGE_KINDS:
-        raise ValueError("package kind must be rules or policies")
-    raw_rules = value.get("rules")
+        raise ValueError("package kind must be rules, policies, or shared_constants")
+    raw_rules = value.get("rules", [])
     raw_policies = value.get("policies", [])
+    raw_constants = value.get("system_constants", {})
     if not isinstance(raw_rules, list) or not all(isinstance(item, Mapping) for item in raw_rules):
         raise ValueError("package rules must be an array of objects")
     if not isinstance(raw_policies, list) or not all(isinstance(item, Mapping) for item in raw_policies):
         raise ValueError("package policies must be an array of objects")
+    if not isinstance(raw_constants, Mapping):
+        raise ValueError("package system_constants must be an object")
+    constant_diagnostics = _validate_shared_constants(dict(raw_constants))
+    if constant_diagnostics:
+        raise ValueError("; ".join(constant_diagnostics))
     if kind == "rules" and raw_policies:
         raise ValueError("a rules package may not include policies")
     if kind == "policies" and not raw_policies:
         raise ValueError("a policies package must include at least one policy")
+    if kind == "shared_constants" and (raw_rules or raw_policies):
+        raise ValueError("a shared_constants package may not include rules or policies")
 
     rules = tuple(RuleDefinition.from_dict(item) for item in raw_rules)
     policies = tuple(PolicyDefinition.from_dict(item) for item in raw_policies)
@@ -1108,19 +1130,32 @@ def _parse_configuration_package(value: Any) -> dict[str, Any]:
             raise ValueError(
                 f"policy {policy.policy_id} is missing packaged rules: {', '.join(missing)}"
             )
-    return {"kind": kind, "rules": rules, "policies": policies}
+    return {
+        "kind": kind,
+        "rules": rules,
+        "policies": policies,
+        "constants": dict(raw_constants),
+    }
 
 
 def _merge_configuration_package(
     current: PolicyLibrary,
+    current_constants: Mapping[str, str],
     package: Mapping[str, Any],
     *,
     conflict_mode: str,
-) -> PolicyLibrary:
+) -> tuple[
+    PolicyLibrary,
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+]:
     """Build one complete candidate library for an import's atomic publication."""
 
     imported_rules = tuple(package["rules"])
     imported_policies = tuple(package["policies"])
+    imported_constants = dict(package["constants"])
     existing_rule_ids = {rule.rule_id for rule in current.rules}
     existing_policy_ids = {policy.policy_id for policy in current.policies}
     rule_id_map: dict[str, str] = {}
@@ -1140,12 +1175,26 @@ def _merge_configuration_package(
         rule_id_map = {rule.rule_id: rule.rule_id for rule in imported_rules}
         policy_id_map = {policy.policy_id: policy.policy_id for policy in imported_policies}
 
+    constants, constant_name_map = _merge_imported_constants(
+        current_constants,
+        imported_constants,
+        conflict_mode=conflict_mode,
+    )
     rewritten_rules = tuple(
-        RuleDefinition.from_dict({**rule.to_dict(), "rule_id": rule_id_map[rule.rule_id]})
+        _rewrite_imported_rule(
+            rule,
+            rule_id_map[rule.rule_id],
+            constant_name_map,
+        )
         for rule in imported_rules
     )
     rewritten_policies = tuple(
-        _rewrite_imported_policy(policy, policy_id_map[policy.policy_id], rule_id_map)
+        _rewrite_imported_policy(
+            policy,
+            policy_id_map[policy.policy_id],
+            rule_id_map,
+            constant_name_map,
+        )
         for policy in imported_policies
     )
     if conflict_mode == "copy":
@@ -1154,11 +1203,17 @@ def _merge_configuration_package(
     else:
         rules = _replace_library_entries(current.rules, rewritten_rules, "rule_id")
         policies = _replace_library_entries(current.policies, rewritten_policies, "policy_id")
-    return PolicyLibrary(
-        rules=tuple(rules),
-        policies=tuple(policies),
-        active_policy_id=current.active_policy_id,
-        umo_policy_selections=current.umo_policy_selections,
+    return (
+        PolicyLibrary(
+            rules=tuple(rules),
+            policies=tuple(policies),
+            active_policy_id=current.active_policy_id,
+            umo_policy_selections=current.umo_policy_selections,
+        ),
+        constants,
+        rule_id_map,
+        policy_id_map,
+        constant_name_map,
     )
 
 
@@ -1176,14 +1231,64 @@ def _copy_configuration_id(source_id: str, occupied: set[str]) -> str:
         suffix_number += 1
 
 
+def _merge_imported_constants(
+    current: Mapping[str, str],
+    imported: Mapping[str, str],
+    *,
+    conflict_mode: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Merge a package's constants and return its internal name rewrite map."""
+
+    constants = dict(current)
+    occupied = set(constants)
+    name_map: dict[str, str] = {}
+    for name, value in imported.items():
+        if name not in constants:
+            constants[name] = value
+            name_map[name] = name
+            occupied.add(name)
+        elif conflict_mode == "copy":
+            copied_name = _copy_shared_constant_name(name, occupied)
+            constants[copied_name] = value
+            name_map[name] = copied_name
+            occupied.add(copied_name)
+        else:
+            constants[name] = value
+            name_map[name] = name
+    return constants, name_map
+
+
+def _copy_shared_constant_name(source_name: str, occupied: set[str]) -> str:
+    """Allocate an uppercase, valid sibling name for a conflicting constant."""
+
+    suffix_number = 1
+    while True:
+        suffix = "_COPY" if suffix_number == 1 else f"_COPY{suffix_number}"
+        candidate = f"{source_name[:64 - len(suffix)]}{suffix}"
+        if candidate not in occupied:
+            return candidate
+        suffix_number += 1
+
+
+def _rewrite_imported_rule(
+    rule: RuleDefinition,
+    rule_id: str,
+    constant_name_map: Mapping[str, str],
+) -> RuleDefinition:
+    payload = _rewrite_shared_constant_references(rule.to_dict(), constant_name_map)
+    payload["rule_id"] = rule_id
+    return RuleDefinition.from_dict(payload)
+
+
 def _rewrite_imported_policy(
     policy: PolicyDefinition,
     policy_id: str,
     rule_id_map: Mapping[str, str],
+    constant_name_map: Mapping[str, str],
 ) -> PolicyDefinition:
     """Rewrite only imported rule references; policy-local component IDs stay stable."""
 
-    payload = policy.to_dict()
+    payload = _rewrite_shared_constant_references(policy.to_dict(), constant_name_map)
     payload["policy_id"] = policy_id
     payload["bindings"] = [
         {
@@ -1203,6 +1308,27 @@ def _rewrite_imported_policy(
     ]
     payload["node_order"] = [rule_id_map.get(node_id, node_id) for node_id in payload["node_order"]]
     return PolicyDefinition.from_dict(payload)
+
+
+def _rewrite_shared_constant_references(
+    value: Any,
+    name_map: Mapping[str, str],
+) -> Any:
+    """Rewrite only `${UPPERCASE_CONSTANT}` references inside imported objects."""
+
+    if isinstance(value, str):
+        return SHARED_CONSTANT_REFERENCE_PATTERN.sub(
+            lambda match: "${" + name_map.get(match.group(1), match.group(1)) + "}",
+            value,
+        )
+    if isinstance(value, list):
+        return [_rewrite_shared_constant_references(item, name_map) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            key: _rewrite_shared_constant_references(item, name_map)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _rewrite_dependency_reference(value: Any, rule_id_map: Mapping[str, str]) -> str:

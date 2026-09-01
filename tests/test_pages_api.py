@@ -702,6 +702,11 @@ class GuardrailPagesApiTests(unittest.TestCase):
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):
             with patch(
                 "pages_api.request",
+                _Request({"package": package, "conflict_mode": "copy"}),
+            ):
+                copy_preview = asyncio.run(plugin._pages_preview_config_import())
+            with patch(
+                "pages_api.request",
                 _Request(
                     {
                         "package": package,
@@ -712,6 +717,11 @@ class GuardrailPagesApiTests(unittest.TestCase):
             ):
                 copied = asyncio.run(plugin._pages_import_config_package())
 
+        self.assertEqual(copy_preview["preview"]["rule_id_map"], {"risk": "risk_copy"})
+        self.assertEqual(
+            copy_preview["preview"]["policy_id_map"],
+            {"input_policy": "input_policy_copy"},
+        )
         self.assertTrue(copied["success"])
         copied_library = plugin.snapshot_manager.current.policy_library
         self.assertEqual(
@@ -741,6 +751,128 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertEqual(rejected[1], 400)
         self.assertIn("missing packaged rules", rejected[0]["detail"])
+
+    def test_configuration_package_imports_constants_and_rewrites_copy_conflicts(self):
+        plugin = _Plugin()
+        asyncio.run(
+            plugin.snapshot_manager.publish_shared_constants({"INTRO": "existing"}, 0)
+        )
+        package = {
+            "format_version": 1,
+            "kind": "rules",
+            "rules": [
+                {
+                    "rule_id": "prompt_rule",
+                    "template_key": "strengthen_prompt",
+                    "template_config": {"insertion_text": "${INTRO}"},
+                }
+            ],
+            "policies": [],
+            "system_constants": {"INTRO": "imported"},
+        }
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request({"package": package, "conflict_mode": "copy"}),
+            ):
+                preview = asyncio.run(plugin._pages_preview_config_import())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "package": package,
+                        "conflict_mode": "copy",
+                        "expected_revision": 1,
+                    }
+                ),
+            ):
+                imported = asyncio.run(plugin._pages_import_config_package())
+
+        self.assertTrue(preview["success"])
+        self.assertEqual(preview["preview"]["constant_conflicts"], ["INTRO"])
+        self.assertEqual(preview["preview"]["constant_name_map"], {"INTRO": "INTRO_COPY"})
+        self.assertTrue(imported["success"])
+        snapshot = plugin.snapshot_manager.current
+        self.assertEqual(
+            snapshot.runtime_config.system_constants,
+            {"INTRO": "existing", "INTRO_COPY": "imported"},
+        )
+        self.assertEqual(
+            snapshot.policy_library.rules[0].template_config["insertion_text"],
+            "${INTRO_COPY}",
+        )
+
+    def test_shared_constants_package_import_replaces_values_without_library_changes(self):
+        plugin = _Plugin()
+        asyncio.run(
+            plugin.snapshot_manager.publish_shared_constants({"INTRO": "old"}, 0)
+        )
+        package = {
+            "format_version": 1,
+            "kind": "shared_constants",
+            "rules": [],
+            "policies": [],
+            "system_constants": {"INTRO": "new", "EXTRA": "value"},
+        }
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "package": package,
+                        "conflict_mode": "replace",
+                        "expected_revision": 1,
+                    }
+                ),
+            ):
+                imported = asyncio.run(plugin._pages_import_config_package())
+
+        self.assertTrue(imported["success"])
+        snapshot = plugin.snapshot_manager.current
+        self.assertEqual(snapshot.policy_library.rules, ())
+        self.assertEqual(
+            snapshot.runtime_config.system_constants,
+            {"INTRO": "new", "EXTRA": "value"},
+        )
+
+    def test_same_value_constant_name_is_still_a_copy_conflict(self):
+        plugin = _Plugin()
+        asyncio.run(
+            plugin.snapshot_manager.publish_shared_constants({"INTRO": "same"}, 0)
+        )
+        package = {
+            "format_version": 1,
+            "kind": "shared_constants",
+            "rules": [],
+            "policies": [],
+            "system_constants": {"INTRO": "same"},
+        }
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request({"package": package, "conflict_mode": "copy"}),
+            ):
+                preview = asyncio.run(plugin._pages_preview_config_import())
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "package": package,
+                        "conflict_mode": "copy",
+                        "expected_revision": 1,
+                    }
+                ),
+            ):
+                imported = asyncio.run(plugin._pages_import_config_package())
+
+        self.assertTrue(preview["success"])
+        self.assertEqual(preview["preview"]["constant_conflicts"], ["INTRO"])
+        self.assertEqual(preview["preview"]["constant_name_map"], {"INTRO": "INTRO_COPY"})
+        self.assertTrue(imported["success"])
+        self.assertEqual(
+            plugin.snapshot_manager.current.runtime_config.system_constants,
+            {"INTRO": "same", "INTRO_COPY": "same"},
+        )
 
     def test_rule_deletion_is_rejected_when_a_policy_uses_it(self):
         plugin = _Plugin()

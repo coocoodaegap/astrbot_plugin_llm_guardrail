@@ -67,7 +67,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.4.1"
 POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"

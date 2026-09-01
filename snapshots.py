@@ -233,6 +233,24 @@ class ConfigSnapshotManager:
         raw_config["system_constants"] = copy.deepcopy(dict(constants))
         return await self.publish(raw_config, expected_revision)
 
+    async def publish_configuration_package(
+        self,
+        policy_library: PolicyLibrary,
+        constants: Mapping[str, str],
+        expected_revision: int | None,
+    ) -> SnapshotPublishResult:
+        """Atomically publish imported library entries and shared constants."""
+
+        if not isinstance(constants, Mapping):
+            return SnapshotPublishResult(
+                success=False,
+                diagnostics=("shared constants payload must be an object",),
+            )
+        raw_config = copy.deepcopy(self._current.source_config)
+        raw_config["policy_library"] = policy_library.to_dict()
+        raw_config["system_constants"] = copy.deepcopy(dict(constants))
+        return await self.publish(raw_config, expected_revision)
+
     async def publish_policy_collection(
         self,
         policies: tuple[PolicyDefinition, ...],

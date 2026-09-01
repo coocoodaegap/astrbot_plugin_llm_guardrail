@@ -152,10 +152,14 @@
             <h3 id="shared-constants-heading">公用常量</h3>
             <p>由 Guardrail 管理、可被所有策略与系统 fallback 图复用的静态文本。它们不属于规则、元件或系统设置，不进入 Canvas、调度、依赖、逻辑门或 NodeSignal。</p>
           </div>
-          <button id="save-shared-constants" type="button">保存公用常量</button>
         </header>
         <div id="shared-constants" aria-live="polite"></div>
       </section>
+      <div class="floating-action-group" aria-label="公用常量操作">
+        <button id="import-shared-constants" type="button" class="button-secondary">导入公用常量</button>
+        <button id="export-shared-constants" type="button" class="button-secondary">导出公用常量</button>
+        <button id="save-shared-constants" type="button">保存公用常量</button>
+      </div>
       </section>
       </div>
       <dialog id="rule-creation-dialog" class="rule-creation-dialog" aria-label="新建规则">
