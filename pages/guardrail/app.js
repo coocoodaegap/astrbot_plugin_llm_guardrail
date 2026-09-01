@@ -522,6 +522,7 @@ const templateDescriptions = {
   role_marker_spoofing_detector: "角色标记伪造检测器",
   external_fetch_detector: "外部资源操作检测器",
   instruction_override_detector: "指令覆盖检测器",
+  context_extractor: "对话上下文提取器",
   format_violation_detector: "输出格式违约检测器",
   poor_quality_detector: "异常低质回复检测器",
   metadata_leakage_detector: "运行时工件泄漏检测器",
@@ -1632,6 +1633,17 @@ const componentDefinitions = {
       { key: "detect_role_reassignment", label: "检测角色重设", hint: "仅在同时存在覆盖既有约束意图时命中。", type: "boolean", default: true },
     ],
     defaultConfig: () => ({ scan_limit_chars: 12000, min_evidence: 2, max_token_gap: 12, detect_instruction_replacement: true, detect_hidden_content_request: true, detect_authority_claim: true, detect_role_reassignment: true }),
+  },
+  context_extractor: {
+    label: "对话上下文提取器",
+    description: "读取当前 AstrBot 对话分支的既有历史，产出仅供后续检查内容重定向使用的中性上下文数据；不构成风险命中。",
+    rails: new Set(["input_rail", "request_rail", "output_rail"]),
+    fields: [
+      { key: "turns", label: "历史用户轮次", hint: "0 表示不读取历史；正整数取最近 N 个用户轮次。实际文本始终受 12,000 字符系统上限约束。", type: "integer", default: 3 },
+      { key: "user_only", label: "仅保留用户消息", hint: "开启后省略同轮 Bot 回复；system、tool、空和损坏历史仍以中性说明保留。", type: "boolean", default: false },
+    ],
+    defaultConfig: () => ({ turns: 3, user_only: false }),
+    defaultAction: "observe",
   },
   format_violation_detector: {
     label: "输出格式违约检测器",
@@ -2850,7 +2862,7 @@ function renderPolicyGraphNodeEditor(node) {
     [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || templateKey || "未知类型"],
     ["所属 Step", step?.label || node.rail],
     ["依赖", nodeData.depend_on || "未设置"],
-    ["检查内容", nodeData.inspection_template || "当前阶段原文"],
+    ["检查内容", templateKey === "context_extractor" ? "当前对话历史（payload.value）" : (nodeData.inspection_template || "当前阶段原文")],
   ]) {
     const item = document.createElement("span");
     item.textContent = `${label}：${value}`;
@@ -2898,24 +2910,45 @@ function renderPolicyGraphNodeEditor(node) {
       true,
     ));
   }
-  const hitAction = isComponent
-    ? createActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit || "default")
-    : createPolicyBindingActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit);
-  hitAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_hit", hitAction));
-  grid.append(createPolicyGraphEditorField(
-    isComponent ? "命中动作" : "命中动作覆写",
-    isComponent ? "元件命中后的处理方式。" : "留空继承规则默认动作；不可用动作已按模板限制隐藏。",
-    hitAction,
-  ));
-  const errorAction = isComponent
-    ? createActionSelect(errorActions, nodeData.action_on_error || "default")
-    : createPolicyBindingActionSelect(errorActions, nodeData.action_on_error);
-  errorAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_error", errorAction));
-  grid.append(createPolicyGraphEditorField(
-    isComponent ? "错误动作" : "错误动作覆写",
-    isComponent ? "元件执行失败时的处理方式。" : "留空继承规则默认动作。",
-    errorAction,
-  ));
+  if (isComponent && templateKey === "context_extractor") {
+    const fixedAction = document.createElement("input");
+    fixedAction.type = "text";
+    fixedAction.value = "observe（固定）";
+    fixedAction.disabled = true;
+    grid.append(createPolicyGraphEditorField(
+      "执行语义",
+      "该元件永远以 true 表示“上下文已就绪”，只供 depend_on 与检查内容重定向消费；不会执行风险动作。",
+      fixedAction,
+    ));
+    const fixedError = document.createElement("input");
+    fixedError.type = "text";
+    fixedError.value = "discard（fail-open）";
+    fixedError.disabled = true;
+    grid.append(createPolicyGraphEditorField(
+      "读取失败",
+      "读取失败时产出空上下文与诊断，后续节点继续检查其当前阶段对象。",
+      fixedError,
+    ));
+  } else {
+    const hitAction = isComponent
+      ? createActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit || "default")
+      : createPolicyBindingActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit);
+    hitAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_hit", hitAction));
+    grid.append(createPolicyGraphEditorField(
+      isComponent ? "命中动作" : "命中动作覆写",
+      isComponent ? "元件命中后的处理方式。" : "留空继承规则默认动作；不可用动作已按模板限制隐藏。",
+      hitAction,
+    ));
+    const errorAction = isComponent
+      ? createActionSelect(errorActions, nodeData.action_on_error || "default")
+      : createPolicyBindingActionSelect(errorActions, nodeData.action_on_error);
+    errorAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_error", errorAction));
+    grid.append(createPolicyGraphEditorField(
+      isComponent ? "错误动作" : "错误动作覆写",
+      isComponent ? "元件执行失败时的处理方式。" : "留空继承规则默认动作。",
+      errorAction,
+    ));
+  }
   editor.append(grid);
   if (node.isLogicGate) {
     const componentGrid = document.createElement("div");

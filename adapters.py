@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import json
 import re
 import time
 from collections.abc import Mapping
@@ -673,6 +674,64 @@ class AstrBotAdapter:
         )
         warnings.extend(provider_result.warnings)
         return AdapterResult(True, warnings)
+
+    async def get_current_conversation_history(self, event: Any) -> AdapterResult:
+        """Read the current AstrBot branch without creating or changing it."""
+
+        if self.context is None:
+            return AdapterResult(False, ["conversation context is unavailable"])
+        manager = getattr(self.context, "conversation_manager", None)
+        if manager is None:
+            return AdapterResult(False, ["conversation manager is unavailable"])
+        umo = self.get_umo(event)
+        if not umo:
+            return AdapterResult(False, ["conversation UMO is unavailable"])
+        get_current_id = getattr(manager, "get_curr_conversation_id", None)
+        get_conversation = getattr(manager, "get_conversation", None)
+        if not callable(get_current_id) or not callable(get_conversation):
+            return AdapterResult(False, ["conversation manager API is unavailable"])
+        try:
+            conversation_id = get_current_id(umo)
+            if inspect.isawaitable(conversation_id):
+                conversation_id = await conversation_id
+            conversation_id = str(conversation_id or "").strip()
+            if not conversation_id:
+                return AdapterResult(False, ["current conversation is unavailable"])
+            try:
+                conversation = get_conversation(
+                    umo, conversation_id, create_if_not_exists=False
+                )
+            except TypeError:
+                # Older AstrBot versions expose the same read API without the
+                # explicit non-creating keyword.
+                conversation = get_conversation(umo, conversation_id)
+            if inspect.isawaitable(conversation):
+                conversation = await conversation
+        except Exception as exc:
+            return AdapterResult(
+                False,
+                [f"conversation history read failed: {type(exc).__name__}"],
+            )
+
+        if conversation is None:
+            return AdapterResult(False, ["current conversation is unavailable"])
+        raw_history = getattr(conversation, "history", None)
+        if not isinstance(raw_history, str):
+            return AdapterResult(False, ["conversation history is unavailable"])
+        try:
+            history = json.loads(raw_history)
+        except (TypeError, ValueError):
+            return AdapterResult(False, ["conversation history is malformed"])
+        if not isinstance(history, list):
+            return AdapterResult(False, ["conversation history is malformed"])
+        return AdapterResult(
+            True,
+            metadata={
+                "umo": umo,
+                "conversation_id": conversation_id,
+                "history": history,
+            },
+        )
 
     async def request_llm_text(
         self,

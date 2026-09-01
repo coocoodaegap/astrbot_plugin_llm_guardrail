@@ -52,6 +52,7 @@ COMPONENT_TEMPLATES["input_rail"].update(
         "role_marker_spoofing_detector",
         "external_fetch_detector",
         "instruction_override_detector",
+        "context_extractor",
         "contains_forward",
         "contains_file",
         "contains_image",
@@ -71,6 +72,7 @@ COMPONENT_TEMPLATES["request_rail"].update(
         "role_marker_spoofing_detector",
         "external_fetch_detector",
         "instruction_override_detector",
+        "context_extractor",
     }
 )
 COMPONENT_TEMPLATES["output_rail"].update(
@@ -81,6 +83,7 @@ COMPONENT_TEMPLATES["output_rail"].update(
         "refusal_leakage_detector",
         "sensitive_echo_detector",
         "language_drift_detector",
+        "context_extractor",
     }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
@@ -109,6 +112,7 @@ DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "sensitive_echo_detector",
     "language_drift_detector",
 }
+FIXED_OBSERVE_COMPONENT_TEMPLATES = {"context_extractor"}
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 LEGACY_FALLBACK_DETECTOR_SWITCHES = (
@@ -540,6 +544,8 @@ def _normalize_node(
         "instruction_override_detector",
     }:
         _normalize_input_detector(rule_id, template_key, config, warnings)
+    elif template_key == "context_extractor":
+        _normalize_context_extractor(rule_id, config, warnings)
     elif template_key == "poor_quality_detector":
         _normalize_poor_quality_detector(rule_id, config, warnings)
     elif template_key == "metadata_leakage_detector":
@@ -583,6 +589,7 @@ def _normalize_node(
         "role_marker_spoofing_detector",
         "external_fetch_detector",
         "instruction_override_detector",
+        "context_extractor",
         "poor_quality_detector",
         "metadata_leakage_detector",
         "format_violation_detector",
@@ -595,6 +602,7 @@ def _normalize_node(
             raw_action_on_hit == "default"
             and (
                 template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                or template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES
                 or template_key in DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES
             )
         ) else raw_action_on_hit
@@ -606,14 +614,20 @@ def _normalize_node(
             )
             config["action_on_hit"] = (
                 "observe"
-                if template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                if (
+                    template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                    or template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES
+                )
                 else "default"
             )
         if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
             warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
             config["action_on_hit"] = (
                 "observe"
-                if template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                if (
+                    template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                    or template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES
+                )
                 else "default"
             )
         elif rail_name == "output_rail":
@@ -631,6 +645,14 @@ def _normalize_node(
             warnings.append(f"{rule_id}.action_on_error is invalid; fallback to default")
             action_on_error = "default"
         config["action_on_error"] = action_on_error
+
+    if template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES:
+        if raw_action_on_hit not in {"default", "observe"}:
+            warnings.append(f"{rule_id}.action_on_hit is fixed to observe")
+        if raw_action_on_error != "default":
+            warnings.append(f"{rule_id}.action_on_error is fixed to discard")
+        config["action_on_hit"] = "observe"
+        config["action_on_error"] = "discard"
 
     return NormalizedNode(
         rail=rail_name,
@@ -880,6 +902,22 @@ def _normalize_input_detector(
         }.items():
             config[key] = _as_bool(config.get(key), default)
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
+
+
+def _normalize_context_extractor(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the P4 data-only context component without a policy cap."""
+
+    turns = _as_int(config.get("turns"), 3)
+    if turns < 0:
+        warnings.append(f"{rule_id}.turns must be non-negative; fallback to 3")
+        turns = 3
+    config["turns"] = turns
+    config["user_only"] = _as_bool(config.get("user_only"), False)
+    if _as_str(config.get("inspection_template", "")).strip():
+        warnings.append(f"{rule_id}.inspection_template is ignored for context_extractor")
+    config["inspection_template"] = ""
 
 
 def _normalize_poor_quality_detector(

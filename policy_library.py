@@ -37,6 +37,7 @@ KNOWN_COMPONENT_TYPES = frozenset().union(*COMPONENT_TEMPLATES.values())
 SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
     {"plain_keywords", "regex_pattern", "rag_judge", "llm_review"}
 )
+CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
 
 
 @dataclass(frozen=True)
@@ -623,6 +624,10 @@ class PolicyLibrary:
                             policy, component, rule_by_id
                         )
                     )
+                elif component.component_type == CONTEXT_EXTRACTOR_COMPONENT_TYPE:
+                    fatal_errors.extend(
+                        _validate_context_extractor_component(component)
+                    )
                 if _is_sanitize_action(component.action_on_hit):
                     fatal_errors.append(
                         f"component {component.component_id} uses sanitize, which is only available "
@@ -643,6 +648,7 @@ class PolicyLibrary:
                     )
 
         for policy in self.policies:
+            fatal_errors.extend(_validate_context_extractor_payload_uses(policy))
             fatal_errors.extend(_validate_policy_dependency_graph(policy, rule_by_id))
 
         if self.active_policy_id and self.active_policy_id not in policy_ids:
@@ -917,6 +923,93 @@ def _validate_sensitive_echo_component(
                 f"component {component.component_id} skip source {source_id} is not a replayable rule"
             )
     return errors
+
+
+def _validate_context_extractor_component(component: PolicyComponent) -> list[str]:
+    """Keep the P4 extractor a data source rather than an action node."""
+
+    errors: list[str] = []
+    config = component.config if isinstance(component.config, Mapping) else {}
+    raw_turns = config.get("turns", 3)
+    try:
+        turns = int(raw_turns)
+    except (TypeError, ValueError):
+        errors.append(
+            f"component {component.component_id} turns must be a non-negative integer"
+        )
+    else:
+        if turns < 0:
+            errors.append(
+                f"component {component.component_id} turns must be a non-negative integer"
+            )
+    if str(component.inspection_template or "").strip():
+        errors.append(
+            f"component {component.component_id} cannot use inspection_template"
+        )
+    if str(component.action_on_hit or "default").strip() not in {"default", "observe"}:
+        errors.append(
+            f"component {component.component_id} action_on_hit is fixed to observe"
+        )
+    if str(component.action_on_error or "default").strip() not in {"default", "discard"}:
+        errors.append(
+            f"component {component.component_id} action_on_error is fixed to discard"
+        )
+    return errors
+
+
+def _validate_context_extractor_payload_uses(policy: PolicyDefinition) -> list[str]:
+    """Restrict context payload to inspection-template consumers only."""
+
+    context_ids = {
+        component.component_id
+        for component in policy.components
+        if component.component_type == CONTEXT_EXTRACTOR_COMPONENT_TYPE
+    }
+    if not context_ids:
+        return []
+
+    errors: list[str] = []
+    consumers: list[tuple[str, str]] = []
+    consumers.extend(
+        (binding.rule_id, binding.inspection_template)
+        for binding in policy.bindings
+    )
+    consumers.extend(
+        (component.component_id, component.inspection_template)
+        for component in policy.components
+        if component.component_type != CONTEXT_EXTRACTOR_COMPONENT_TYPE
+    )
+    for consumer_id, template in consumers:
+        for source_id, field in _template_payload_references(template):
+            if source_id not in context_ids:
+                continue
+            if field != "value":
+                errors.append(
+                    f"node {consumer_id} may only read {source_id}.value from context_extractor"
+                )
+
+    for rail, settings in policy.rail_settings.items():
+        if not isinstance(settings, Mapping):
+            continue
+        template = str(settings.get("output_redirect_template", "") or "")
+        for source_id, _field in _template_payload_references(template):
+            if source_id in context_ids:
+                errors.append(
+                    f"policy {policy.policy_id} {rail} output_redirect_template cannot read context_extractor"
+                )
+    return errors
+
+
+def _template_payload_references(template: Any) -> list[tuple[str, str]]:
+    if not isinstance(template, str):
+        return []
+    return [
+        (match.group(1), match.group(2))
+        for match in re.finditer(
+            r"\$\{\s*([a-z][a-z0-9_]{0,63})\.([a-z][a-z0-9_]{0,63})\s*\}",
+            template,
+        )
+    ]
 
 
 def _validate_policy_dependency_graph(

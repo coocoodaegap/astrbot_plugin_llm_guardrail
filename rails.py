@@ -50,6 +50,7 @@ try:
         evaluate_output_detector,
         prepare_sensitive_echo_text,
     )
+    from .context_extractor import build_context_extraction
     from .rules import (
         apply_span_replacements,
         clip_text,
@@ -96,6 +97,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_output_detector,
         prepare_sensitive_echo_text,
     )
+    from context_extractor import build_context_extraction
     from rules import (
         apply_span_replacements,
         clip_text,
@@ -115,6 +117,7 @@ REQUEST_ORIGIN_EXTRA_KEY = "_llm_guardrail_request_origin"
 RETRY_TRACE_EXTRA_KEY = "_llm_guardrail_retry_trace"
 OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY = "_llm_guardrail_output_history_directive"
 INPUT_ACCESS_VIOLATION_COUNTED_EXTRA = "_llm_guardrail_access_violation_counted"
+CONTEXT_HISTORY_CACHE_EXTRA_KEY = "_llm_guardrail_context_history_cache"
 
 # P3 deliberately keeps the first retry timeout private and fixed.  Exposing
 # provider switching or a broad retry tuning surface is a later increment.
@@ -149,6 +152,34 @@ RuleResult = NodeResult
 RuleSignal = NodeSignal
 make_result = make_node_result
 skipped_result = skipped_node_result
+
+
+class _ContextHistoryReadCache:
+    """One event-local, coalesced read of one AstrBot conversation branch."""
+
+    def __init__(self, adapter: AstrBotAdapter, event: Any, umo: str) -> None:
+        self.adapter = adapter
+        self.event = event
+        self.umo = umo
+        self._task: asyncio.Task[Any] | None = None
+        self.by_conversation: dict[tuple[str, str], Any] = {}
+
+    async def get(self) -> Any:
+        if self._task is None:
+            self._task = asyncio.create_task(
+                self.adapter.get_current_conversation_history(self.event)
+            )
+        result = await asyncio.shield(self._task)
+        metadata = getattr(result, "metadata", {})
+        if bool(getattr(result, "success", False)) and isinstance(metadata, dict):
+            conversation_id = str(metadata.get("conversation_id", "") or "").strip()
+            if conversation_id:
+                key = (self.umo, conversation_id)
+                existing = self.by_conversation.get(key)
+                if existing is not None:
+                    return existing
+                self.by_conversation[key] = result
+        return result
 
 
 class GuardrailPipeline:
@@ -685,6 +716,8 @@ class GuardrailPipeline:
 
         if rule.template_key == "logic_gate":
             execution = NodeExecution(result=evaluate_logic_gate(rule, context))
+        elif rule.template_key == "context_extractor":
+            execution = await self._execute_context_extractor(rule, context)
         elif rule.template_key in {
             "encoded_payload_detector",
             "length_anomaly_detector",
@@ -733,6 +766,94 @@ class GuardrailPipeline:
             self._attach_sanitized_payload(rail, result, inspected_text)
         self._log_check_completion(rule, execution)
         return execution
+
+    async def _execute_context_extractor(
+        self, rule: NormalizedRule, context: RailContext
+    ) -> NodeExecution:
+        """Build a non-risk, dependency-visible history payload for one node."""
+
+        cache = self._context_history_cache(context)
+        adapter_result = await cache.get()
+        requested_turns = int(rule.config.get("turns", 3))
+        user_only = bool(rule.config.get("user_only", False))
+        if not bool(getattr(adapter_result, "success", False)):
+            extraction = build_context_extraction(
+                None,
+                turns=requested_turns,
+                user_only=user_only,
+            )
+            payload = extraction.payload()
+            payload["diagnostic"] = "history_unavailable"
+            metadata = {
+                key: payload[key]
+                for key in (
+                    "schema",
+                    "requested_turns",
+                    "actual_turns",
+                    "user_only",
+                    "truncated",
+                    "diagnostic",
+                )
+            }
+            return NodeExecution(
+                result=make_result(
+                    rule,
+                    matched=True,
+                    action_on_hit="observe",
+                    metadata=metadata,
+                    signal=NodeSignal(value=True, truthy=True, payload=payload),
+                ),
+                warnings=list(getattr(adapter_result, "warnings", []) or []),
+            )
+
+        raw_history = getattr(adapter_result, "metadata", {}).get("history")
+        extraction = build_context_extraction(
+            raw_history,
+            turns=requested_turns,
+            user_only=user_only,
+            current_input=context.original_input,
+            current_request=context.current_input,
+            current_output=context.current_output,
+        )
+        payload = extraction.payload()
+        metadata = {
+            key: payload[key]
+            for key in (
+                "schema",
+                "requested_turns",
+                "actual_turns",
+                "user_only",
+                "truncated",
+                "diagnostic",
+            )
+        }
+        return NodeExecution(
+            result=make_result(
+                rule,
+                matched=True,
+                action_on_hit="observe",
+                metadata=metadata,
+                signal=NodeSignal(value=True, truthy=True, payload=payload),
+            ),
+            warnings=list(getattr(adapter_result, "warnings", []) or []),
+        )
+
+    def _context_history_cache(self, context: RailContext) -> _ContextHistoryReadCache:
+        cached = self.adapter.get_event_extra(
+            context.event, CONTEXT_HISTORY_CACHE_EXTRA_KEY, None
+        )
+        if isinstance(cached, _ContextHistoryReadCache):
+            return cached
+        cache = _ContextHistoryReadCache(self.adapter, context.event, context.umo)
+        result = self.adapter.set_event_extra(
+            context.event, CONTEXT_HISTORY_CACHE_EXTRA_KEY, cache
+        )
+        if not result.success:
+            # The cache still coalesces concurrent nodes in this Rail.  A
+            # compatibility host that cannot hold extras simply loses the
+            # cross-Step reuse guarantee and continues fail-open.
+            return cache
+        return cache
 
     async def _commit_node_observations(
         self,
@@ -855,6 +976,8 @@ class GuardrailPipeline:
         context: RailContext,
         original: str,
         template: str,
+        *,
+        allow_context_payload: bool = False,
     ) -> str:
         """Render a P3 nonblocking template against the current node snapshot.
 
@@ -878,6 +1001,12 @@ class GuardrailPipeline:
             if not separator or not node_id or not field:
                 return ""
             result = context.results.get(node_id)
+            if (
+                str(getattr(result, "template_key", "") or "")
+                == "context_extractor"
+                and not allow_context_payload
+            ):
+                return ""
             payload = getattr(getattr(result, "signal", None), "payload", None)
             if not isinstance(payload, dict):
                 return ""
@@ -913,6 +1042,11 @@ class GuardrailPipeline:
         template = str(rail.settings.get("output_redirect_template", default_template))
         if not template:
             template = default_template
+        if self._template_references_context_payload(template, context):
+            context.warnings.append(
+                f"{rail.rail}.output_redirect_template cannot read context_extractor; redirect ignored"
+            )
+            return original
         return self._render_stage_template(rail, context, original, template)
 
     def _resolve_node_inspection_template(
@@ -929,9 +1063,26 @@ class GuardrailPipeline:
         if not template:
             return clip_text(stage_text, max_chars)
         return clip_text(
-            self._render_stage_template(rail, context, stage_text, template),
+            self._render_stage_template(
+                rail,
+                context,
+                stage_text,
+                template,
+                allow_context_payload=True,
+            ),
             max_chars,
         )
+
+    @staticmethod
+    def _template_references_context_payload(template: str, context: RailContext) -> bool:
+        for match in re.finditer(r"\$\{([^{}]+)\}", template):
+            node_id, separator, _field = match.group(1).strip().partition(".")
+            if not separator:
+                continue
+            result = context.results.get(node_id)
+            if str(getattr(result, "template_key", "") or "") == "context_extractor":
+                return True
+        return False
 
     def _get_event_origin(self, event: Any) -> str:
         value = self.adapter.get_event_extra(
