@@ -1481,6 +1481,11 @@ for (const definition of policyStepDefinitions) {
     ["block_message", "阻断提示", "text"],
   );
 }
+const outputStepDefinition = policyStepDefinitions.find((definition) => definition.rail === "output_rail");
+const outputDefaultHitActionField = outputStepDefinition?.fields.find((field) => field[0] === "default_action_on_hit");
+if (outputDefaultHitActionField && !outputDefaultHitActionField[3].includes("observe")) {
+  outputDefaultHitActionField[3].unshift("observe");
+}
 
 const policyStepSettingHints = {
   enabled: "关闭后，该 Step 中的所有规则与电子元件都不会执行。",
@@ -2951,8 +2956,8 @@ function renderPolicyGraphNodeEditor(node) {
     ));
   } else {
     const hitAction = isComponent
-      ? createActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit || "default")
-      : createPolicyBindingActionSelect(hitActionsForTemplate(templateKey), nodeData.action_on_hit);
+      ? createActionSelect(hitActionsForTemplate(templateKey, node.rail), nodeData.action_on_hit || "default")
+      : createPolicyBindingActionSelect(hitActionsForTemplate(templateKey, node.rail), nodeData.action_on_hit);
     hitAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_hit", hitAction));
     grid.append(createPolicyGraphEditorField(
       isComponent ? "命中动作" : "命中动作覆写",
@@ -3698,11 +3703,14 @@ function createActionSelect(values, value) {
   select.value = value || "default";
   return select;
 }
-function hitActionsForTemplate(templateKey) {
-  if (templateKey === "plain_keywords" || templateKey === "regex_pattern") {
-    return hitActions;
+function hitActionsForTemplate(templateKey, rail = "") {
+  let actions = templateKey === "plain_keywords" || templateKey === "regex_pattern"
+    ? hitActions
+    : hitActions.filter((action) => action !== "sanitize");
+  if (rail && rail !== "output_rail") {
+    actions = actions.filter((action) => action !== "retry_generation");
   }
-  return hitActions.filter((action) => action !== "sanitize");
+  return actions;
 }
 function createRuleHitActionSelect(templateKey, value) {
   const values = hitActionsForTemplate(templateKey);

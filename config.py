@@ -1510,7 +1510,7 @@ def _coerce_rail_settings(
         settings["max_retries"] = max(_as_int(settings.get("max_retries"), 0), 0)
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
         action = raw_action
-        if action not in {"block", "retry_generation"}:
+        if action not in {"observe", "block", "retry_generation"}:
             warnings.append("output_rail.default_action_on_hit is invalid; fallback to block")
             action = "block"
         settings["default_action_on_hit"] = action

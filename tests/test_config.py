@@ -277,6 +277,22 @@ class ConfigNormalizerTests(unittest.TestCase):
         )
         self.assertEqual(cfg.rails["output_rail"].settings["max_retries"], 2)
 
+    def test_output_default_observe_is_valid_at_step_five(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "observe",
+                    },
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.rails["output_rail"].settings["default_action_on_hit"],
+            "observe",
+        )
+
     def test_stage_output_defaults_use_specific_origin_references(self):
         cfg = normalize_config({})
 
