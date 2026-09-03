@@ -2,6 +2,22 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-09-03
+
+### Added
+
+- 新增全流程策略局部元件 `random_signal`：以唯一配置 `probability` 生成独立真假信号，并在 payload 记录概率、抽样值与结果。
+- `random_signal` 可在五个 Rail 执行，适合作为提示词强化、路由、RAG/LLM 旁审等策略分支的前置条件。
+
+### Fixed
+
+- Step 2/4 的通用信号元件在 `action_on_hit: default` 时会回退到 Rail 默认命中动作；`action_on_error: default` 会回退到 Rail 默认错误动作。默认仍为 `observe` / `discard`。
+- 对 Step 2/4 中命中 `block` 或错误回退为 `block` 的通用信号元件，现在会实际终止请求并使用 Rail 阻断提示。
+
+- Step 2 和 Step 4 增补策略级“默认命中动作”“默认错误动作”及“阻断提示”配置。
+- Step 5 的默认命中动作增补 `observe`，可将使用 `default` 的输出节点统一置于观测模式。
+- 策略图按所在 Rail 过滤命中动作：`retry_generation` 仅在 Step 5 显示；`sanitize` 仍仅对关键词与正则节点显示。
+
 ## [0.5.0] - 2026-09-01
 
 ### Added
