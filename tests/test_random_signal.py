@@ -213,6 +213,106 @@ class RandomSignalTests(unittest.TestCase):
         self.assertTrue(context.results["sampled_strengthen"].matched)
         self.assertIn("Sampled guardrail instruction.", request.system_prompt)
 
+    def test_step_two_and_step_four_accept_default_block_settings(self):
+        config = normalize_config(
+            {
+                "routing_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "block",
+                        "default_action_on_error": "record",
+                        "block_message": "routing sampled block",
+                    },
+                    "rule_list": [
+                        {
+                            "__template_key": "random_signal",
+                            "rule_id": "route_sample",
+                            "probability": 1.0,
+                        }
+                    ],
+                },
+                "prompt_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "block",
+                        "default_action_on_error": "record",
+                        "block_message": "prompt sampled block",
+                    },
+                },
+            }
+        )
+
+        route_rail = config.rails["routing_rail"]
+        prompt_rail = config.rails["prompt_rail"]
+        event = _Event()
+        context = asyncio.run(GuardrailPipeline(config).run_message(event))
+
+        self.assertEqual(route_rail.settings["default_action_on_hit"], "block")
+        self.assertEqual(route_rail.settings["default_action_on_error"], "record")
+        self.assertEqual(route_rail.settings["block_message"], "routing sampled block")
+        self.assertEqual(prompt_rail.settings["default_action_on_hit"], "block")
+        self.assertEqual(prompt_rail.settings["default_action_on_error"], "record")
+        self.assertEqual(prompt_rail.settings["block_message"], "prompt sampled block")
+        self.assertTrue(context.input_blocked)
+        self.assertTrue(event.stopped)
+
+    def test_step_four_default_hit_action_blocks_a_sampled_component(self):
+        config = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "block",
+                        "block_message": "prompt sampled block",
+                    },
+                    "rule_list": [
+                        {
+                            "__template_key": "random_signal",
+                            "rule_id": "prompt_sample",
+                            "probability": 1.0,
+                        }
+                    ],
+                },
+            }
+        )
+        event = _Event()
+
+        context = asyncio.run(GuardrailPipeline(config).run_request(event, _Request()))
+
+        self.assertTrue(context.results["prompt_sample"].matched)
+        self.assertTrue(context.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(context.terminal_action["rail"], "prompt_rail")
+
+    def test_step_two_default_error_action_blocks_a_failed_component(self):
+        config = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_error": "block",
+                        "block_message": "routing component error",
+                    },
+                    "rule_list": [
+                        {
+                            "__template_key": "random_signal",
+                            "rule_id": "route_sample",
+                            "probability": 0.5,
+                        }
+                    ],
+                },
+            }
+        )
+        event = _Event()
+
+        with patch("components.random.random", side_effect=RuntimeError("test error")):
+            context = asyncio.run(GuardrailPipeline(config).run_message(event))
+
+        self.assertTrue(context.input_blocked)
+        self.assertTrue(event.stopped)
+        self.assertEqual(context.results["route_sample"].status, "failed")
+        self.assertEqual(context.terminal_action["source_kind"], "error")
+
 
 if __name__ == "__main__":
     unittest.main()

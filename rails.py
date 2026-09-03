@@ -1123,16 +1123,31 @@ class GuardrailPipeline:
 
     async def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
-        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
-            if rule.template_key == "logic_gate":
-                return evaluate_logic_gate(rule, ctx)
-            if rule.template_key == "random_signal":
-                return evaluate_random_signal(rule)
-            if rule.template_key == "strengthen_prompt":
-                return self._execute_strengthen_prompt(rule, ctx)
-            return skipped_result(rule, "unsupported_template")
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
+            try:
+                if rule.template_key == "logic_gate":
+                    result = evaluate_logic_gate(rule, ctx)
+                elif rule.template_key == "random_signal":
+                    result = evaluate_random_signal(rule)
+                elif rule.template_key == "strengthen_prompt":
+                    return NodeExecution(result=self._execute_strengthen_prompt(rule, ctx))
+                else:
+                    result = skipped_result(rule, "unsupported_template")
+            except Exception as exc:
+                execution = self._handle_rule_error(rail, rule, ctx, exc)
+                error_plan = execution.deferred.get("error_plan")
+                if isinstance(error_plan, ErrorActionPlan) and error_plan.block:
+                    self._apply_error_block(rail, ctx, error_plan, error_plan.node_id)
+                return execution
+            await self._apply_input_action(
+                rail, ctx, result, resolve_hit_action_plan(rail, result)
+            )
+            return NodeExecution(result=result)
 
-        await self.scheduler.run_async(rail, context, execute)
+        await self.scheduler.run_async(
+            rail, context, execute,
+            should_stop=lambda ctx: ctx.input_blocked,
+        )
 
     def _execute_strengthen_prompt(
         self, rule: NormalizedRule, context: RailContext
@@ -1193,21 +1208,36 @@ class GuardrailPipeline:
 
     async def _run_routing_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
-        async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
-            if rule.template_key == "logic_gate":
-                return evaluate_logic_gate(rule, ctx)
-            if rule.template_key == "random_signal":
-                return evaluate_random_signal(rule)
-            if rule.template_key == "route_policy":
-                return await self._execute_route_policy(rule, ctx)
-            return skipped_result(rule, "unsupported_template")
+        async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
+            try:
+                if rule.template_key == "logic_gate":
+                    result = evaluate_logic_gate(rule, ctx)
+                elif rule.template_key == "random_signal":
+                    result = evaluate_random_signal(rule)
+                elif rule.template_key == "route_policy":
+                    return NodeExecution(
+                        result=await self._execute_route_policy(rule, ctx)
+                    )
+                else:
+                    result = skipped_result(rule, "unsupported_template")
+            except Exception as exc:
+                execution = self._handle_rule_error(rail, rule, ctx, exc)
+                error_plan = execution.deferred.get("error_plan")
+                if isinstance(error_plan, ErrorActionPlan) and error_plan.block:
+                    self._apply_error_block(rail, ctx, error_plan, error_plan.node_id)
+                return execution
+            await self._apply_input_action(
+                rail, ctx, result, resolve_hit_action_plan(rail, result)
+            )
+            return NodeExecution(result=result)
 
         await self.scheduler.run_async(
             rail,
             context,
             execute,
             should_stop=lambda ctx: (
-                ctx.route_decision is not None and ctx.route_decision.applied
+                ctx.input_blocked
+                or (ctx.route_decision is not None and ctx.route_decision.applied)
             ),
         )
 

@@ -87,7 +87,7 @@ def _resolved_hit_action(rail: NormalizedRail, result: NodeResult) -> str:
 
 
 def _default_hit_action(rail: NormalizedRail) -> str:
-    if rail.rail in {"input_rail", "request_rail"}:
+    if rail.rail in {"input_rail", "routing_rail", "request_rail", "prompt_rail"}:
         return str(rail.settings.get("default_action_on_hit", "block"))
     if rail.rail == "output_rail":
         return str(rail.settings.get("default_action_on_hit", "block"))
@@ -104,7 +104,7 @@ def _resolved_error_action(rail: NormalizedRail, action: str) -> str:
 def _hit_action_target(rail_name: str, action: str) -> str:
     if action not in {"block", "sanitize", "retry_generation"}:
         return "none"
-    if rail_name in {"input_rail", "request_rail"}:
+    if rail_name in {"input_rail", "routing_rail", "request_rail", "prompt_rail"}:
         return "input"
     if rail_name == "output_rail":
         return "output"
@@ -114,7 +114,7 @@ def _hit_action_target(rail_name: str, action: str) -> str:
 def _error_action_target(rail_name: str, action: str) -> str:
     if action != "block":
         return "none"
-    if rail_name in {"input_rail", "request_rail"}:
+    if rail_name in {"input_rail", "routing_rail", "request_rail", "prompt_rail"}:
         return "input"
     if rail_name == "output_rail":
         return "output"

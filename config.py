@@ -642,9 +642,11 @@ def _normalize_node(
                 )
                 config["action_on_hit"] = "default"
         elif rail_name in {"prompt_rail", "routing_rail"}:
-            config["action_on_hit"] = "observe"
+            if action not in {"default", "observe", "block"}:
+                warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
+                config["action_on_hit"] = "default"
 
-    if rail_name in {"input_rail", "request_rail", "output_rail"}:
+    if rail_name in {"input_rail", "routing_rail", "request_rail", "prompt_rail", "output_rail"}:
         action_on_error = raw_action_on_error.strip()
         if action_on_error not in ERROR_ACTIONS:
             warnings.append(f"{rule_id}.action_on_error is invalid; fallback to default")
@@ -1397,14 +1399,27 @@ def _rail_defaults(
     rail_name: str, fallback_policy_settings: dict[str, Any]
 ) -> dict[str, Any]:
     settings = {"enabled": True}
+    if rail_name in {"routing_rail", "prompt_rail"}:
+        settings.update(
+            {
+                "default_action_on_hit": "observe",
+                "default_action_on_error": "discard",
+                "block_message": fallback_policy_settings["block_message"],
+            }
+        )
+    elif rail_name in {"input_rail", "request_rail", "output_rail"}:
+        settings.update(
+            {
+                "default_action_on_hit": fallback_policy_settings["default_action_on_hit"],
+                "default_action_on_error": fallback_policy_settings["default_action_on_error"],
+                "block_message": fallback_policy_settings["block_message"],
+            }
+        )
     if rail_name in {"input_rail", "request_rail", "output_rail"}:
         settings.update(
             {
                 "max_text_chars": fallback_policy_settings["max_text_chars"],
                 "default_llm_provider": fallback_policy_settings["default_llm_provider"],
-                "default_action_on_hit": fallback_policy_settings["default_action_on_hit"],
-                "default_action_on_error": fallback_policy_settings["default_action_on_error"],
-                "block_message": fallback_policy_settings["block_message"],
                 # Sanitizers only create NodeSignal payloads.  A policy must
                 # explicitly choose a payload as stage output before any host
                 # text is changed.
@@ -1420,7 +1435,26 @@ def _coerce_rail_settings(
     rail_name: str, settings: dict[str, Any], warnings: list[str]
 ) -> dict[str, Any]:
     settings["enabled"] = _as_bool(settings.get("enabled"), True)
-    if rail_name == "input_rail":
+    if rail_name in {"routing_rail", "prompt_rail"}:
+        raw_action = _as_str(settings.get("default_action_on_hit", "observe"))
+        action = raw_action
+        if action not in {"observe", "block"}:
+            warnings.append(
+                f"{rail_name}.default_action_on_hit is invalid; fallback to observe"
+            )
+            action = "observe"
+        settings["default_action_on_hit"] = action
+        error_action = _as_str(
+            settings.get("default_action_on_error", "discard")
+        ).strip()
+        if error_action not in DEFAULT_ERROR_ACTIONS:
+            warnings.append(
+                f"{rail_name}.default_action_on_error is invalid; fallback to discard"
+            )
+            error_action = "discard"
+        settings["default_action_on_error"] = error_action
+        settings["block_message"] = _as_str(settings.get("block_message", ""))
+    elif rail_name == "input_rail":
         settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
         settings["default_llm_provider"] = _as_str(
             settings.get("default_llm_provider", "")

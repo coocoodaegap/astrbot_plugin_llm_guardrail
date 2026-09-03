@@ -1473,6 +1473,15 @@ const policyStepDefinitions = [
     ["block_message", "阻断提示", "text"], ["output_redirect_template", "输出重定向", "text"],
   ] },
 ];
+for (const definition of policyStepDefinitions) {
+  if (!new Set(["routing_rail", "prompt_rail"]).has(definition.rail)) continue;
+  definition.fields.push(
+    ["default_action_on_hit", "默认命中动作", "select", ["observe", "block"]],
+    ["default_action_on_error", "默认错误动作", "select", ["discard", "record", "block"]],
+    ["block_message", "阻断提示", "text"],
+  );
+}
+
 const policyStepSettingHints = {
   enabled: "关闭后，该 Step 中的所有规则与电子元件都不会执行。",
   max_text_chars: "限制该 Step 每次送入检查的文本长度；留空沿用系统设置。",
