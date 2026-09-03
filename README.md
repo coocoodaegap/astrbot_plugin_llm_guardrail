@@ -18,6 +18,10 @@
   -> Step 5 输出检查 / 有界重试
 ```
 
+下面是一套完整策略的依赖图示例：
+
+![LLM Guardrail 策略依赖图示例](https://assets.coocoodaegap.com/astrbot_plugin_llm_guardrail_preset1.png)
+
 | 能力 | 说明 |
 | --- | --- |
 | 输入与最终请求检查 | 支持关键词、正则、本地检测元件、逻辑门、RAG 与 LLM 复核；可观察、净化或阻断。 |
@@ -53,6 +57,12 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 ```
 
 重启 AstrBot 后，在插件管理页打开 **LLM Guardrail**。本插件要求 AstrBot `>=4.26.0,<5`。
+
+## 官方示例策略
+
+仓库中的 [`presets/`](presets/) 提供可导入的策略包、示例知识库和配套说明。它们用于学习、测试和二次配置，**不包含在插件市场或 GitHub Release 的分发 ZIP 中**；请从项目仓库获取，并先阅读各 preset 的 README。
+
+首个完整示例见 [`presets/preset1/`](presets/preset1/)。其中的 RAG 语料需要由使用者自行导入 AstrBot 知识库，策略包不会自动上传文件、创建知识库或填入 Provider 配置。
 
 ## 快速试用
 
