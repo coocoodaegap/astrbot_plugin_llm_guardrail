@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -43,7 +44,7 @@ RULE_TEMPLATES: dict[str, set[str]] = {
 # They remain supported by the runtime normalizer because compiled policies emit
 # them into a rail's rule_list alongside reusable rules.
 COMPONENT_TEMPLATES: dict[str, set[str]] = {
-    rail_name: {"logic_gate"} for rail_name in RAIL_NAMES
+    rail_name: {"logic_gate", "random_signal"} for rail_name in RAIL_NAMES
 }
 COMPONENT_TEMPLATES["input_rail"].update(
     {
@@ -113,6 +114,7 @@ DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "language_drift_detector",
 }
 FIXED_OBSERVE_COMPONENT_TEMPLATES = {"context_extractor"}
+FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES = {"context_extractor"}
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 LEGACY_FALLBACK_DETECTOR_SWITCHES = (
@@ -546,6 +548,8 @@ def _normalize_node(
         _normalize_input_detector(rule_id, template_key, config, warnings)
     elif template_key == "context_extractor":
         _normalize_context_extractor(rule_id, config, warnings)
+    elif template_key == "random_signal":
+        _normalize_random_signal(rule_id, config, warnings)
     elif template_key == "poor_quality_detector":
         _normalize_poor_quality_detector(rule_id, config, warnings)
     elif template_key == "metadata_leakage_detector":
@@ -590,6 +594,7 @@ def _normalize_node(
         "external_fetch_detector",
         "instruction_override_detector",
         "context_extractor",
+        "random_signal",
         "poor_quality_detector",
         "metadata_leakage_detector",
         "format_violation_detector",
@@ -649,9 +654,10 @@ def _normalize_node(
     if template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES:
         if raw_action_on_hit not in {"default", "observe"}:
             warnings.append(f"{rule_id}.action_on_hit is fixed to observe")
+        config["action_on_hit"] = "observe"
+    if template_key in FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES:
         if raw_action_on_error != "default":
             warnings.append(f"{rule_id}.action_on_error is fixed to discard")
-        config["action_on_hit"] = "observe"
         config["action_on_error"] = "discard"
 
     return NormalizedNode(
@@ -918,6 +924,20 @@ def _normalize_context_extractor(
     if _as_str(config.get("inspection_template", "")).strip():
         warnings.append(f"{rule_id}.inspection_template is ignored for context_extractor")
     config["inspection_template"] = ""
+
+
+def _normalize_random_signal(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the probability-only, policy-local sampling component."""
+
+    probability = _as_float(config.get("probability"), 0.5)
+    if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+        warnings.append(
+            f"{rule_id}.probability must be within 0.0..1.0; fallback to 0.5"
+        )
+        probability = 0.5
+    config["probability"] = probability
 
 
 def _normalize_poor_quality_detector(

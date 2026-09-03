@@ -6,6 +6,7 @@ import base64
 import binascii
 from collections import Counter
 import json
+import random
 import re
 import unicodedata
 
@@ -765,6 +766,27 @@ def evaluate_output_detector(
         node,
         matched=matched,
         action_on_hit=str(node.config.get("action_on_hit", "default")),
+        metadata=payload,
+        signal=NodeSignal(value=matched, truthy=matched, payload=payload),
+    )
+
+
+def evaluate_random_signal(node: NormalizedNode):
+    """Sample one independent boolean signal for a policy graph node."""
+
+    probability = float(node.config.get("probability", 0.5))
+    roll = random.random()
+    matched = roll < probability
+    payload = {
+        "component": "random_signal",
+        "probability": probability,
+        "roll": roll,
+        "sampled": matched,
+    }
+    return make_node_result(
+        node,
+        matched=matched,
+        action_on_hit=str(node.config.get("action_on_hit", "observe")),
         metadata=payload,
         signal=NodeSignal(value=matched, truthy=matched, payload=payload),
     )

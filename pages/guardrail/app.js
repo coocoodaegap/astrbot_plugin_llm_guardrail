@@ -522,6 +522,7 @@ const templateDescriptions = {
   role_marker_spoofing_detector: "角色标记伪造检测器",
   external_fetch_detector: "外部资源操作检测器",
   instruction_override_detector: "指令覆盖检测器",
+  random_signal: "随机信号",
   context_extractor: "对话上下文提取器",
   format_violation_detector: "输出格式违约检测器",
   poor_quality_detector: "异常低质回复检测器",
@@ -1529,6 +1530,16 @@ const inputRedirectTemplates = new Set([
   "instruction_override_detector",
 ]);
 const componentDefinitions = {
+  random_signal: {
+    label: "随机信号",
+    description: "按配置概率在每次策略执行中独立抽样，产出可供任意后续节点消费的真假信号；可观察或阻断。",
+    rails: new Set(policyGraphSteps.map((step) => step.rail)),
+    fields: [
+      { key: "probability", label: "命中概率", hint: "0 表示永不命中，1 表示每次命中；中间值按本次策略执行独立抽样。", type: "number", default: 0.5 },
+    ],
+    defaultConfig: () => ({ probability: 0.5 }),
+    defaultAction: "observe",
+  },
   logic_gate: {
     label: "逻辑门",
     description: "组合当前策略内节点结果；带 payload 字段的输入还可按顺序汇集首个值或拼接文本。",

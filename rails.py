@@ -48,6 +48,7 @@ try:
         evaluate_logic_gate,
         evaluate_message_fact_component,
         evaluate_output_detector,
+        evaluate_random_signal,
         prepare_sensitive_echo_text,
     )
     from .context_extractor import build_context_extraction
@@ -95,6 +96,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_logic_gate,
         evaluate_message_fact_component,
         evaluate_output_detector,
+        evaluate_random_signal,
         prepare_sensitive_echo_text,
     )
     from context_extractor import build_context_extraction
@@ -716,6 +718,8 @@ class GuardrailPipeline:
 
         if rule.template_key == "logic_gate":
             execution = NodeExecution(result=evaluate_logic_gate(rule, context))
+        elif rule.template_key == "random_signal":
+            execution = NodeExecution(result=evaluate_random_signal(rule))
         elif rule.template_key == "context_extractor":
             execution = await self._execute_context_extractor(rule, context)
         elif rule.template_key in {
@@ -1122,6 +1126,8 @@ class GuardrailPipeline:
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
+            if rule.template_key == "random_signal":
+                return evaluate_random_signal(rule)
             if rule.template_key == "strengthen_prompt":
                 return self._execute_strengthen_prompt(rule, ctx)
             return skipped_result(rule, "unsupported_template")
@@ -1190,6 +1196,8 @@ class GuardrailPipeline:
         async def execute(rule: NormalizedRule, ctx: RailContext) -> RuleResult:
             if rule.template_key == "logic_gate":
                 return evaluate_logic_gate(rule, ctx)
+            if rule.template_key == "random_signal":
+                return evaluate_random_signal(rule)
             if rule.template_key == "route_policy":
                 return await self._execute_route_policy(rule, ctx)
             return skipped_result(rule, "unsupported_template")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -38,6 +39,7 @@ SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
     {"plain_keywords", "regex_pattern", "rag_judge", "llm_review"}
 )
 CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
+RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
 
 
 @dataclass(frozen=True)
@@ -628,6 +630,8 @@ class PolicyLibrary:
                     fatal_errors.extend(
                         _validate_context_extractor_component(component)
                     )
+                elif component.component_type == RANDOM_SIGNAL_COMPONENT_TYPE:
+                    fatal_errors.extend(_validate_random_signal_component(component))
                 if _is_sanitize_action(component.action_on_hit):
                     fatal_errors.append(
                         f"component {component.component_id} uses sanitize, which is only available "
@@ -954,6 +958,25 @@ def _validate_context_extractor_component(component: PolicyComponent) -> list[st
         errors.append(
             f"component {component.component_id} action_on_error is fixed to discard"
         )
+    return errors
+
+
+def _validate_random_signal_component(component: PolicyComponent) -> list[str]:
+    """Validate the sole business setting of the generic sampling component."""
+
+    errors: list[str] = []
+    config = component.config if isinstance(component.config, Mapping) else {}
+    try:
+        probability = float(config.get("probability", 0.5))
+    except (TypeError, ValueError):
+        errors.append(
+            f"component {component.component_id} probability must be within 0.0..1.0"
+        )
+    else:
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+            errors.append(
+                f"component {component.component_id} probability must be within 0.0..1.0"
+            )
     return errors
 
 
