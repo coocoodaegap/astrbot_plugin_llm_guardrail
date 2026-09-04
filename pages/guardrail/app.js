@@ -2725,11 +2725,30 @@ function policyStepDefinition(rail) {
 function setPolicyGraphEditorStatus(message = "", isError = false) {
   if (message) publishReport(message, { tone: isError ? "error" : "success" });
 }
-function createPolicyGraphEditorField(labelText, hintText, control, fullWidth = false) {
+function createSettingKey(key) {
+  const badge = document.createElement("code");
+  badge.className = "setting-key";
+  badge.textContent = key;
+  return badge;
+}
+function setLabeledText(target, labelText, fieldKey = "") {
+  const inferred = fieldKey
+    ? null
+    : String(labelText).match(/^(.*)（([a-z][a-z0-9_]*)）$/);
+  const heading = document.createElement("span");
+  heading.className = "field-label-heading";
+  heading.textContent = inferred ? inferred[1] : labelText;
+  const key = fieldKey || inferred?.[2];
+  if (key) {
+    heading.append(createSettingKey(key));
+  }
+  target.replaceChildren(heading);
+}
+function createPolicyGraphEditorField(labelText, hintText, control, fullWidth = false, fieldKey = "") {
   const label = document.createElement("label");
   if (fullWidth) label.classList.add("full-width");
   const title = document.createElement("span");
-  title.textContent = labelText;
+  setLabeledText(title, labelText, fieldKey);
   label.append(title);
   if (hintText) label.append(createRuleFieldHint(hintText));
   label.append(control);
@@ -2858,7 +2877,8 @@ function appendPolicyGraphEditorHeading(container, eyebrow, titleText, descripti
   title.textContent = titleText;
   const description = document.createElement("p");
   description.textContent = descriptionText;
-  heading.append(eyebrowElement, title, description);
+  if (eyebrow) heading.append(eyebrowElement);
+  heading.append(title, description);
   container.append(heading);
 }
 function updatePolicyComponentConfig(componentId, key, value) {
@@ -2879,7 +2899,7 @@ function renderPolicyGraphNodeEditor(node) {
   const isComponent = node.kind === "component";
   appendPolicyGraphEditorHeading(
     editor,
-    isComponent ? "POLICY COMPONENT" : "RULE BINDING",
+    "",
     `${isComponent ? "编辑电子元件" : "编辑规则绑定"} · ${node.id || "未命名节点"}`,
     isComponent
       ? "元件仅属于当前策略，所有参数会随策略快照保存。"
@@ -2890,7 +2910,7 @@ function renderPolicyGraphNodeEditor(node) {
   const step = policyGraphStepByRail.get(node.rail);
   for (const [label, value] of [
     [isComponent ? "元件 ID" : "规则 ID", node.id || "未命名"],
-    [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || templateKey || "未知类型"],
+    [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || "未知类型"],
     ["所属 Step", step?.label || node.rail],
     ["依赖", nodeData.depend_on || "未设置"],
     ["检查内容", templateKey === "context_extractor" ? "当前对话历史（payload.value）" : templateKey === "compose_text" ? "策略内文本（payload.value）" : (nodeData.inspection_template || "当前阶段原文")],
@@ -2909,7 +2929,7 @@ function renderPolicyGraphNodeEditor(node) {
   enabled.checked = nodeData.enabled !== false;
   enabled.addEventListener("change", () => updatePolicyBinding(node.id, "enabled", enabled));
   grid.append(createPolicyGraphEditorField(
-    isComponent ? "启用此元件" : "启用此规则",
+    isComponent ? "启用此元件（enabled）" : "启用此规则（enabled）",
     node.stepEnabled ? "关闭后该节点不会执行。" : "当前 Step 已关闭；此开关恢复后仍需重新启用 Step。",
     enabled,
   ));
@@ -2920,7 +2940,7 @@ function renderPolicyGraphNodeEditor(node) {
   priority.placeholder = isComponent ? "默认值 100" : `继承规则默认值 ${rule?.default_priority ?? 100}`;
   priority.addEventListener("change", () => updatePolicyBinding(node.id, "priority", priority));
   grid.append(createPolicyGraphEditorField(
-    isComponent ? "优先级" : "优先级覆写",
+    isComponent ? "优先级（priority）" : "优先级覆写（priority）",
     isComponent ? "数值越小越先执行；默认值为 100。" : "数值越小越先执行；留空继承规则默认优先级。",
     priority,
   ));
@@ -2935,8 +2955,8 @@ function renderPolicyGraphNodeEditor(node) {
       inputRedirect,
     ));
     grid.append(createPolicyGraphEditorField(
-      "检查内容重定向",
-      "仅作用于当前策略的这个节点。可引用本阶段可见的 origin 或 ${node_id.field}；缺失引用为空，不等待也不自动建立 depends_on。",
+      "检查内容重定向（inspection_template）",
+      "仅作用于当前策略的这个节点。可引用本阶段可见的 origin 或 ${node_id.field}；缺失引用为空，不等待也不自动建立 depend_on。",
       inputRedirect,
       true,
     ));
@@ -2948,8 +2968,8 @@ function renderPolicyGraphNodeEditor(node) {
     template.placeholder = "可使用 ${event_origin}、${req_origin}、${res_origin}、${CONSTANT_NAME} 与 ${node_id.value}";
     template.addEventListener("change", () => updatePolicyComponentConfig(node.id, "template", template.value));
     grid.append(createPolicyGraphEditorField(
-      "生成文本",
-      "按当前 Step 已可见的 origin、系统常量和已完成节点的 value 渲染。只供后续检查节点的“检查内容重定向”读取；不设文本长度上限，也不会隐式建立 depends_on。",
+      "生成文本（template）",
+      "按当前 Step 已可见的 origin、系统常量和已完成节点的 value 渲染。只供后续检查节点的“检查内容重定向”读取；不设文本长度上限，也不会隐式建立 depend_on。",
       template,
       true,
     ));
@@ -2960,22 +2980,26 @@ function renderPolicyGraphNodeEditor(node) {
     fixedAction.value = "observe（固定）";
     fixedAction.disabled = true;
     grid.append(createPolicyGraphEditorField(
-      "执行语义",
+      "命中动作",
       templateKey === "context_extractor"
         ? "该元件永远以 true 表示“上下文已就绪”，只供 depend_on 与检查内容重定向消费；不会执行风险动作。"
         : "该元件永远以 true 表示“文本已就绪”，只供 depend_on 与检查内容重定向消费；不会执行风险动作。",
       fixedAction,
+      false,
+      "action_on_hit",
     ));
     const fixedError = document.createElement("input");
     fixedError.type = "text";
     fixedError.value = "discard（fail-open）";
     fixedError.disabled = true;
     grid.append(createPolicyGraphEditorField(
-      "读取失败",
+      "错误动作",
       templateKey === "context_extractor"
         ? "读取失败时产出空上下文与诊断，后续节点继续检查其当前阶段对象。"
         : "渲染异常时丢弃本元件结果，后续节点继续检查其当前阶段对象。",
       fixedError,
+      false,
+      "action_on_error",
     ));
   } else {
     const hitAction = isComponent
@@ -2983,7 +3007,7 @@ function renderPolicyGraphNodeEditor(node) {
       : createPolicyBindingActionSelect(hitActionsForRail(node.rail), nodeData.action_on_hit);
     hitAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_hit", hitAction));
     grid.append(createPolicyGraphEditorField(
-      isComponent ? "命中动作" : "命中动作覆写",
+      isComponent ? "命中动作（action_on_hit）" : "命中动作覆写（action_on_hit）",
       isComponent ? "元件命中后的处理方式。" : "留空继承规则默认动作；不可用动作已按模板限制隐藏。",
       hitAction,
     ));
@@ -2992,7 +3016,7 @@ function renderPolicyGraphNodeEditor(node) {
       : createPolicyBindingActionSelect(errorActions, nodeData.action_on_error);
     errorAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_error", errorAction));
     grid.append(createPolicyGraphEditorField(
-      isComponent ? "错误动作" : "错误动作覆写",
+      isComponent ? "错误动作（action_on_error）" : "错误动作覆写（action_on_error）",
       isComponent ? "元件执行失败时的处理方式。" : "留空继承规则默认动作。",
       errorAction,
     ));
@@ -3007,13 +3031,13 @@ function renderPolicyGraphNodeEditor(node) {
     }
     gate.value = node.component?.config?.gate === "any" ? "any" : "all";
     gate.addEventListener("change", () => updatePolicyComponentConfig(node.id, "gate", gate.value));
-    componentGrid.append(createPolicyGraphEditorField("逻辑关系", "决定所有输入都满足还是任一输入满足。", gate));
+    componentGrid.append(createPolicyGraphEditorField("逻辑关系", "决定所有输入都满足还是任一输入满足。", gate, false, "gate"));
     const invert = document.createElement("input");
     invert.type = "checkbox";
     invert.className = "setting-checkbox";
     invert.checked = Boolean(node.component?.config?.invert);
     invert.addEventListener("change", () => updatePolicyComponentConfig(node.id, "invert", invert.checked));
-    componentGrid.append(createPolicyGraphEditorField("结果取反", "开启后反转逻辑门的计算结果。", invert));
+    componentGrid.append(createPolicyGraphEditorField("结果取反", "开启后反转逻辑门的计算结果。", invert, false, "invert"));
     const inputs = document.createElement("textarea");
     inputs.rows = 3;
     inputs.placeholder = "每行一个：[!|?|~]节点 ID[.payload 字段[?]]";
@@ -3028,6 +3052,7 @@ function renderPolicyGraphNodeEditor(node) {
       "每行一个：[!|?|~]节点 ID[.payload 字段[?]]，裸节点只参与布尔判断；带 .字段 的输入在前缀条件成立后读取 payload。尾随 ? 只允许已存在的空字符串。",
       inputs,
       true,
+      "inputs",
     ));
     const valueItemTemplate = document.createElement("textarea");
     valueItemTemplate.rows = 2;
@@ -3043,6 +3068,7 @@ function renderPolicyGraphNodeEditor(node) {
       "仅用于 joined_string；只允许 ${value}（字段值）与 ${source}（来源节点 ID）。",
       valueItemTemplate,
       true,
+      "value_item_template",
     ));
     const valueSeparator = document.createElement("textarea");
     valueSeparator.rows = 2;
@@ -3058,6 +3084,7 @@ function renderPolicyGraphNodeEditor(node) {
       "仅用于 joined_string；默认是换行，可以留空以直接拼接。",
       valueSeparator,
       true,
+      "value_separator",
     ));
     editor.append(componentGrid);
   } else if (isComponent && componentDefinitions[templateKey]?.fields) {
@@ -3090,6 +3117,7 @@ function renderPolicyGraphNodeEditor(node) {
         field.hint,
         control,
         Boolean(field.fullWidth),
+        field.key,
       ));
     }
     editor.append(componentGrid);
@@ -3106,7 +3134,7 @@ function renderPolicyGraphNodeEditor(node) {
   selectDependencyButton.type = "button";
   selectDependencyButton.className = "button-secondary policy-graph-editor-action";
   const selectingDependency = policyGraphState.dependencySelection?.dependentId === node.id;
-  selectDependencyButton.textContent = selectingDependency ? "取消选择依赖项 · D" : "选择依赖项 · D";
+  selectDependencyButton.textContent = selectingDependency ? "取消选择依赖项（depend_on）· D" : "选择依赖项（depend_on）· D";
   selectDependencyButton.addEventListener("click", () => {
     if (selectingDependency) cancelPolicyDependencySelection("已取消依赖项选择。");
     else beginPolicyDependencySelection(node.id);
@@ -3116,7 +3144,7 @@ function renderPolicyGraphNodeEditor(node) {
     const clearDependencyButton = document.createElement("button");
     clearDependencyButton.type = "button";
     clearDependencyButton.className = "button-secondary policy-graph-editor-action";
-    clearDependencyButton.textContent = "解除依赖项 · ⇧D";
+    clearDependencyButton.textContent = "解除依赖项（depend_on）· ⇧D";
     clearDependencyButton.addEventListener("click", () => clearPolicyGraphNodeDependency(node.id));
     dependencyActions.append(clearDependencyButton);
   }
@@ -3162,7 +3190,11 @@ function renderPolicyRulePicker(rail) {
     heading.textContent = rule.rule_id;
     const template = document.createElement("span");
     template.className = "policy-rule-picker-template";
-    template.textContent = templateDescriptions[rule.template_key] || rule.template_key;
+    setLabeledText(
+      template,
+      templateDescriptions[rule.template_key] || "未知模板",
+      rule.template_key,
+    );
     const description = document.createElement("span");
     description.className = "policy-rule-picker-description";
     description.textContent = String(rule.description || "").trim() || "未说明";
@@ -3240,7 +3272,7 @@ function renderPolicyComponentOptions(rail) {
     option.setAttribute("aria-selected", String(selectedNewComponentType === type));
     option.classList.toggle("is-selected", selectedNewComponentType === type);
     const title = document.createElement("strong");
-    title.textContent = definition.label;
+    setLabeledText(title, definition.label, type);
     const description = document.createElement("span");
     description.textContent = definition.description;
     option.append(title, description);
@@ -3383,7 +3415,13 @@ function renderPolicyGraphStepEditor(rail) {
     const apply = () => updatePolicyStepSetting(rail, key, type, control);
     control.addEventListener("change", apply);
     if (type !== "boolean" && type !== "number") control.addEventListener("input", apply);
-    grid.append(createPolicyGraphEditorField(labelText, policyStepSettingHints[key], control));
+    grid.append(createPolicyGraphEditorField(
+      labelText,
+      policyStepSettingHints[key],
+      control,
+      false,
+      key,
+    ));
   }
   editor.append(grid);
   const addRulesButton = document.createElement("button");
@@ -3772,7 +3810,7 @@ function createTemplateParameterForm(rule) {
   for (const field of templateParameterFields[rule.template_key] || []) {
     const label = document.createElement("label");
     if (field.fullWidth) label.classList.add("full-width");
-    label.textContent = field.label;
+    setLabeledText(label, field.label, field.key);
     const control = createTemplateParameterControl(field, templateConfigValue(config, field));
     control.dataset.templateField = field.key;
     label.append(createRuleFieldHint(field.hint), control);
@@ -3831,7 +3869,11 @@ function createRuleEditor(rule) {
   const title = document.createElement("h3");
   const template = document.createElement("p");
   title.textContent = rule.rule_id;
-  template.textContent = templateDescriptions[rule.template_key] || rule.template_key;
+  setLabeledText(
+    template,
+    templateDescriptions[rule.template_key] || "未知模板",
+    rule.template_key,
+  );
   headingText.append(title, template);
   const actions = document.createElement("div");
   actions.className = "button-group";
@@ -3849,14 +3891,14 @@ function createRuleEditor(rule) {
   close.addEventListener("click", () => closeRuleEditor(rule.rule_id));
   actions.append(save, saveAs, close, remove); heading.append(headingText, actions);
   const grid = document.createElement("div"); grid.className = "form-grid";
-  const descriptionLabel = document.createElement("label"); descriptionLabel.textContent = "规则描述";
+  const descriptionLabel = document.createElement("label"); setLabeledText(descriptionLabel, "规则描述", "description");
   const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(createRuleFieldHint("用于规则列表的说明，不影响实际执行。"), description);
-  const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
+  const priorityLabel = document.createElement("label"); setLabeledText(priorityLabel, "默认优先级", "default_priority");
   const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(createRuleFieldHint("数值越小越先执行；策略编排可覆盖此值。"), priority);
   const hitAction = createRuleHitActionSelect(rule.default_action_on_hit); hitAction.className = "rule-hit-action";
-  const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 仅在 Step 5 生效，在其他 Step 会回退为默认动作。"), hitAction);
+  const hitLabel = document.createElement("label"); setLabeledText(hitLabel, "默认命中动作", "default_action_on_hit"); hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 仅在 Step 5 生效，在其他 Step 会回退为默认动作。"), hitAction);
   const errorAction = createActionSelect(errorActions, rule.default_action_on_error); errorAction.className = "rule-error-action";
-  const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；策略编排可覆盖。"), errorAction);
+  const errorLabel = document.createElement("label"); setLabeledText(errorLabel, "默认错误动作", "default_action_on_error"); errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；策略编排可覆盖。"), errorAction);
   grid.append(descriptionLabel, priorityLabel, hitLabel, errorLabel);
   editor.append(heading, grid, createTemplateParameterForm(rule));
   editor.addEventListener("input", () => editor.classList.add("is-dirty"));
@@ -3990,7 +4032,11 @@ function renderTemplateOptions() {
     option.classList.toggle("is-selected", templateKey === selectedNewTemplate);
     const title = document.createElement("strong");
     const description = document.createElement("span");
-    title.textContent = templateDescriptions[templateKey] || templateKey;
+    setLabeledText(
+      title,
+      templateDescriptions[templateKey] || "未知模板",
+      templateKey,
+    );
     description.textContent = templateCreationDetails[templateKey] || "暂无说明。";
     option.append(title, description);
     option.addEventListener("click", () => {

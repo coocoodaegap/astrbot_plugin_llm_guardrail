@@ -3450,6 +3450,13 @@ textarea,
     border-color: #294a42;
 }
 
+.field-label-heading {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
 .schema-badge {
     color: #ffe0a0;
     background: #332817;
