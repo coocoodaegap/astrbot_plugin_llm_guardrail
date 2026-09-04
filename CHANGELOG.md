@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.2] - 2026-09-04
+
+### Added
+
+- 新增策略局部 `compose_text` 元件：在 Step 1、3、5 组合当前阶段可见文本、系统常量和已完成节点的值，供后续节点经 `inspection_template` 消费。
+
+### Changed
+
+- Pages 的策略编辑器统一以系统设置同款 `setting-key` 徽标显示字段键；规则和元件类型选择项也展示其模板键，方便将界面配置与 README、策略包 JSON 对照。
+- README 补充策略图字段对照、`depend_on` 的控制流语义，以及 `random_signal`、`compose_text` 的定位和使用方式。
+
 ## [0.6.1] - 2026-09-04
 
 ### Changed
