@@ -82,6 +82,9 @@ def evaluate_plain_keywords(rule: NormalizedNode, text: str):
         "score": score,
         "threshold": threshold,
         "matched_text": " ".join(hit["value"] for hit in hits[:10]),
+        "sanitized": apply_span_replacements(
+            source, hits, str(rule.config.get("sanitizer", ""))
+        ),
     }
     return make_node_result(
         rule,
@@ -119,6 +122,9 @@ def evaluate_regex_pattern(rule: NormalizedNode, text: str):
     payload = {
         "matched_text": " ".join(hit["value"] for hit in hits[:10]),
         "pattern": str(rule.config.get("pattern", "")),
+        "sanitized": apply_span_replacements(
+            source, hits, str(rule.config.get("sanitizer", ""))
+        ),
     }
     return make_node_result(
         rule,

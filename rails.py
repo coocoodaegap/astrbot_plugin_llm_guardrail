@@ -53,7 +53,6 @@ try:
     )
     from .context_extractor import build_context_extraction
     from .rules import (
-        apply_span_replacements,
         clip_text,
         evaluate_llm_review_response,
         evaluate_rag_judge_evidence,
@@ -101,7 +100,6 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     )
     from context_extractor import build_context_extraction
     from rules import (
-        apply_span_replacements,
         clip_text,
         evaluate_llm_review_response,
         evaluate_rag_judge_evidence,
@@ -765,9 +763,6 @@ class GuardrailPipeline:
                 result=evaluate_text_rule(rule, context, inspected_text)
             )
 
-        result = execution.result
-        if result is not None and result.action_on_hit == "sanitize":
-            self._attach_sanitized_payload(rail, result, inspected_text)
         self._log_check_completion(rule, execution)
         return execution
 
@@ -929,8 +924,6 @@ class GuardrailPipeline:
     ) -> None:
         if hit_plan.action in {"none", "observe"}:
             return
-        if hit_plan.produces_sanitized_payload:
-            return
         if hit_plan.block:
             context.input_blocked = True
             message = str(rail.settings.get("block_message", "")).strip()
@@ -957,22 +950,6 @@ class GuardrailPipeline:
                 and context.request is None
             ):
                 await self._record_terminal_input_block(context)
-
-    def _attach_sanitized_payload(
-        self,
-        rail: NormalizedRail,
-        result: RuleResult,
-        inspected_text: str,
-    ) -> None:
-        """Store sanitize output on the matching node, without host mutation."""
-
-        if result.signal is None:
-            return
-        rule = self._rule_by_id(rail, result.rule_id)
-        replacement = str(rule.config.get("sanitizer", ""))
-        result.signal.payload["sanitized"] = apply_span_replacements(
-            inspected_text, result.hits, replacement
-        )
 
     def _render_stage_template(
         self,
@@ -1712,8 +1689,6 @@ class GuardrailPipeline:
         hit_plan: HitActionPlan,
     ) -> None:
         if hit_plan.action in {"none", "observe"}:
-            return
-        if hit_plan.produces_sanitized_payload:
             return
         if hit_plan.block:
             context.output_blocked = True

@@ -309,7 +309,7 @@ class ConfigNormalizerTests(unittest.TestCase):
             "${res_origin}",
         )
 
-    def test_sanitize_is_rejected_for_non_text_matching_templates(self):
+    def test_removed_hit_action_and_unknown_error_action_fall_back_safely(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -318,6 +318,7 @@ class ConfigNormalizerTests(unittest.TestCase):
                             "__template_key": "logic_gate",
                             "rule_id": "gate",
                             "action_on_hit": "sanitize",
+                            "action_on_error": "unknown_action",
                         }
                     ]
                 }
@@ -325,8 +326,53 @@ class ConfigNormalizerTests(unittest.TestCase):
         )
 
         rule = cfg.rails["input_rail"].rules[0]
-        self.assertEqual(rule.config["action_on_hit"], "default")
-        self.assertTrue(any("only supported" in warning for warning in rule.warnings))
+        self.assertEqual(rule.config["action_on_hit"], "observe")
+        self.assertEqual(rule.config["action_on_error"], "discard")
+        self.assertTrue(any("fallback to observe" in warning for warning in rule.warnings))
+        self.assertTrue(any("fallback to discard" in warning for warning in rule.warnings))
+
+    def test_sanitizer_config_is_preserved_on_load(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "plain_keywords",
+                            "rule_id": "risk",
+                            "keywords": ["secret"],
+                            "sanitizer": "[redacted]",
+                        }
+                    ]
+                }
+            }
+        )
+
+        self.assertEqual(
+            cfg.rails["input_rail"].rules[0].config["sanitizer"], "[redacted]"
+        )
+
+    def test_invalid_rail_default_actions_fall_back_to_observe_and_discard(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "unknown_action",
+                        "default_action_on_error": "unknown_action",
+                    },
+                },
+                "output_rail": {
+                    "__policy_step_settings": {
+                        "default_action_on_hit": "unknown_action",
+                        "default_action_on_error": "unknown_action",
+                    },
+                },
+            }
+        )
+
+        for rail_name in ("input_rail", "output_rail"):
+            settings = cfg.rails[rail_name].settings
+            self.assertEqual(settings["default_action_on_hit"], "observe")
+            self.assertEqual(settings["default_action_on_error"], "discard")
 
     def test_replace_input_is_not_a_supported_prompt_rule(self):
         cfg = normalize_config(
@@ -364,7 +410,7 @@ class ConfigNormalizerTests(unittest.TestCase):
         )
 
         rule = cfg.rails["input_rail"].rules[0]
-        self.assertEqual(rule.config["action_on_error"], "default")
+        self.assertEqual(rule.config["action_on_error"], "discard")
         self.assertTrue(any("retry_error.action_on_error is invalid" in warning for warning in rule.warnings))
 
     def test_request_rail_keyword_rule_is_normalized(self):
@@ -592,7 +638,7 @@ class ConfigNormalizerTests(unittest.TestCase):
         rail = cfg.rails["input_rail"]
         rule = rail.rules[0]
         self.assertEqual(rail.settings["default_action_on_error"], "discard")
-        self.assertEqual(rule.config["action_on_error"], "default")
+        self.assertEqual(rule.config["action_on_error"], "discard")
         self.assertIn("fallback_policy_settings.default_action_on_error is invalid", " ".join(cfg.warnings))
         self.assertIn("risk.action_on_error is invalid", " ".join(rule.warnings))
 

@@ -19,19 +19,11 @@ class HitActionPlan:
     action: str
     target: str
     stop_rail: bool
-    produces_sanitized_payload: bool
     block: bool
 
     @property
     def rule_id(self) -> str:
         return self.node_id
-
-    @property
-    def mutate_text(self) -> bool:
-        """Compatibility alias; sanitize no longer mutates host text directly."""
-
-        return self.produces_sanitized_payload
-
 
 @dataclass(frozen=True)
 class ErrorActionPlan:
@@ -57,7 +49,6 @@ def resolve_hit_action_plan(rail: NormalizedRail, result: NodeResult) -> HitActi
         action=action,
         target=target,
         stop_rail=action in {"block", "retry_generation"},
-        produces_sanitized_payload=action == "sanitize",
         block=action == "block",
     )
 
@@ -81,28 +72,34 @@ def _resolved_hit_action(rail: NormalizedRail, result: NodeResult) -> str:
         return "none"
     if result.action_on_hit != "default":
         action = result.action_on_hit
-        if action != "retry_generation" or rail.rail == "output_rail":
+        if action in {"observe", "block"}:
             return action
+        if action == "retry_generation" and rail.rail == "output_rail":
+            return action
+        if action != "retry_generation":
+            return "observe"
     return _default_hit_action(rail)
 
 
 def _default_hit_action(rail: NormalizedRail) -> str:
     if rail.rail in {"input_rail", "routing_rail", "request_rail", "prompt_rail"}:
-        return str(rail.settings.get("default_action_on_hit", "block"))
+        action = str(rail.settings.get("default_action_on_hit", "observe"))
+        return action if action in {"observe", "block"} else "observe"
     if rail.rail == "output_rail":
-        return str(rail.settings.get("default_action_on_hit", "block"))
+        action = str(rail.settings.get("default_action_on_hit", "observe"))
+        return action if action in {"observe", "block", "retry_generation"} else "observe"
     return "observe"
 
 
 def _resolved_error_action(rail: NormalizedRail, action: str) -> str:
     if action and action != "default":
-        if action != "retry_generation":
-            return action
-    return str(rail.settings.get("default_action_on_error", "discard") or "discard")
+        return action if action in {"discard", "record", "block"} else "discard"
+    default_action = str(rail.settings.get("default_action_on_error", "discard") or "discard")
+    return default_action if default_action in {"discard", "record", "block"} else "discard"
 
 
 def _hit_action_target(rail_name: str, action: str) -> str:
-    if action not in {"block", "sanitize", "retry_generation"}:
+    if action not in {"block", "retry_generation"}:
         return "none"
     if rail_name in {"input_rail", "routing_rail", "request_rail", "prompt_rail"}:
         return "input"

@@ -97,14 +97,12 @@ INPUT_ACTIONS = {
     "observe",
     "retry_generation",
     "block",
-    "sanitize",
 }
 OUTPUT_ACTIONS = {
     "default",
     "observe",
     "retry_generation",
     "block",
-    "sanitize",
 }
 DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "format_violation_detector",
@@ -602,6 +600,8 @@ def _normalize_node(
         "language_drift_detector",
         "sensitive_echo_detector",
         *MESSAGE_FACT_TEMPLATES,
+        "strengthen_prompt",
+        "route_policy",
     }:
         raw_action = "observe" if (
             raw_action_on_hit == "default"
@@ -613,44 +613,25 @@ def _normalize_node(
         ) else raw_action_on_hit
         action = raw_action
         config["action_on_hit"] = action
-        if action == "sanitize" and template_key not in {"plain_keywords", "regex_pattern"}:
-            warnings.append(
-                f"{rule_id}.action_on_hit=sanitize is only supported by plain_keywords and regex_pattern; fallback to default"
-            )
-            config["action_on_hit"] = (
-                "observe"
-                if (
-                    template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
-                    or template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES
-                )
-                else "default"
-            )
         if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
-            warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
-            config["action_on_hit"] = (
-                "observe"
-                if (
-                    template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
-                    or template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES
-                )
-                else "default"
-            )
+            warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to observe")
+            config["action_on_hit"] = "observe"
         elif rail_name == "output_rail":
             if action not in OUTPUT_ACTIONS:
                 warnings.append(
-                    f"{rule_id}.action_on_hit is invalid; fallback to default"
+                    f"{rule_id}.action_on_hit is invalid; fallback to observe"
                 )
-                config["action_on_hit"] = "default"
+                config["action_on_hit"] = "observe"
         elif rail_name in {"prompt_rail", "routing_rail"}:
             if action not in {"default", "observe", "block"}:
-                warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to default")
-                config["action_on_hit"] = "default"
+                warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to observe")
+                config["action_on_hit"] = "observe"
 
     if rail_name in {"input_rail", "routing_rail", "request_rail", "prompt_rail", "output_rail"}:
         action_on_error = raw_action_on_error.strip()
         if action_on_error not in ERROR_ACTIONS:
-            warnings.append(f"{rule_id}.action_on_error is invalid; fallback to default")
-            action_on_error = "default"
+            warnings.append(f"{rule_id}.action_on_error is invalid; fallback to discard")
+            action_on_error = "discard"
         config["action_on_error"] = action_on_error
 
     if template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES:
@@ -1333,9 +1314,9 @@ def _normalize_fallback_policy_settings(
 
     if settings["default_action_on_hit"] not in {"observe", "block"}:
         warnings.append(
-            "fallback_policy_settings.default_action_on_hit is invalid; fallback to block"
+            "fallback_policy_settings.default_action_on_hit is invalid; fallback to observe"
         )
-        settings["default_action_on_hit"] = "block"
+        settings["default_action_on_hit"] = "observe"
     if settings["default_action_on_error"] not in DEFAULT_ERROR_ACTIONS:
         warnings.append(
             "fallback_policy_settings.default_action_on_error is invalid; fallback to discard"
@@ -1420,9 +1401,8 @@ def _rail_defaults(
             {
                 "max_text_chars": fallback_policy_settings["max_text_chars"],
                 "default_llm_provider": fallback_policy_settings["default_llm_provider"],
-                # Sanitizers only create NodeSignal payloads.  A policy must
-                # explicitly choose a payload as stage output before any host
-                # text is changed.
+                # A derived payload is inert until a policy explicitly chooses
+                # it as the stage output.
                 "output_redirect_template": STAGE_ORIGIN_TEMPLATES[rail_name],
             }
         )
@@ -1462,8 +1442,8 @@ def _coerce_rail_settings(
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
         action = raw_action
         if action not in {"observe", "block"}:
-            warnings.append("input_rail.default_action_on_hit is invalid; fallback to block")
-            action = "block"
+            warnings.append("input_rail.default_action_on_hit is invalid; fallback to observe")
+            action = "observe"
         settings["default_action_on_hit"] = action
         error_action = _as_str(
             settings.get("default_action_on_error", "discard")
@@ -1511,8 +1491,8 @@ def _coerce_rail_settings(
         raw_action = _as_str(settings.get("default_action_on_hit", "block"))
         action = raw_action
         if action not in {"observe", "block", "retry_generation"}:
-            warnings.append("output_rail.default_action_on_hit is invalid; fallback to block")
-            action = "block"
+            warnings.append("output_rail.default_action_on_hit is invalid; fallback to observe")
+            action = "observe"
         settings["default_action_on_hit"] = action
         error_action = _as_str(
             settings.get("default_action_on_error", "discard")

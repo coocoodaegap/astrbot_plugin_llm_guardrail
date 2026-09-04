@@ -82,7 +82,6 @@ class HitActionPlanTests(unittest.TestCase):
 
         self.assertEqual(plan.action, "none")
         self.assertFalse(plan.block)
-        self.assertFalse(plan.mutate_text)
 
     def test_retry_generation_outside_step_five_uses_the_step_default(self):
         cfg = normalize_config(
@@ -199,7 +198,7 @@ class ErrorActionPlanTests(unittest.TestCase):
         )
 
         rule = cfg.rails["output_rail"].rules[0]
-        self.assertEqual(rule.config["action_on_error"], "default")
+        self.assertEqual(rule.config["action_on_error"], "discard")
 
         plan = resolve_error_action_plan(
             cfg.rails["output_rail"], "retry", "retry_generation"

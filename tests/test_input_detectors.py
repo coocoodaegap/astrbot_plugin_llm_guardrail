@@ -294,13 +294,13 @@ class InputDetectorTests(unittest.TestCase):
                 result = evaluate_input_detector(node, context, text)
                 self.assertFalse(result.matched)
 
-    def test_input_detectors_reject_sanitize_action(self):
+    def test_input_detectors_fall_back_from_unknown_action(self):
         node, _context = _node(
-            "length_anomaly_detector", {"action_on_hit": "sanitize"}, "hello"
+            "length_anomaly_detector", {"action_on_hit": "unknown_action"}, "hello"
         )
 
-        self.assertEqual(node.config["action_on_hit"], "default")
-        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+        self.assertEqual(node.config["action_on_hit"], "observe")
+        self.assertTrue(any("fallback to observe" in warning for warning in node.warnings))
 
 
 if __name__ == "__main__":

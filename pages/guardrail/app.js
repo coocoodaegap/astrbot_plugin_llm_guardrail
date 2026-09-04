@@ -500,7 +500,6 @@ const templates = [
     "default",
     "observe",
     "block",
-    "sanitize",
     "retry_generation",
   ],
   errorActions = ["default", "discard", "record", "block"];
@@ -508,7 +507,6 @@ const ruleActionDescriptions = {
   default: "沿用策略默认动作（default）",
   observe: "仅记录命中，不改变请求或输出（observe）",
   block: "阻断本轮请求或输出（block）",
-  sanitize: "生成净化文本（sanitize）",
   retry_generation: "请求模型重新生成输出（retry_generation）",
   discard: "丢弃本次规则结果（discard）",
   record: "记录可被依赖的错误结果（record）",
@@ -555,11 +553,11 @@ const templateParameterFields = {
     { key: "keywords", label: "关键词列表", hint: "每行一个关键词或短语。", type: "list", default: [], fullWidth: true },
     { key: "keyword_weights", label: "关键词权值", hint: "每行一项，格式为：关键词:权重。未填写的关键词权重为 1。", type: "list", default: [], fullWidth: true },
     { key: "threshold", label: "命中门槛", hint: "命中关键词的权重总和达到此值时规则命中。", type: "number", default: 1 },
-    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用，将命中片段替换为净化文本，留空则移除命中片段；命中时不自动改写文本，而是在信号的 payload 中生成 sanitized 字段来存放净化后的文本，可在后续节点中使用 ${规则名.sanitized}。", type: "string" },
+    { key: "sanitizer", label: "净化替换文本", hint: "每次检查都会在 payload.sanitized 中以此文本替换命中片段；留空则移除命中片段。不会自动改写请求或输出。", type: "text", fullWidth: true },
   ],
   regex_pattern: [
     { key: "pattern", label: "正则模式", hint: "用于匹配文本的正则表达式；保存后由后端编译校验。", type: "text", fullWidth: true },
-    { key: "sanitizer", label: "净化文本", hint: "仅在选择 sanitize 时使用，将命中片段替换为净化文本，留空则移除命中片段；命中时不自动改写文本，而是在信号的 payload 中生成 sanitized 字段来存放净化后的文本，可在后续节点中使用 ${规则名.sanitized}。", type: "string" },
+    { key: "sanitizer", label: "净化替换文本", hint: "每次检查都会在 payload.sanitized 中以此文本替换命中片段；留空则移除命中片段。不会自动改写请求或输出。", type: "text", fullWidth: true },
   ],
   contains_request_user_id: [
     { key: "user_ids", label: "用户 ID 列表", hint: "每行一个请求者 ID；空列表不能保存为可用规则。", type: "list", default: [], fullWidth: true },
@@ -3363,36 +3361,6 @@ function renderPolicyGraphStepEditor(rail) {
     grid.append(createPolicyGraphEditorField(labelText, policyStepSettingHints[key], control));
   }
   editor.append(grid);
-  const rulesById = new Map((policyLibrary.rules || []).map((rule) => [rule.rule_id, rule]));
-  const sanitizeBindings = (draft?.bindings || []).filter((binding) => {
-    if (binding.rail !== rail || binding.enabled === false) return false;
-    const rule = rulesById.get(binding.rule_id);
-    const action = binding.action_on_hit ?? rule?.default_action_on_hit;
-    return action === "sanitize";
-  });
-  if (sanitizeBindings.length) {
-    const notice = document.createElement("div");
-    notice.className = "policy-graph-editor-summary";
-    const warning = document.createElement("span");
-    warning.textContent = "此 Step 含 sanitize 节点；请确认输出重定向是否符合预期。";
-    notice.append(warning);
-    if (sanitizeBindings.length === 1 && sanitizeBindings[0].rule_id) {
-      const ruleId = sanitizeBindings[0].rule_id;
-      const suggestion = `\${${ruleId}.sanitized}`;
-      const applySuggestion = document.createElement("button");
-      applySuggestion.type = "button";
-      applySuggestion.className = "button-secondary policy-graph-editor-action";
-      applySuggestion.textContent = `建议使用 ${suggestion}`;
-      applySuggestion.addEventListener("click", () => {
-        const updated = { ...(draft.rail_settings[rail] || {}), output_redirect_template: suggestion };
-        draft.rail_settings[rail] = updated;
-        setPolicyGraphEditorStatus(`已暂存输出重定向 ${suggestion}；点击“保存策略”后生效。`);
-        renderPolicyGraphEditor();
-      });
-      notice.append(applySuggestion);
-    }
-    editor.append(notice);
-  }
   const addRulesButton = document.createElement("button");
   addRulesButton.type = "button";
   addRulesButton.className = "button-secondary policy-graph-editor-action";
@@ -3704,9 +3672,7 @@ function createActionSelect(values, value) {
   return select;
 }
 function hitActionsForTemplate(templateKey, rail = "") {
-  let actions = templateKey === "plain_keywords" || templateKey === "regex_pattern"
-    ? hitActions
-    : hitActions.filter((action) => action !== "sanitize");
+  let actions = hitActions;
   if (rail && rail !== "output_rail") {
     actions = actions.filter((action) => action !== "retry_generation");
   }
@@ -3751,7 +3717,7 @@ function createTemplateParameterControl(field, value) {
     select.value = String(value ?? field.default ?? "");
     return select;
   }
-  if (field.type === "list" || field.type === "text" || field.key === "sanitizer") {
+  if (field.type === "list" || field.type === "text") {
     const textarea = document.createElement("textarea");
     textarea.className = field.type === "list" ? "template-list-value" : "template-text-value";
     textarea.spellcheck = field.type !== "list";
@@ -3780,7 +3746,7 @@ function createTemplateParameterForm(rule) {
   const config = rule.template_config || {};
   for (const field of templateParameterFields[rule.template_key] || []) {
     const label = document.createElement("label");
-    if (field.fullWidth || field.key === "sanitizer") label.classList.add("full-width");
+    if (field.fullWidth) label.classList.add("full-width");
     label.textContent = field.label;
     const control = createTemplateParameterControl(field, templateConfigValue(config, field));
     control.dataset.templateField = field.key;

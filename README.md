@@ -41,7 +41,7 @@
 
 Step 2 和 Step 4 现在提供“默认命中动作”“默认错误动作”和“阻断提示”。通用信号元件保留 `action_on_hit: default` 时，会回退到本 Step 的默认命中动作；执行错误保留 `action_on_error: default` 时，同样回退到本 Step 的默认错误动作。默认值为 `observe` / `discard`，因此不会改变已有路由或提示词强化策略。
 
-Step 5 的默认命中动作也支持 `observe`、`block` 与 `retry_generation`。这使新输出策略可以先统一观察所有保持 `default` 的节点，再逐步改为阻断或有界重试。`retry_generation` 只在 Step 5 可选；策略图的 Step 1 至 Step 4 已隐藏该无效选项。`sanitize` 仍只适用于关键词和正则节点。
+Step 5 的默认命中动作也支持 `observe`、`block` 与 `retry_generation`。这使新输出策略可以先统一观察所有保持 `default` 的节点，再逐步改为阻断或有界重试。`retry_generation` 只在 Step 5 可选；策略图的 Step 1 至 Step 4 已隐藏该无效选项。关键词与正则规则始终在 payload 中提供 `sanitized`：它按规则的“净化替换文本”替换全部命中区间（留空则移除），只有策略显式引用 `${规则名.sanitized}` 作为输出重定向时才会影响后续内容。
 
 ## 安装
 
@@ -68,7 +68,7 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 
 1. 保持默认策略并先开启调试日志，确认 `/guardrail` 能显示当前 UMO 和各 Rail 状态。
 2. 在 Pages 的“规则库”创建或查看规则，在“策略编排”中绑定到目标 Rail。
-3. 新建策略时，先使用 `observe` 观察命中和误报；确认后再为需要的节点启用 `sanitize` 或 `block`。
+3. 新建策略时，先使用 `observe` 观察命中和误报；确认后再为需要的节点启用 `block`。关键词和正则规则的 `${规则名.sanitized}` 可作为后续节点或显式输出重定向的输入。
 4. 如需输出重试，只在 `output_rail` 的规则或阶段默认动作中选择 `retry_generation`，并设置较小的 `max_retries`。
 5. 使用“策略包”先导出备份；导入外部策略包时，先查看预览，再选择 `copy` 或 `replace`。
 

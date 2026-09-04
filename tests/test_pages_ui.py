@@ -73,7 +73,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertNotIn("async function refresh()", javascript)
         self.assertIn("function renderRuleList", javascript)
         self.assertIn("function hitActionsForTemplate", javascript)
-        self.assertIn('action !== "sanitize"', javascript)
+        self.assertNotIn('"sanitize"', javascript)
         self.assertIn('rail !== "output_rail"', javascript)
         self.assertIn('action !== "retry_generation"', javascript)
         self.assertIn('hitActionsForTemplate(templateKey, node.rail)', javascript)

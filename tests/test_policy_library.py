@@ -32,6 +32,25 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(restored.description, "拦截敏感词")
         self.assertNotIn("description", restored.template_config)
 
+    def test_policy_load_preserves_replacement_text_and_falls_back_actions(self):
+        rule = RuleDefinition.from_dict(
+            {
+                "rule_id": "risk",
+                "template_key": "plain_keywords",
+                "template_config": {"keywords": ["secret"], "sanitizer": "[x]"},
+                "default_action_on_hit": "sanitize",
+                "default_action_on_error": "unknown_action",
+            }
+        )
+        binding = PolicyRuleBinding.from_dict(
+            {"rule_id": "risk", "rail": "input_rail", "action_on_hit": "sanitize"}
+        )
+
+        self.assertEqual(rule.template_config["sanitizer"], "[x]")
+        self.assertEqual(rule.default_action_on_hit, "observe")
+        self.assertEqual(rule.default_action_on_error, "discard")
+        self.assertEqual(binding.action_on_hit, "observe")
+
     def test_policy_compiles_rule_defaults_and_binding_overrides(self):
         library = PolicyLibrary(
             rules=(
@@ -40,7 +59,6 @@ class PolicyLibraryTests(unittest.TestCase):
                     template_key="plain_keywords",
                     template_config={
                         "keywords": ["secret"],
-                        "sanitizer": "[redacted]",
                         "threshold": 2,
                     },
                     default_priority=100,
@@ -58,7 +76,7 @@ class PolicyLibraryTests(unittest.TestCase):
                             rule_id="risk_words",
                             rail="input_rail",
                             priority=10,
-                            action_on_hit="sanitize",
+                            action_on_hit="observe",
                             inspection_template="${event_origin}",
                         ),
                     ),
@@ -76,7 +94,7 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertTrue(validation.valid)
         self.assertEqual(raw["input_rail"]["max_text_chars"], 123)
         self.assertEqual(rule.priority, 10)
-        self.assertEqual(rule.config["action_on_hit"], "sanitize")
+        self.assertEqual(rule.config["action_on_hit"], "observe")
         self.assertEqual(rule.config["threshold"], 2.0)
         self.assertEqual(rule.config["action_on_error"], "record")
         self.assertEqual(rule.config["inspection_template"], "${event_origin}")
@@ -246,44 +264,6 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertFalse(validation.valid)
         self.assertIn("Step 1", validation.fatal_errors[0])
-
-    def test_sanitize_is_rejected_for_policy_component(self):
-        library = PolicyLibrary(
-            policies=(
-                PolicyDefinition("_default", "Default", builtin=True),
-                PolicyDefinition(
-                    "invalid_action",
-                    "Invalid action",
-                    components=(
-                        PolicyComponent(
-                            "gate",
-                            "logic_gate",
-                            "input_rail",
-                            action_on_hit="sanitize",
-                            config={"inputs": ["source"]},
-                        ),
-                    ),
-                ),
-            ),
-            active_policy_id="invalid_action",
-        )
-
-        _raw, validation = compile_policy_to_runtime_config({}, library)
-
-        self.assertFalse(validation.valid)
-        self.assertTrue(any("only available" in error for error in validation.fatal_errors))
-
-    def test_rule_library_rejects_invalid_default_sanitize_without_a_binding(self):
-        library = PolicyLibrary(
-            rules=(RuleDefinition("review", "llm_review", {}, default_action_on_hit="sanitize"),),
-            policies=(PolicyDefinition("_default", "Default", builtin=True),),
-            active_policy_id="_default",
-        )
-
-        _raw, validation = compile_policy_to_runtime_config({}, library)
-
-        self.assertFalse(validation.valid)
-        self.assertIn("only available", validation.fatal_errors[0])
 
     def test_retry_generation_warns_outside_step_five_without_rejecting_rule(self):
         library = PolicyLibrary(

@@ -40,6 +40,8 @@ SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
 )
 CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
 RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
+LOADED_HIT_ACTIONS = frozenset({"default", "observe", "block", "retry_generation"})
+LOADED_ERROR_ACTIONS = frozenset({"default", "discard", "record", "block"})
 
 
 @dataclass(frozen=True)
@@ -73,10 +75,8 @@ class RuleDefinition:
             description=str(value.get("description") or "").strip(),
             template_config=_copy_dict(value.get("template_config")),
             default_priority=_as_int(value.get("default_priority"), 100),
-            default_action_on_hit=str(
-                value.get("default_action_on_hit") or "default"
-            ).strip(),
-            default_action_on_error=str(value.get("default_action_on_error") or "default"),
+            default_action_on_hit=_loaded_hit_action(value.get("default_action_on_hit")),
+            default_action_on_error=_loaded_error_action(value.get("default_action_on_error")),
         )
 
 
@@ -112,8 +112,8 @@ class PolicyRuleBinding:
             rail=str(value.get("rail") or "").strip(),
             enabled=bool(value.get("enabled", True)),
             priority=_as_optional_int(value.get("priority")),
-            action_on_hit=_as_optional_string(value.get("action_on_hit")),
-            action_on_error=_as_optional_string(value.get("action_on_error")),
+            action_on_hit=_loaded_optional_hit_action(value.get("action_on_hit")),
+            action_on_error=_loaded_optional_error_action(value.get("action_on_error")),
             depend_on=str(value.get("depend_on") or "").strip(),
             inspection_template=str(value.get("inspection_template") or "").strip(),
         )
@@ -162,8 +162,8 @@ class PolicyComponent:
             rail=str(value.get("rail") or "").strip(),
             enabled=bool(value.get("enabled", True)),
             priority=_as_int(value.get("priority"), 100),
-            action_on_hit=str(value.get("action_on_hit") or "default").strip(),
-            action_on_error=str(value.get("action_on_error") or "default").strip(),
+            action_on_hit=_loaded_hit_action(value.get("action_on_hit")),
+            action_on_error=_loaded_error_action(value.get("action_on_error")),
             depend_on=str(value.get("depend_on") or "").strip(),
             inspection_template=str(value.get("inspection_template") or "").strip(),
             config=_copy_dict(value.get("config")),
@@ -476,15 +476,6 @@ class PolicyLibrary:
                     f"rule {rule.rule_id} uses component type {rule.template_key}; "
                     "components may only be stored inside a policy"
                 )
-            elif (
-                rule.template_key in KNOWN_RULE_TEMPLATE_KEYS
-                and _is_sanitize_action(rule.default_action_on_hit)
-                and rule.template_key not in {"plain_keywords", "regex_pattern"}
-            ):
-                fatal_errors.append(
-                    f"rule {rule.rule_id} uses sanitize, which is only available "
-                    "for plain_keywords and regex_pattern"
-                )
 
         for policy in self.policies:
             if not POLICY_ID_PATTERN.fullmatch(policy.policy_id):
@@ -561,14 +552,6 @@ class PolicyLibrary:
                         else rule.default_action_on_hit
                     )
                     if (
-                        _is_sanitize_action(action_on_hit)
-                        and rule.template_key not in {"plain_keywords", "regex_pattern"}
-                    ):
-                        fatal_errors.append(
-                            f"rule {rule.rule_id} uses sanitize, which is only available "
-                            "for plain_keywords and regex_pattern"
-                        )
-                    if (
                         _is_retry_generation_action(action_on_hit)
                         and binding.rail != "output_rail"
                     ):
@@ -632,11 +615,6 @@ class PolicyLibrary:
                     )
                 elif component.component_type == RANDOM_SIGNAL_COMPONENT_TYPE:
                     fatal_errors.extend(_validate_random_signal_component(component))
-                if _is_sanitize_action(component.action_on_hit):
-                    fatal_errors.append(
-                        f"component {component.component_id} uses sanitize, which is only available "
-                        "for plain_keywords and regex_pattern"
-                    )
                 if (
                     _is_retry_generation_action(component.action_on_hit)
                     and component.rail != "output_rail"
@@ -748,6 +726,26 @@ def _compile_component(component: PolicyComponent) -> dict[str, Any]:
         }
     )
     return item
+
+
+def _loaded_hit_action(value: Any) -> str:
+    action = str(value or "default").strip()
+    return action if action in LOADED_HIT_ACTIONS else "observe"
+
+
+def _loaded_optional_hit_action(value: Any) -> str | None:
+    action = _as_optional_string(value)
+    return None if action is None else _loaded_hit_action(action)
+
+
+def _loaded_error_action(value: Any) -> str:
+    action = str(value or "default").strip()
+    return action if action in LOADED_ERROR_ACTIONS else "discard"
+
+
+def _loaded_optional_error_action(value: Any) -> str | None:
+    action = _as_optional_string(value)
+    return None if action is None else _loaded_error_action(action)
 
 
 def _ordered_policy_nodes(
@@ -1132,10 +1130,6 @@ def _find_dependency_cycles(
         if node not in visited:
             visit(node)
     return errors
-
-
-def _is_sanitize_action(action: str | None) -> bool:
-    return str(action or "").strip() == "sanitize"
 
 
 def _is_retry_generation_action(action: str | None) -> bool:

@@ -2,6 +2,16 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+
+- 移除 `sanitize` 命中动作。`plain_keywords` 和 `regex_pattern` 现在始终在 payload 提供 `sanitized`，其值按规则的 `sanitizer` 替换文本处理全部命中区间（留空则移除）；只有策略显式消费该字段时才会改变后续内容。
+
+### Fixed
+
+- 加载策略时，未知命中动作统一回退为 `observe`，未知错误动作统一回退为 `discard`；运行时动作解析也采用相同兜底。
+
 ## [0.6.0] - 2026-09-03
 
 ### Added
@@ -16,7 +26,7 @@
 
 - Step 2 和 Step 4 增补策略级“默认命中动作”“默认错误动作”及“阻断提示”配置。
 - Step 5 的默认命中动作增补 `observe`，可将使用 `default` 的输出节点统一置于观测模式。
-- 策略图按所在 Rail 过滤命中动作：`retry_generation` 仅在 Step 5 显示；`sanitize` 仍仅对关键词与正则节点显示。
+- 策略图按所在 Rail 过滤命中动作：`retry_generation` 仅在 Step 5 显示。
 
 ## [0.5.0] - 2026-09-01
 

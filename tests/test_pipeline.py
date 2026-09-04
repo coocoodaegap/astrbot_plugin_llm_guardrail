@@ -1163,17 +1163,16 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(context.terminal_action["node_id"], "slow_high_priority")
         self.assertEqual(event.stop_calls, 1)
 
-    def test_input_sanitize_only_produces_payload_by_default(self):
+    def test_input_text_match_always_produces_derived_payload(self):
         cfg = normalize_config(
             {
                 "input_rail": {
-                    "default_action_on_hit": "observe",
+                    "__policy_step_settings": {"default_action_on_hit": "observe"},
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
                             "sanitizer": "[redacted]",
                         }
                     ],
@@ -1189,12 +1188,12 @@ class PipelineTests(unittest.TestCase):
             context.results["risk"].signal.payload["sanitized"], "say [redacted]"
         )
 
-    def test_input_sanitize_redirect_requires_explicit_template(self):
+    def test_input_derived_payload_redirect_requires_explicit_template(self):
         cfg = normalize_config(
             {
                 "input_rail": {
-                    "default_action_on_hit": "observe",
                     "__policy_step_settings": {
+                        "default_action_on_hit": "observe",
                         "output_redirect_template": "${risk.sanitized}",
                     },
                     "rule_list": [
@@ -1202,7 +1201,6 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
                             "sanitizer": "[redacted]",
                         }
                     ],
@@ -1215,7 +1213,7 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(event.message_str, "say [redacted]")
 
-    def test_unmatched_sanitize_payload_preserves_original_text(self):
+    def test_unmatched_derived_payload_preserves_original_text(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -1224,8 +1222,6 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "risk",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
-                            "sanitizer": "[redacted]",
                         }
                     ],
                 },
@@ -1342,24 +1338,23 @@ class PipelineTests(unittest.TestCase):
             "base system prompt\n\nKeep the response safe.",
         )
 
-    def test_node_inspection_template_reads_sanitize_payload_with_explicit_dependency(self):
+    def test_node_inspection_template_reads_derived_payload_with_explicit_dependency(self):
         cfg = normalize_config(
             {
                 "input_rail": {
+                    "__policy_step_settings": {"default_action_on_hit": "observe"},
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
-                            "rule_id": "sanitize_source",
+                            "rule_id": "derived_source",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
-                            "sanitizer": "[redacted]",
                         },
                         {
                             "__template_key": "plain_keywords",
                             "rule_id": "payload_consumer",
-                            "keywords": ["[redacted]"],
-                            "depend_on": "?sanitize_source",
-                            "inspection_template": "${sanitize_source.sanitized}",
+                            "keywords": ["contains"],
+                            "depend_on": "?derived_source",
+                            "inspection_template": "${derived_source.sanitized}",
                             "action_on_hit": "observe",
                         },
                     ],
@@ -1370,7 +1365,7 @@ class PipelineTests(unittest.TestCase):
 
         context = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
 
-        self.assertTrue(context.results["sanitize_source"].matched)
+        self.assertTrue(context.results["derived_source"].matched)
         self.assertTrue(context.results["payload_consumer"].matched)
         self.assertEqual(event.message_str, "contains secret")
 
@@ -1381,16 +1376,14 @@ class PipelineTests(unittest.TestCase):
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
-                            "rule_id": "sanitize_source",
+                            "rule_id": "derived_source",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
-                            "sanitizer": "[redacted]",
                         },
                         {
                             "__template_key": "regex_pattern",
                             "rule_id": "payload_consumer",
                             "pattern": "^$",
-                            "inspection_template": "${sanitize_source.sanitized}",
+                            "inspection_template": "${derived_source.sanitized}",
                             "action_on_hit": "observe",
                         },
                     ],
@@ -1401,7 +1394,7 @@ class PipelineTests(unittest.TestCase):
 
         context = asyncio.run(GuardrailPipeline(cfg).run_message_input(event))
 
-        self.assertTrue(context.results["sanitize_source"].matched)
+        self.assertTrue(context.results["derived_source"].matched)
         self.assertTrue(context.results["payload_consumer"].matched)
         self.assertEqual(event.message_str, "contains secret")
 
@@ -1677,16 +1670,16 @@ class PipelineTests(unittest.TestCase):
             {"action": "block", "text": "用户 sender 的请求在 Step 5 被阻断。"},
         )
 
-    def test_output_sanitize_only_produces_payload_by_default(self):
+    def test_output_text_match_always_produces_derived_payload(self):
         cfg = normalize_config(
             {
                 "output_rail": {
+                    "__policy_step_settings": {"default_action_on_hit": "observe"},
                     "rule_list": [
                         {
                             "__template_key": "plain_keywords",
                             "rule_id": "word",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
                             "sanitizer": "[x]",
                         }
                     ],
@@ -1704,11 +1697,12 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertIsNone(event.get_extra(OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY))
 
-    def test_output_sanitize_redirect_requires_explicit_template(self):
+    def test_output_derived_payload_redirect_requires_explicit_template(self):
         cfg = normalize_config(
             {
                 "output_rail": {
                     "__policy_step_settings": {
+                        "default_action_on_hit": "observe",
                         "output_redirect_template": "${word.sanitized}",
                     },
                     "rule_list": [
@@ -1716,7 +1710,6 @@ class PipelineTests(unittest.TestCase):
                             "__template_key": "plain_keywords",
                             "rule_id": "word",
                             "keywords": ["secret"],
-                            "action_on_hit": "sanitize",
                             "sanitizer": "[x]",
                         }
                     ],

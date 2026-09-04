@@ -103,20 +103,20 @@ class PoorQualityDetectorTests(unittest.TestCase):
         self.assertTrue(result.metadata["scan_truncated"])
         self.assertEqual(result.metadata["raw_char_count"], len(long_text))
 
-    def test_rejects_sanitize_and_bounds_parameters(self):
+    def test_falls_back_from_unknown_action_and_bounds_parameters(self):
         node, _context = _node(
             {
-                "action_on_hit": "sanitize",
+                "action_on_hit": "unknown_action",
                 "min_signal_families": 99,
                 "max_punctuation_ratio": 0,
             },
             "hello",
         )
 
-        self.assertEqual(node.config["action_on_hit"], "default")
         self.assertEqual(node.config["min_signal_families"], 1)
         self.assertEqual(node.config["max_punctuation_ratio"], 0.95)
-        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+        self.assertEqual(node.config["action_on_hit"], "observe")
+        self.assertTrue(any("fallback to observe" in warning for warning in node.warnings))
 
 
 class MetadataLeakageDetectorTests(unittest.TestCase):
@@ -227,7 +227,7 @@ class LanguageDriftDetectorTests(unittest.TestCase):
         self.assertFalse(quoted.matched)
         self.assertEqual(quoted.metadata["expectation_source"], "inferred")
 
-    def test_normalizes_all_public_parameters_and_rejects_sanitize(self):
+    def test_normalizes_all_public_parameters_and_falls_back_from_unknown_action(self):
         node, _context = _output_node(
             "language_drift_detector",
             {
@@ -236,7 +236,7 @@ class LanguageDriftDetectorTests(unittest.TestCase):
                 "dominant_script_ratio": 0.1,
                 "max_baseline_script_ratio": 0.9,
                 "min_foreign_script_run_chars": 1,
-                "action_on_hit": "sanitize",
+                "action_on_hit": "unknown_action",
             },
             "请用中文回答。",
             "中文回复。",
@@ -247,8 +247,8 @@ class LanguageDriftDetectorTests(unittest.TestCase):
         self.assertEqual(node.config["dominant_script_ratio"], 0.7)
         self.assertEqual(node.config["max_baseline_script_ratio"], 0.2)
         self.assertEqual(node.config["min_foreign_script_run_chars"], 4)
-        self.assertEqual(node.config["action_on_hit"], "default")
-        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+        self.assertEqual(node.config["action_on_hit"], "observe")
+        self.assertTrue(any("fallback to observe" in warning for warning in node.warnings))
 
     def test_handles_japanese_han_boundary_and_korean_drift(self):
         han_response = "这是只包含汉字的回复内容。" * 12
@@ -384,14 +384,14 @@ class FormatViolationDetectorTests(unittest.TestCase):
         self.assertTrue(strict_result.matched)
         self.assertEqual(strict_result.metadata["reason_codes"], ["requested_json_invalid"])
 
-    def test_normalizes_all_public_parameters_and_rejects_sanitize(self):
+    def test_normalizes_all_public_parameters_and_falls_back_from_unknown_action(self):
         node, _context = _output_node(
             "format_violation_detector",
             {
                 "scan_limit_chars": 1,
                 "max_contract_candidates": 0,
                 "allow_surrounding_whitespace": False,
-                "action_on_hit": "sanitize",
+                "action_on_hit": "unknown_action",
             },
             "Return a JSON object.",
             "{}",
@@ -400,8 +400,8 @@ class FormatViolationDetectorTests(unittest.TestCase):
         self.assertEqual(node.config["scan_limit_chars"], 12000)
         self.assertEqual(node.config["max_contract_candidates"], 8)
         self.assertFalse(node.config["allow_surrounding_whitespace"])
-        self.assertEqual(node.config["action_on_hit"], "default")
-        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+        self.assertEqual(node.config["action_on_hit"], "observe")
+        self.assertTrue(any("fallback to observe" in warning for warning in node.warnings))
 
 
 class RefusalLeakageDetectorTests(unittest.TestCase):
@@ -485,7 +485,7 @@ class RefusalLeakageDetectorTests(unittest.TestCase):
             evaluate_output_detector(expanded_node, expanded_context, distant_response).matched
         )
 
-    def test_normalizes_all_public_parameters_and_rejects_sanitize(self):
+    def test_normalizes_all_public_parameters_and_falls_back_from_unknown_action(self):
         node, _context = _output_node(
             "refusal_leakage_detector",
             {
@@ -493,7 +493,7 @@ class RefusalLeakageDetectorTests(unittest.TestCase):
                 "max_relation_gap_chars": 1,
                 "min_evidence_families": 99,
                 "ignore_fenced_code": False,
-                "action_on_hit": "sanitize",
+                "action_on_hit": "unknown_action",
             },
             "request",
             "I cannot disclose my system instructions.",
@@ -503,8 +503,8 @@ class RefusalLeakageDetectorTests(unittest.TestCase):
         self.assertEqual(node.config["max_relation_gap_chars"], 160)
         self.assertEqual(node.config["min_evidence_families"], 2)
         self.assertFalse(node.config["ignore_fenced_code"])
-        self.assertEqual(node.config["action_on_hit"], "default")
-        self.assertTrue(any("sanitize is only supported" in warning for warning in node.warnings))
+        self.assertEqual(node.config["action_on_hit"], "observe")
+        self.assertTrue(any("fallback to observe" in warning for warning in node.warnings))
 
 
 if __name__ == "__main__":
