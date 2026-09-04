@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 try:
@@ -257,28 +256,6 @@ def apply_span_replacements(
             continue
         result = result[:start] + replacement + result[end:]
         last_start = start
-    return result
-
-
-def apply_literal_replacements(
-    text: str, hits: list[dict[str, Any]], replacement: str
-) -> str:
-    if not text or not hits:
-        return text
-    result = text
-    values = []
-    seen = set()
-    for hit in hits:
-        value = str(hit.get("value", ""))
-        if not value:
-            continue
-        key = value.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        values.append(value)
-    for value in sorted(values, key=len, reverse=True):
-        result = re.sub(re.escape(value), replacement, result, flags=re.IGNORECASE)
     return result
 
 

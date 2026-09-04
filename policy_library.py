@@ -12,11 +12,19 @@ from typing import Any
 try:
     from .config import (
         COMPONENT_TEMPLATES,
+        ERROR_ACTIONS,
+        HIT_ACTIONS,
         RAIL_NAMES,
         RULE_TEMPLATES,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
-    from config import COMPONENT_TEMPLATES, RAIL_NAMES, RULE_TEMPLATES
+    from config import (
+        COMPONENT_TEMPLATES,
+        ERROR_ACTIONS,
+        HIT_ACTIONS,
+        RAIL_NAMES,
+        RULE_TEMPLATES,
+    )
 
 
 RULE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -40,10 +48,6 @@ SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
 )
 CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
 RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
-LOADED_HIT_ACTIONS = frozenset({"default", "observe", "block", "retry_generation"})
-LOADED_ERROR_ACTIONS = frozenset({"default", "discard", "record", "block"})
-
-
 @dataclass(frozen=True)
 class RuleDefinition:
     """Reusable rule content without rail or policy-specific behavior."""
@@ -730,7 +734,7 @@ def _compile_component(component: PolicyComponent) -> dict[str, Any]:
 
 def _loaded_hit_action(value: Any) -> str:
     action = str(value or "default").strip()
-    return action if action in LOADED_HIT_ACTIONS else "observe"
+    return action if action in HIT_ACTIONS else "observe"
 
 
 def _loaded_optional_hit_action(value: Any) -> str | None:
@@ -740,7 +744,7 @@ def _loaded_optional_hit_action(value: Any) -> str | None:
 
 def _loaded_error_action(value: Any) -> str:
     action = str(value or "default").strip()
-    return action if action in LOADED_ERROR_ACTIONS else "discard"
+    return action if action in ERROR_ACTIONS else "discard"
 
 
 def _loaded_optional_error_action(value: Any) -> str | None:

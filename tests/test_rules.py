@@ -11,7 +11,6 @@ from config import normalize_config
 from components import evaluate_logic_gate
 from core import RailContext
 from rules import (
-    apply_literal_replacements,
     apply_span_replacements,
     evaluate_llm_review_response,
     evaluate_plain_keywords,
@@ -100,15 +99,11 @@ class RuleEvaluatorTests(unittest.TestCase):
         self.assertTrue(result.matched)
         self.assertEqual(result.metadata["inputs"], {"a": True, "b": False})
 
-    def test_replacement_helpers(self):
+    def test_span_replacements(self):
         text = "abc SECRET def"
         hits = [{"start": 4, "end": 10, "value": "SECRET"}]
 
         self.assertEqual(apply_span_replacements(text, hits, "[x]"), "abc [x] def")
-        self.assertEqual(
-            apply_literal_replacements("SECRET secret", hits, ""),
-            " ",
-        )
 
     def test_llm_review_response_parses_matched_payload(self):
         cfg = normalize_config(

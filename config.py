@@ -92,13 +92,7 @@ SUPPORTED_TEMPLATES: dict[str, set[str]] = {
     for rail_name in RAIL_NAMES
 }
 
-INPUT_ACTIONS = {
-    "default",
-    "observe",
-    "retry_generation",
-    "block",
-}
-OUTPUT_ACTIONS = {
+HIT_ACTIONS = {
     "default",
     "observe",
     "retry_generation",
@@ -613,11 +607,11 @@ def _normalize_node(
         ) else raw_action_on_hit
         action = raw_action
         config["action_on_hit"] = action
-        if rail_name in {"input_rail", "request_rail"} and action not in INPUT_ACTIONS:
+        if rail_name in {"input_rail", "request_rail"} and action not in HIT_ACTIONS:
             warnings.append(f"{rule_id}.action_on_hit is invalid; fallback to observe")
             config["action_on_hit"] = "observe"
         elif rail_name == "output_rail":
-            if action not in OUTPUT_ACTIONS:
+            if action not in HIT_ACTIONS:
                 warnings.append(
                     f"{rule_id}.action_on_hit is invalid; fallback to observe"
                 )

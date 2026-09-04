@@ -2954,8 +2954,8 @@ function renderPolicyGraphNodeEditor(node) {
     ));
   } else {
     const hitAction = isComponent
-      ? createActionSelect(hitActionsForTemplate(templateKey, node.rail), nodeData.action_on_hit || "default")
-      : createPolicyBindingActionSelect(hitActionsForTemplate(templateKey, node.rail), nodeData.action_on_hit);
+      ? createActionSelect(hitActionsForRail(node.rail), nodeData.action_on_hit || "default")
+      : createPolicyBindingActionSelect(hitActionsForRail(node.rail), nodeData.action_on_hit);
     hitAction.addEventListener("change", () => updatePolicyBinding(node.id, "action_on_hit", hitAction));
     grid.append(createPolicyGraphEditorField(
       isComponent ? "命中动作" : "命中动作覆写",
@@ -3671,15 +3671,15 @@ function createActionSelect(values, value) {
   select.value = value || "default";
   return select;
 }
-function hitActionsForTemplate(templateKey, rail = "") {
+function hitActionsForRail(rail = "") {
   let actions = hitActions;
   if (rail && rail !== "output_rail") {
     actions = actions.filter((action) => action !== "retry_generation");
   }
   return actions;
 }
-function createRuleHitActionSelect(templateKey, value) {
-  const values = hitActionsForTemplate(templateKey);
+function createRuleHitActionSelect(value) {
+  const values = hitActionsForRail();
   const select = document.createElement("select");
   populateRuleActionOptions(select, values);
   select.value = values.includes(value) ? value : "default";
@@ -3828,7 +3828,7 @@ function createRuleEditor(rule) {
   const description = document.createElement("input"); description.className = "rule-description"; description.value = rule.description || ""; description.placeholder = "简述这条规则的用途"; descriptionLabel.append(createRuleFieldHint("用于规则列表的说明，不影响实际执行。"), description);
   const priorityLabel = document.createElement("label"); priorityLabel.textContent = "默认优先级";
   const priority = document.createElement("input"); priority.type = "number"; priority.value = String(Number.isInteger(rule.default_priority) ? rule.default_priority : 100); priorityLabel.append(createRuleFieldHint("数值越小越先执行；策略编排可覆盖此值。"), priority);
-  const hitAction = createRuleHitActionSelect(rule.template_key, rule.default_action_on_hit); hitAction.className = "rule-hit-action";
+  const hitAction = createRuleHitActionSelect(rule.default_action_on_hit); hitAction.className = "rule-hit-action";
   const hitLabel = document.createElement("label"); hitLabel.textContent = "默认命中动作"; hitLabel.append(createRuleFieldHint("命中时的默认处理；策略编排可覆盖。retry_generation 仅在 Step 5 生效，在其他 Step 会回退为默认动作。"), hitAction);
   const errorAction = createActionSelect(errorActions, rule.default_action_on_error); errorAction.className = "rule-error-action";
   const errorLabel = document.createElement("label"); errorLabel.textContent = "默认错误动作"; errorLabel.append(createRuleFieldHint("规则执行出错时的默认处理；策略编排可覆盖。"), errorAction);
