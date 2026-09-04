@@ -47,6 +47,7 @@ SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
     {"plain_keywords", "regex_pattern", "rag_judge", "llm_review"}
 )
 CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
+COMPOSE_TEXT_COMPONENT_TYPE = "compose_text"
 RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
 @dataclass(frozen=True)
 class RuleDefinition:
@@ -617,6 +618,8 @@ class PolicyLibrary:
                     fatal_errors.extend(
                         _validate_context_extractor_component(component)
                     )
+                elif component.component_type == COMPOSE_TEXT_COMPONENT_TYPE:
+                    fatal_errors.extend(_validate_compose_text_component(component))
                 elif component.component_type == RANDOM_SIGNAL_COMPONENT_TYPE:
                     fatal_errors.extend(_validate_random_signal_component(component))
                 if (
@@ -635,6 +638,7 @@ class PolicyLibrary:
 
         for policy in self.policies:
             fatal_errors.extend(_validate_context_extractor_payload_uses(policy))
+            fatal_errors.extend(_validate_compose_text_payload_uses(policy))
             fatal_errors.extend(_validate_policy_dependency_graph(policy, rule_by_id))
 
         if self.active_policy_id and self.active_policy_id not in policy_ids:
@@ -982,8 +986,24 @@ def _validate_random_signal_component(component: PolicyComponent) -> list[str]:
     return errors
 
 
+def _validate_compose_text_component(component: PolicyComponent) -> list[str]:
+    """Keep the P4 text composer data-only and free of action controls."""
+
+    errors: list[str] = []
+    config = component.config if isinstance(component.config, Mapping) else {}
+    if not isinstance(config.get("template", ""), str):
+        errors.append(f"component {component.component_id} template must be a string")
+    if str(component.inspection_template or "").strip():
+        errors.append(f"component {component.component_id} cannot use inspection_template")
+    if str(component.action_on_hit or "default").strip() not in {"default", "observe"}:
+        errors.append(f"component {component.component_id} action_on_hit is fixed to observe")
+    if str(component.action_on_error or "default").strip() not in {"default", "discard"}:
+        errors.append(f"component {component.component_id} action_on_error is fixed to discard")
+    return errors
+
+
 def _validate_context_extractor_payload_uses(policy: PolicyDefinition) -> list[str]:
-    """Restrict context payload to inspection-template consumers only."""
+    """Restrict context payload to inspection and compose-text consumers."""
 
     context_ids = {
         component.component_id
@@ -1004,6 +1024,12 @@ def _validate_context_extractor_payload_uses(policy: PolicyDefinition) -> list[s
         for component in policy.components
         if component.component_type != CONTEXT_EXTRACTOR_COMPONENT_TYPE
     )
+    consumers.extend(
+        (component.component_id, component.config.get("template", ""))
+        for component in policy.components
+        if component.component_type == COMPOSE_TEXT_COMPONENT_TYPE
+        and isinstance(component.config, Mapping)
+    )
     for consumer_id, template in consumers:
         for source_id, field in _template_payload_references(template):
             if source_id not in context_ids:
@@ -1021,6 +1047,59 @@ def _validate_context_extractor_payload_uses(policy: PolicyDefinition) -> list[s
             if source_id in context_ids:
                 errors.append(
                     f"policy {policy.policy_id} {rail} output_redirect_template cannot read context_extractor"
+                )
+    return errors
+
+
+def _validate_compose_text_payload_uses(policy: PolicyDefinition) -> list[str]:
+    """Keep composed text inside inspection or another compose-text template."""
+
+    compose_ids = {
+        component.component_id
+        for component in policy.components
+        if component.component_type == COMPOSE_TEXT_COMPONENT_TYPE
+    }
+    if not compose_ids:
+        return []
+
+    errors: list[str] = []
+    consumers: list[tuple[str, str]] = []
+    consumers.extend((binding.rule_id, binding.inspection_template) for binding in policy.bindings)
+    consumers.extend(
+        (component.component_id, component.inspection_template)
+        for component in policy.components
+        if component.component_type != COMPOSE_TEXT_COMPONENT_TYPE
+    )
+    consumers.extend(
+        (component.component_id, component.config.get("template", ""))
+        for component in policy.components
+        if component.component_type == COMPOSE_TEXT_COMPONENT_TYPE
+        and isinstance(component.config, Mapping)
+    )
+    for consumer_id, template in consumers:
+        for source_id, field in _template_payload_references(template):
+            if source_id in compose_ids and field != "value":
+                errors.append(
+                    f"node {consumer_id} may only read {source_id}.value from compose_text"
+                )
+
+    for rail, settings in policy.rail_settings.items():
+        if not isinstance(settings, Mapping):
+            continue
+        template = str(settings.get("output_redirect_template", "") or "")
+        for source_id, _field in _template_payload_references(template):
+            if source_id in compose_ids:
+                errors.append(
+                    f"policy {policy.policy_id} {rail} output_redirect_template cannot read compose_text"
+                )
+    for component in policy.components:
+        if component.component_type != "strengthen_prompt" or not isinstance(component.config, Mapping):
+            continue
+        template = str(component.config.get("insertion_text", "") or "")
+        for source_id, _field in _template_payload_references(template):
+            if source_id in compose_ids:
+                errors.append(
+                    f"component {component.component_id} strengthen_prompt cannot read compose_text"
                 )
     return errors
 

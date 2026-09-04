@@ -44,6 +44,7 @@ try:
     )
     from .components import (
         MESSAGE_FACT_TEMPLATES,
+        evaluate_compose_text,
         evaluate_input_detector,
         evaluate_logic_gate,
         evaluate_message_fact_component,
@@ -91,6 +92,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     )
     from components import (
         MESSAGE_FACT_TEMPLATES,
+        evaluate_compose_text,
         evaluate_input_detector,
         evaluate_logic_gate,
         evaluate_message_fact_component,
@@ -622,6 +624,8 @@ class GuardrailPipeline:
             context.warnings.append("message component chain is unavailable")
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
+            if rule.template_key == "compose_text":
+                return self._execute_compose_text(rail, ctx, rule, stage_text)
             inspected_text = self._resolve_node_inspection_template(
                 rail, ctx, rule, stage_text, max_chars
             )
@@ -670,6 +674,8 @@ class GuardrailPipeline:
         stage_text = request_text
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
+            if rule.template_key == "compose_text":
+                return self._execute_compose_text(rail, ctx, rule, stage_text)
             inspected_text = self._resolve_node_inspection_template(
                 rail, ctx, rule, stage_text, max_chars
             )
@@ -763,6 +769,27 @@ class GuardrailPipeline:
                 result=evaluate_text_rule(rule, context, inspected_text)
             )
 
+        self._log_check_completion(rule, execution)
+        return execution
+
+    def _execute_compose_text(
+        self,
+        rail: NormalizedRail,
+        context: RailContext,
+        rule: NormalizedRule,
+        stage_text: str,
+    ) -> NodeExecution:
+        """Render a policy-local string without applying a component size cap."""
+
+        template = str(rule.config.get("template", ""))
+        value = self._render_stage_template(
+            rail,
+            context,
+            stage_text,
+            template,
+            allow_context_payload=True,
+        )
+        execution = NodeExecution(result=evaluate_compose_text(rule, value))
         self._log_check_completion(rule, execution)
         return execution
 
@@ -1023,9 +1050,9 @@ class GuardrailPipeline:
         template = str(rail.settings.get("output_redirect_template", default_template))
         if not template:
             template = default_template
-        if self._template_references_context_payload(template, context):
+        if self._template_references_private_payload(template, context):
             context.warnings.append(
-                f"{rail.rail}.output_redirect_template cannot read context_extractor; redirect ignored"
+                f"{rail.rail}.output_redirect_template cannot read context_extractor or compose_text; redirect ignored"
             )
             return original
         return self._render_stage_template(rail, context, original, template)
@@ -1054,14 +1081,24 @@ class GuardrailPipeline:
             max_chars,
         )
 
-    @staticmethod
-    def _template_references_context_payload(template: str, context: RailContext) -> bool:
+    def _template_references_private_payload(self, template: str, context: RailContext) -> bool:
+        private_node_ids = {
+            node.node_id
+            for configured_rail in self.config.rails.values()
+            for node in configured_rail.nodes
+            if node.template_key in {"context_extractor", "compose_text"}
+        }
         for match in re.finditer(r"\$\{([^{}]+)\}", template):
             node_id, separator, _field = match.group(1).strip().partition(".")
             if not separator:
                 continue
+            if node_id in private_node_ids:
+                return True
             result = context.results.get(node_id)
-            if str(getattr(result, "template_key", "") or "") == "context_extractor":
+            if str(getattr(result, "template_key", "") or "") in {
+                "context_extractor",
+                "compose_text",
+            }:
                 return True
         return False
 
@@ -1384,6 +1421,8 @@ class GuardrailPipeline:
         retry_request: dict[str, str] | None = None
 
         async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
+            if rule.template_key == "compose_text":
+                return self._execute_compose_text(rail, ctx, rule, stage_text)
             inspected_text = self._resolve_node_inspection_template(
                 rail, ctx, rule, stage_text, max_chars
             )

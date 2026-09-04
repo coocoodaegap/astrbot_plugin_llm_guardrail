@@ -771,6 +771,27 @@ def evaluate_output_detector(
     )
 
 
+def evaluate_compose_text(node: NormalizedNode, value: str):
+    """Expose one policy-rendered string to later inspection templates.
+
+    This is deliberately a data-ready signal, rather than a risk conclusion or
+    an output mutation. Callers retain the full value in the runtime payload;
+    only its length enters metadata and ordinary completion logs.
+    """
+
+    return make_node_result(
+        node,
+        matched=True,
+        action_on_hit="observe",
+        metadata={"value_length": len(value)},
+        signal=NodeSignal(
+            value=True,
+            truthy=True,
+            payload={"component": "compose_text", "value": value},
+        ),
+    )
+
+
 def evaluate_random_signal(node: NormalizedNode):
     """Sample one independent boolean signal for a policy graph node."""
 

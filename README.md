@@ -60,9 +60,9 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 
 ## 官方示例策略
 
-仓库中的 [`presets/`](presets/) 提供可导入的策略包、示例知识库和配套说明。它们用于学习、测试和二次配置，**不包含在插件市场或 GitHub Release 的分发 ZIP 中**；请从项目仓库获取，并先阅读各 preset 的 README。
+仓库中的 [`presets/`](https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail/tree/main/presets/) 提供可导入的策略包、示例知识库和配套说明。它们用于学习、测试和二次配置，**不包含在插件市场或 GitHub Release 的分发 ZIP 中**；请从项目仓库获取，并先阅读各 preset 的 README。
 
-首个完整示例见 [`presets/preset1/`](presets/preset1/)。其中的 RAG 语料需要由使用者自行导入 AstrBot 知识库，策略包不会自动上传文件、创建知识库或填入 Provider 配置。
+首个完整示例见 [`presets/preset1/`](https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail/tree/main/presets/preset1/)。其中的 RAG 语料需要由使用者自行导入 AstrBot 知识库，策略包不会自动上传文件、创建知识库或填入 Provider 配置。
 
 ## 快速试用
 
@@ -113,7 +113,7 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 后续工作按以下优先级推进：
 
 1. **自定义检测器**：定义安全、可验证的扩展契约，让项目可以在不修改核心调度链路的前提下接入领域检测能力。
-2. **通用策略数据面**：扩展编码与外部资源语法，引入 `composite_value` 和通用 `payload_schema`，让检查器间能够传递受约束的结构化结果。
+2. **通用策略数据面**：扩展编码与外部资源语法，并在已交付的受限 `compose_text` 之外引入通用 `payload_schema`，让检查器间能够传递受约束的结构化结果。
 3. **执行治理与可追溯性**：增加 Token／预算控制、规则级并行和完整审计，明确每次策略执行的资源消耗、并发行为与决策依据。
 
 这些能力会先经过独立设计、回归测试和观察模式验证，再作为显式配置交付；不会通过隐藏开关或 system fallback 自动启用。

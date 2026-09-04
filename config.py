@@ -54,6 +54,7 @@ COMPONENT_TEMPLATES["input_rail"].update(
         "external_fetch_detector",
         "instruction_override_detector",
         "context_extractor",
+        "compose_text",
         "contains_forward",
         "contains_file",
         "contains_image",
@@ -74,6 +75,7 @@ COMPONENT_TEMPLATES["request_rail"].update(
         "external_fetch_detector",
         "instruction_override_detector",
         "context_extractor",
+        "compose_text",
     }
 )
 COMPONENT_TEMPLATES["output_rail"].update(
@@ -85,6 +87,7 @@ COMPONENT_TEMPLATES["output_rail"].update(
         "sensitive_echo_detector",
         "language_drift_detector",
         "context_extractor",
+        "compose_text",
     }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {
@@ -105,8 +108,8 @@ DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "sensitive_echo_detector",
     "language_drift_detector",
 }
-FIXED_OBSERVE_COMPONENT_TEMPLATES = {"context_extractor"}
-FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES = {"context_extractor"}
+FIXED_OBSERVE_COMPONENT_TEMPLATES = {"context_extractor", "compose_text"}
+FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES = {"context_extractor", "compose_text"}
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 LEGACY_FALLBACK_DETECTOR_SWITCHES = (
@@ -540,6 +543,8 @@ def _normalize_node(
         _normalize_input_detector(rule_id, template_key, config, warnings)
     elif template_key == "context_extractor":
         _normalize_context_extractor(rule_id, config, warnings)
+    elif template_key == "compose_text":
+        _normalize_compose_text(rule_id, config, warnings)
     elif template_key == "random_signal":
         _normalize_random_signal(rule_id, config, warnings)
     elif template_key == "poor_quality_detector":
@@ -586,6 +591,7 @@ def _normalize_node(
         "external_fetch_detector",
         "instruction_override_detector",
         "context_extractor",
+        "compose_text",
         "random_signal",
         "poor_quality_detector",
         "metadata_leakage_detector",
@@ -900,6 +906,17 @@ def _normalize_context_extractor(
     config["user_only"] = _as_bool(config.get("user_only"), False)
     if _as_str(config.get("inspection_template", "")).strip():
         warnings.append(f"{rule_id}.inspection_template is ignored for context_extractor")
+    config["inspection_template"] = ""
+
+
+def _normalize_compose_text(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the policy-local text composer without a rendered-size cap."""
+
+    config["template"] = _as_str(config.get("template", ""))
+    if _as_str(config.get("inspection_template", "")).strip():
+        warnings.append(f"{rule_id}.inspection_template is ignored for compose_text")
     config["inspection_template"] = ""
 
 

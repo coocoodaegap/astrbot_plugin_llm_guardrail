@@ -522,6 +522,7 @@ const templateDescriptions = {
   instruction_override_detector: "指令覆盖检测器",
   random_signal: "随机信号",
   context_extractor: "对话上下文提取器",
+  compose_text: "文本组合器",
   format_violation_detector: "输出格式违约检测器",
   poor_quality_detector: "异常低质回复检测器",
   metadata_leakage_detector: "运行时工件泄漏检测器",
@@ -1666,6 +1667,13 @@ const componentDefinitions = {
       { key: "user_only", label: "仅保留用户消息", hint: "开启后省略同轮 Bot 回复；system、tool、空和损坏历史仍以中性说明保留。", type: "boolean", default: false },
     ],
     defaultConfig: () => ({ turns: 3, user_only: false }),
+    defaultAction: "observe",
+  },
+  compose_text: {
+    label: "文本组合器",
+    description: "渲染策略内文本模板，产出仅供后续检查内容重定向读取的 payload.value；不构成风险命中，也不会改写阶段对象。",
+    rails: new Set(["input_rail", "request_rail", "output_rail"]),
+    defaultConfig: () => ({ template: "" }),
     defaultAction: "observe",
   },
   format_violation_detector: {
@@ -2885,7 +2893,7 @@ function renderPolicyGraphNodeEditor(node) {
     [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || templateKey || "未知类型"],
     ["所属 Step", step?.label || node.rail],
     ["依赖", nodeData.depend_on || "未设置"],
-    ["检查内容", templateKey === "context_extractor" ? "当前对话历史（payload.value）" : (nodeData.inspection_template || "当前阶段原文")],
+    ["检查内容", templateKey === "context_extractor" ? "当前对话历史（payload.value）" : templateKey === "compose_text" ? "策略内文本（payload.value）" : (nodeData.inspection_template || "当前阶段原文")],
   ]) {
     const item = document.createElement("span");
     item.textContent = `${label}：${value}`;
@@ -2933,14 +2941,29 @@ function renderPolicyGraphNodeEditor(node) {
       true,
     ));
   }
-  if (isComponent && templateKey === "context_extractor") {
+  if (isComponent && templateKey === "compose_text") {
+    const template = document.createElement("textarea");
+    template.rows = 7;
+    template.value = node.component?.config?.template || "";
+    template.placeholder = "可使用 ${event_origin}、${req_origin}、${res_origin}、${CONSTANT_NAME} 与 ${node_id.value}";
+    template.addEventListener("change", () => updatePolicyComponentConfig(node.id, "template", template.value));
+    grid.append(createPolicyGraphEditorField(
+      "生成文本",
+      "按当前 Step 已可见的 origin、系统常量和已完成节点的 value 渲染。只供后续检查节点的“检查内容重定向”读取；不设文本长度上限，也不会隐式建立 depends_on。",
+      template,
+      true,
+    ));
+  }
+  if (isComponent && (templateKey === "context_extractor" || templateKey === "compose_text")) {
     const fixedAction = document.createElement("input");
     fixedAction.type = "text";
     fixedAction.value = "observe（固定）";
     fixedAction.disabled = true;
     grid.append(createPolicyGraphEditorField(
       "执行语义",
-      "该元件永远以 true 表示“上下文已就绪”，只供 depend_on 与检查内容重定向消费；不会执行风险动作。",
+      templateKey === "context_extractor"
+        ? "该元件永远以 true 表示“上下文已就绪”，只供 depend_on 与检查内容重定向消费；不会执行风险动作。"
+        : "该元件永远以 true 表示“文本已就绪”，只供 depend_on 与检查内容重定向消费；不会执行风险动作。",
       fixedAction,
     ));
     const fixedError = document.createElement("input");
@@ -2949,7 +2972,9 @@ function renderPolicyGraphNodeEditor(node) {
     fixedError.disabled = true;
     grid.append(createPolicyGraphEditorField(
       "读取失败",
-      "读取失败时产出空上下文与诊断，后续节点继续检查其当前阶段对象。",
+      templateKey === "context_extractor"
+        ? "读取失败时产出空上下文与诊断，后续节点继续检查其当前阶段对象。"
+        : "渲染异常时丢弃本元件结果，后续节点继续检查其当前阶段对象。",
       fixedError,
     ));
   } else {
