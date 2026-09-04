@@ -1,0 +1,5 @@
+.gitignore export-ignore
+.gitattributes export-ignore
+.github/ export-ignore
+presets/ export-ignore
+tests/ export-ignore
