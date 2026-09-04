@@ -2,7 +2,7 @@
   "schema_version": {
     "type": "string",
     "description": "配置模板版本",
-    "default": "0.6.0",
+    "default": "0.6.1",
     "invisible": true
   },
   "fallback_policy_settings": {

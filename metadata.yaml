@@ -2,7 +2,7 @@ name: astrbot_plugin_llm_guardrail
 display_name: LLM Guardrail
 desc: 面向 AstrBot 的 LLM 请求护栏编排插件：以可视化策略统一处理输入检查、提示词加工、模型路由与输出检查。
 short_desc: 输入输出检查、提示词加固与模型路由编排。
-version: 0.6.0
+version: 0.6.1
 author: 咕咕大侠
 repo: https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail
 astrbot_version: ">=4.26.0,<5"

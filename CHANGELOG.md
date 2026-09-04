@@ -2,11 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.6.1] - 2026-09-04
 
 ### Changed
 
 - 移除 `sanitize` 命中动作。`plain_keywords` 和 `regex_pattern` 现在始终在 payload 提供 `sanitized`，其值按规则的 `sanitizer` 替换文本处理全部命中区间（留空则移除）；只有策略显式消费该字段时才会改变后续内容。
+- 清理未使用的字面替换辅助函数；命中动作白名单改由配置层集中定义，Pages 也移除了未使用的模板参数。
 
 ### Fixed
 
