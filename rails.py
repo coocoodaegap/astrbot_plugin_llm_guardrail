@@ -2142,7 +2142,7 @@ class GuardrailPipeline:
             if isinstance(top, dict):
                 top_text = str(top.get("text", "") or "")
         logger.info(
-            "[LLMGuardrail] rag_judge result | rail=%s | rule=%s | kb=%s | matched=%s | evidence=%s | max_score=%s | top=%s",
+            "[LLMGuardrail] rag_judge result | rail=%s | rule=%s | kb=%s | matched=%s | evidence=%s | matched_evidence=%s | max_score=%s | top=%s",
             rule.rail,
             rule.rule_id,
             ",".join(
@@ -2152,6 +2152,7 @@ class GuardrailPipeline:
             or "-",
             result.matched,
             result.metadata.get("evidence_count", 0),
+            result.metadata.get("matched_evidence_count", 0),
             result.metadata.get("max_score"),
             self._log_summary(top_text, 500),
         )

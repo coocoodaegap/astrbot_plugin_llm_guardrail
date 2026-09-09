@@ -137,7 +137,7 @@ LOGIC_GATE_INPUT_PATTERN = re.compile(
     r"^[!?~]?(?:[a-z][a-z0-9_]{0,63}|__[a-z][a-z0-9_]{0,63})"
     r"(?:\.[a-z][a-z0-9_]{0,63}\??)?$"
 )
-LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN = re.compile(r"\$\{([^}]*)\}")
+VALUE_ITEM_PLACEHOLDER_PATTERN = re.compile(r"\$\{([^}]*)\}")
 SYSTEM_CONSTANT_NAME_PATTERN = re.compile(r"^[A-Z0-9_]{1,64}$")
 INSERTION_TARGETS = {
     "system_prefix",
@@ -740,7 +740,7 @@ def _normalize_logic_gate(
     else:
         config.pop("__invalid_logic_inputs", None)
     value_item_template = _as_str(config.get("value_item_template", "${value}"))
-    if not _logic_gate_value_template_is_valid(value_item_template):
+    if not _value_item_template_is_valid(value_item_template):
         warnings.append(
             f"{rule_id}.value_item_template only supports ${{value}} and ${{source}}; "
             "fallback to ${value}"
@@ -752,11 +752,11 @@ def _normalize_logic_gate(
     config["action_on_hit"] = _as_str(config.get("action_on_hit", "default")) or "default"
 
 
-def _logic_gate_value_template_is_valid(value: str) -> bool:
-    matches = list(LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN.finditer(value))
+def _value_item_template_is_valid(value: str) -> bool:
+    matches = list(VALUE_ITEM_PLACEHOLDER_PATTERN.finditer(value))
     if any(match.group(1) not in {"value", "source"} for match in matches):
         return False
-    consumed = LOGIC_GATE_VALUE_PLACEHOLDER_PATTERN.sub("", value)
+    consumed = VALUE_ITEM_PLACEHOLDER_PATTERN.sub("", value)
     return "${" not in consumed
 
 
@@ -1186,6 +1186,16 @@ def _normalize_rag_judge(
         warnings.append(f"{rule_id}.knowledge_bases is empty; rule skipped")
     config["top_k"] = max(_as_int(config.get("top_k", 5), 5), 1)
     config["min_score"] = max(_as_float(config.get("min_score", 0.72), 0.72), 0.0)
+    value_item_template = _as_str(config.get("value_item_template", "${value}"))
+    if not _value_item_template_is_valid(value_item_template):
+        warnings.append(
+            f"{rule_id}.value_item_template only supports ${{value}} and ${{source}}; "
+            "fallback to ${value}"
+        )
+        value_item_template = "${value}"
+    config["value_item_template"] = value_item_template
+    # A single space preserves the pre-v0.7 matched_text representation.
+    config["value_separator"] = _as_str(config.get("value_separator", " "))
     config["timeout_seconds"] = max(
         _as_float(config.get("timeout_seconds", 8), 8.0), 0.0
     )

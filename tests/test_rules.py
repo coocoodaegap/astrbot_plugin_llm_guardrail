@@ -181,6 +181,115 @@ class RuleEvaluatorTests(unittest.TestCase):
         self.assertTrue(result.matched)
         self.assertEqual(result.signal.payload["max_score"], 0.8)
         self.assertEqual(result.signal.payload["evidence_count"], 1)
+        self.assertEqual(result.signal.payload["matched_evidence_count"], 1)
+
+    def test_rag_judge_matched_text_only_formats_evidence_at_or_above_threshold(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                            "value_item_template": "[${source}] ${value}",
+                            "value_separator": "\n---\n",
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        result = evaluate_rag_judge_evidence(
+            rule,
+            [
+                {
+                    "text": "strong evidence",
+                    "score": 0.91,
+                    "metadata": {"kb_name": "positive"},
+                },
+                {
+                    "text": "boundary evidence",
+                    "score": 0.7,
+                    "metadata": {"doc_name": "case.md"},
+                },
+                {
+                    "text": "low evidence must stay out",
+                    "score": 0.69,
+                    "metadata": {"kb_name": "positive"},
+                },
+            ],
+        )
+
+        payload = result.signal.payload
+        self.assertTrue(result.matched)
+        self.assertEqual(payload["evidence_count"], 3)
+        self.assertEqual(len(payload["evidence"]), 3)
+        self.assertEqual(payload["matched_evidence_count"], 2)
+        self.assertEqual(
+            payload["matched_text"],
+            "[positive] strong evidence\n---\n[case.md] boundary evidence",
+        )
+        self.assertNotIn("low evidence", payload["matched_text"])
+
+    def test_rag_judge_low_scored_evidence_remains_visible_but_not_matched(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        result = evaluate_rag_judge_evidence(
+            rule,
+            [{"text": "low evidence", "score": 0.2, "metadata": {}}],
+        )
+
+        self.assertFalse(result.matched)
+        self.assertEqual(result.signal.payload["evidence_count"], 1)
+        self.assertEqual(result.signal.payload["matched_evidence_count"], 0)
+        self.assertEqual(result.signal.payload["matched_text"], "")
+        self.assertEqual(result.signal.payload["evidence"][0]["text"], "low evidence")
+
+    def test_rag_judge_counts_all_matches_beyond_payload_and_text_limits(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                            "value_separator": "|",
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+        evidence = [
+            {"text": f"item-{index}", "score": 0.9, "metadata": {}}
+            for index in range(6)
+        ]
+
+        result = evaluate_rag_judge_evidence(rule, evidence)
+
+        self.assertEqual(result.signal.payload["evidence_count"], 6)
+        self.assertEqual(len(result.signal.payload["evidence"]), 5)
+        self.assertEqual(result.signal.payload["matched_evidence_count"], 6)
+        self.assertEqual(result.signal.payload["matched_text"], "item-0|item-1|item-2")
 
     def test_rag_judge_evidence_allows_zero_min_score(self):
         cfg = normalize_config(
@@ -232,6 +341,61 @@ class RuleEvaluatorTests(unittest.TestCase):
         self.assertTrue(result.matched)
         self.assertFalse(result.signal.payload["score_available"])
         self.assertIsNone(result.signal.payload["max_score"])
+        self.assertEqual(result.signal.payload["matched_evidence_count"], 1)
+        self.assertEqual(result.signal.payload["matched_text"], "scoreless evidence")
+
+    def test_rag_judge_excludes_scoreless_items_when_scored_evidence_is_available(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "min_score": 0.7,
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        result = evaluate_rag_judge_evidence(
+            rule,
+            [
+                {"text": "qualified", "score": 0.8, "metadata": {}},
+                {"text": "unknown score", "score": None, "metadata": {}},
+            ],
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.signal.payload["matched_evidence_count"], 1)
+        self.assertEqual(result.signal.payload["matched_text"], "qualified")
+
+    def test_rag_judge_normalizes_invalid_value_template_and_preserves_separator(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "rag_judge",
+                            "rule_id": "rag",
+                            "knowledge_bases": ["policy"],
+                            "value_item_template": "${score}: ${value}",
+                            "value_separator": " | ",
+                        }
+                    ]
+                }
+            }
+        )
+        rule = cfg.rails["input_rail"].rules[0]
+
+        self.assertEqual(rule.config["value_item_template"], "${value}")
+        self.assertEqual(rule.config["value_separator"], " | ")
+        self.assertTrue(
+            any("only supports ${value} and ${source}" in item for item in cfg.warnings)
+        )
 
 
 if __name__ == "__main__":

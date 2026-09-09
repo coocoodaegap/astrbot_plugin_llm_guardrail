@@ -251,6 +251,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
             "contains_record",
             "contains_video",
             "user_ids",
+            "value_item_template",
+            "value_separator",
         ):
             self.assertIn(field_name, javascript)
         self.assertIn('defaultAction: "observe"', javascript)

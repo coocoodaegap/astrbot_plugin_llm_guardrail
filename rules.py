@@ -194,21 +194,32 @@ def evaluate_rag_judge_evidence(
     ]
     score_available = bool(score_values)
     max_score = max(score_values) if score_values else None
-    matched = bool(evidence) and (
-        max_score is None or max_score >= min_score
-    )
-    evidence_payload = [
+    normalized_evidence = [
         {
             "text": clip_text(str(item.get("text", "") or ""), 500),
             "score": item.get("score"),
             "metadata": item.get("metadata", {}),
         }
-        for item in evidence[:5]
+        for item in evidence
     ]
+    matched_evidence = [
+        item
+        for item in normalized_evidence
+        if (
+            not score_available
+            or (
+                isinstance(item.get("score"), (int, float))
+                and float(item["score"]) >= min_score
+            )
+        )
+    ]
+    matched = bool(matched_evidence)
+    evidence_payload = normalized_evidence[:5]
     payload = {
         "evidence_count": len(evidence),
         "evidence": evidence_payload,
-        "matched_text": " ".join(item["text"] for item in evidence_payload[:3]),
+        "matched_evidence_count": len(matched_evidence),
+        "matched_text": _format_rag_matched_text(rule, matched_evidence[:3]),
         "score_available": score_available,
         "max_score": max_score,
         "min_score": min_score,
@@ -235,6 +246,30 @@ def evaluate_rag_judge_evidence(
             payload=payload,
         ),
     )
+
+
+def _format_rag_matched_text(
+    rule: NormalizedNode,
+    evidence: list[dict[str, Any]],
+) -> str:
+    item_template = str(rule.config.get("value_item_template", "${value}"))
+    separator = str(rule.config.get("value_separator", " "))
+    return separator.join(
+        item_template
+        .replace("${value}", str(item.get("text", "") or ""))
+        .replace("${source}", _rag_evidence_source(item.get("metadata")))
+        for item in evidence
+    )
+
+
+def _rag_evidence_source(metadata: Any) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    for key in ("kb_name", "kb_id", "doc_name", "doc_id", "source"):
+        value = metadata.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
 def apply_span_replacements(

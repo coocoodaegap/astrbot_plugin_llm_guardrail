@@ -3240,7 +3240,12 @@ class PipelineTests(unittest.TestCase):
                 RuleDefinition(
                     "rag",
                     "rag_judge",
-                    {"knowledge_bases": ["policy"], "min_score": 0.7},
+                    {
+                        "knowledge_bases": ["policy"],
+                        "min_score": 0.7,
+                        "value_item_template": "case:${value}",
+                        "value_separator": "\n",
+                    },
                 ),
             ),
             policies=(
@@ -3291,7 +3296,12 @@ class PipelineTests(unittest.TestCase):
                     "text": "Keep ${STATIC_PROMPT} literal.",
                     "score": 0.9,
                     "metadata": {},
-                }
+                },
+                {
+                    "text": "Low guidance must not enter matched_text.",
+                    "score": 0.2,
+                    "metadata": {},
+                },
             ]
         }
 
@@ -3303,12 +3313,18 @@ class PipelineTests(unittest.TestCase):
 
         self.assertTrue(ctx.results["dynamic_prompt"].matched)
         self.assertIn("Use the retrieved guidance.", request.system_prompt)
-        self.assertIn("top=Keep ${STATIC_PROMPT} literal.", request.system_prompt)
+        self.assertIn("top=case:Keep ${STATIC_PROMPT} literal.", request.system_prompt)
+        self.assertEqual(ctx.results["rag"].signal.payload["evidence_count"], 2)
+        self.assertEqual(ctx.results["rag"].signal.payload["matched_evidence_count"], 1)
+        self.assertNotIn(
+            "Low guidance", ctx.results["rag"].signal.payload["matched_text"]
+        )
+        self.assertIn('"text":"Keep ${STATIC_PROMPT} literal."', request.system_prompt)
         self.assertIn(
-            'all=[{"metadata":{"index":0,"metadata":{},"score":0.9},"score":0.9,"text":"Keep ${STATIC_PROMPT} literal."}]',
+            '"text":"Low guidance must not enter matched_text."',
             request.system_prompt,
         )
-        self.assertNotIn("top=Keep Use the retrieved guidance.", request.system_prompt)
+        self.assertNotIn("top=case:Keep Use the retrieved guidance.", request.system_prompt)
 
     def test_strengthen_prompt_renders_missing_payload_as_empty_with_diagnostic(self):
         cfg = normalize_config(

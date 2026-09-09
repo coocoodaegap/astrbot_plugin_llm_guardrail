@@ -567,6 +567,8 @@ const templateParameterFields = {
     { key: "knowledge_bases", label: "知识库列表", hint: "每行一个 AstrBot 知识库名称；至少填写一个。", type: "list", default: [], fullWidth: true },
     { key: "top_k", label: "检索数量", hint: "每个知识库最多取回的候选数量。", type: "integer", default: 5 },
     { key: "min_score", label: "最低分数", hint: "存在证据且分数达到此值时判为命中。", type: "number", default: 0.72 },
+    { key: "value_item_template", label: "匹配条目格式", hint: "逐条格式化达到门槛的证据；仅支持 ${value}（证据文本）与 ${source}（知识库或文档来源）。", type: "text", default: "${value}", fullWidth: true },
+    { key: "value_separator", label: "匹配条目分隔符", hint: "拼接 matched_text 时置于匹配证据之间；默认单个空格，可输入换行。", type: "text", default: " ", fullWidth: true },
     { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
   ],
   llm_review: [
