@@ -759,15 +759,22 @@ class GuardrailPagesApiTests(unittest.TestCase):
         )
         package = {
             "format_version": 1,
-            "kind": "rules",
-            "rules": [
+            "kind": "policies",
+            "rules": [],
+            "policies": [
                 {
-                    "rule_id": "prompt_rule",
-                    "template_key": "strengthen_prompt",
-                    "template_config": {"insertion_text": "${INTRO}"},
+                    "policy_id": "prompt_policy",
+                    "name": "Prompt policy",
+                    "components": [
+                        {
+                            "component_id": "prompt_component",
+                            "component_type": "strengthen_prompt",
+                            "rail": "prompt_rail",
+                            "config": {"insertion_text": "${INTRO}"},
+                        }
+                    ],
                 }
             ],
-            "policies": [],
             "system_constants": {"INTRO": "imported"},
         }
         with patch("pages_api.jsonify", side_effect=lambda payload: payload):
@@ -798,9 +805,58 @@ class GuardrailPagesApiTests(unittest.TestCase):
             {"INTRO": "existing", "INTRO_COPY": "imported"},
         )
         self.assertEqual(
-            snapshot.policy_library.rules[0].template_config["insertion_text"],
+            snapshot.policy_library.policies[0].components[0].config["insertion_text"],
             "${INTRO_COPY}",
         )
+
+    def test_policy_package_migrates_legacy_strengthen_rule_binding(self):
+        plugin = _Plugin()
+        package = {
+            "format_version": 1,
+            "kind": "policies",
+            "rules": [
+                {
+                    "rule_id": "legacy_prompt",
+                    "template_key": "strengthen_prompt",
+                    "template_config": {
+                        "insertion_target": "system_suffix",
+                        "insertion_text": "legacy text",
+                    },
+                }
+            ],
+            "policies": [
+                {
+                    "policy_id": "legacy_policy",
+                    "name": "Legacy policy",
+                    "bindings": [
+                        {"rule_id": "legacy_prompt", "rail": "prompt_rail"}
+                    ],
+                    "node_order": ["legacy_prompt"],
+                }
+            ],
+        }
+
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch(
+                "pages_api.request",
+                _Request(
+                    {
+                        "package": package,
+                        "conflict_mode": "copy",
+                        "expected_revision": 0,
+                    }
+                ),
+            ):
+                imported = asyncio.run(plugin._pages_import_config_package())
+
+        self.assertTrue(imported["success"])
+        library = plugin.snapshot_manager.current.policy_library
+        self.assertEqual(library.rules, ())
+        policy = library.policies[0]
+        self.assertEqual(policy.bindings, ())
+        self.assertEqual(policy.node_order, ("legacy_prompt",))
+        self.assertEqual(policy.components[0].component_type, "strengthen_prompt")
+        self.assertEqual(policy.components[0].rail, "prompt_rail")
 
     def test_shared_constants_package_import_replaces_values_without_library_changes(self):
         plugin = _Plugin()

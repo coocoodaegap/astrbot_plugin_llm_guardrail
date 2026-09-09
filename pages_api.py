@@ -1113,14 +1113,25 @@ def _parse_configuration_package(value: Any) -> dict[str, Any]:
     if kind == "shared_constants" and (raw_rules or raw_policies):
         raise ValueError("a shared_constants package may not include rules or policies")
 
-    rules = tuple(RuleDefinition.from_dict(item) for item in raw_rules)
-    policies = tuple(PolicyDefinition.from_dict(item) for item in raw_policies)
-    rule_ids = [rule.rule_id for rule in rules]
-    policy_ids = [policy.policy_id for policy in policies]
-    if len(set(rule_ids)) != len(rule_ids) or not all(rule_ids):
+    if kind == "rules" and any(
+        str(item.get("template_key") or "").strip() == "strengthen_prompt"
+        for item in raw_rules
+    ):
+        raise ValueError(
+            "legacy strengthen_prompt rules require a policies package so each binding can be migrated"
+        )
+    raw_rule_ids = [str(item.get("rule_id") or "").strip() for item in raw_rules]
+    raw_policy_ids = [str(item.get("policy_id") or "").strip() for item in raw_policies]
+    if len(set(raw_rule_ids)) != len(raw_rule_ids) or not all(raw_rule_ids):
         raise ValueError("package rule IDs must be non-empty and unique")
-    if len(set(policy_ids)) != len(policy_ids) or not all(policy_ids):
+    if len(set(raw_policy_ids)) != len(raw_policy_ids) or not all(raw_policy_ids):
         raise ValueError("package policy IDs must be non-empty and unique")
+    migrated_library = PolicyLibrary.from_dict(
+        {"rules": list(raw_rules), "policies": list(raw_policies)}
+    )
+    rules = migrated_library.rules
+    policies = migrated_library.policies
+    rule_ids = [rule.rule_id for rule in rules]
     package_rule_ids = set(rule_ids)
     for policy in policies:
         missing = sorted(

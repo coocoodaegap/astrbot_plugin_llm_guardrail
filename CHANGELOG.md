@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Changed
+
+- 将 `strengthen_prompt` 从可复用规则迁移为 Step 4 策略局部元件；公用常量继续承担固定文本复用。
+- `strengthen_prompt.insertion_text` 现在可读取渲染时已经提交的任意节点 payload 字段，支持 RAG 证据和 `compose_text` 产出的动态提示词。
+- 旧快照或旧策略包中的 `strengthen_prompt` 规则绑定会以内联元件方式兼容迁移。
+
 ## [0.6.2] - 2026-09-04
 
 ### Added

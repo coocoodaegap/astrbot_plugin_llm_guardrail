@@ -49,6 +49,9 @@ SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
 CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
 COMPOSE_TEXT_COMPONENT_TYPE = "compose_text"
 RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
+STRENGTHEN_PROMPT_COMPONENT_TYPE = "strengthen_prompt"
+
+
 @dataclass(frozen=True)
 class RuleDefinition:
     """Reusable rule content without rail or policy-specific behavior."""
@@ -330,9 +333,12 @@ class PolicyLibrary:
                 policy_id = str(raw_policy_id or "").strip()
                 if umo and policy_id:
                     selections.append((umo, policy_id))
+        migrated_rules, migrated_policies = _migrate_legacy_strengthen_prompt(
+            parsed_rules, parsed_policies
+        )
         return cls(
-            rules=tuple(parsed_rules),
-            policies=tuple(parsed_policies),
+            rules=migrated_rules,
+            policies=migrated_policies,
             active_policy_id=active_policy_id,
             umo_policy_selections=tuple(selections),
         )
@@ -644,6 +650,72 @@ class PolicyLibrary:
         if self.active_policy_id and self.active_policy_id not in policy_ids:
             fatal_errors.append(f"active policy does not exist: {self.active_policy_id}")
         return LibraryValidation(tuple(fatal_errors), tuple(warnings))
+
+
+def _migrate_legacy_strengthen_prompt(
+    rules: list[RuleDefinition],
+    policies: list[PolicyDefinition],
+) -> tuple[tuple[RuleDefinition, ...], tuple[PolicyDefinition, ...]]:
+    """Inline legacy reusable prompt-strengthening rules into policy graphs."""
+
+    legacy_rules = {
+        rule.rule_id: rule
+        for rule in rules
+        if rule.template_key == STRENGTHEN_PROMPT_COMPONENT_TYPE
+    }
+    if not legacy_rules:
+        return tuple(rules), tuple(policies)
+
+    migrated_policies: list[PolicyDefinition] = []
+    for policy in policies:
+        bindings: list[PolicyRuleBinding] = []
+        components = list(policy.components)
+        for binding in policy.bindings:
+            legacy_rule = legacy_rules.get(binding.rule_id)
+            if legacy_rule is None:
+                bindings.append(binding)
+                continue
+            components.append(
+                PolicyComponent(
+                    component_id=binding.rule_id,
+                    component_type=STRENGTHEN_PROMPT_COMPONENT_TYPE,
+                    rail=binding.rail,
+                    enabled=binding.enabled,
+                    priority=(
+                        legacy_rule.default_priority
+                        if binding.priority is None
+                        else binding.priority
+                    ),
+                    action_on_hit=(
+                        legacy_rule.default_action_on_hit
+                        if binding.action_on_hit is None
+                        else binding.action_on_hit
+                    ),
+                    action_on_error=(
+                        legacy_rule.default_action_on_error
+                        if binding.action_on_error is None
+                        else binding.action_on_error
+                    ),
+                    depend_on=binding.depend_on,
+                    inspection_template=binding.inspection_template,
+                    config=copy.deepcopy(legacy_rule.template_config),
+                )
+            )
+        migrated_policies.append(
+            replace(
+                policy,
+                bindings=tuple(bindings),
+                components=tuple(components),
+            )
+        )
+    return (
+        tuple(
+            rule
+            for rule in rules
+            if rule.template_key != STRENGTHEN_PROMPT_COMPONENT_TYPE
+        ),
+        tuple(migrated_policies),
+    )
 
 
 def compile_policy_to_runtime_config(
@@ -1091,15 +1163,6 @@ def _validate_compose_text_payload_uses(policy: PolicyDefinition) -> list[str]:
             if source_id in compose_ids:
                 errors.append(
                     f"policy {policy.policy_id} {rail} output_redirect_template cannot read compose_text"
-                )
-    for component in policy.components:
-        if component.component_type != "strengthen_prompt" or not isinstance(component.config, Mapping):
-            continue
-        template = str(component.config.get("insertion_text", "") or "")
-        for source_id, _field in _template_payload_references(template):
-            if source_id in compose_ids:
-                errors.append(
-                    f"component {component.component_id} strengthen_prompt cannot read compose_text"
                 )
     return errors
 

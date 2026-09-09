@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from typing import Any
@@ -986,6 +987,7 @@ class GuardrailPipeline:
         template: str,
         *,
         allow_context_payload: bool = False,
+        unresolved_references: list[str] | None = None,
     ) -> str:
         """Render a P3 nonblocking template against the current node snapshot.
 
@@ -1007,6 +1009,8 @@ class GuardrailPipeline:
                 return constant
             node_id, separator, field = reference.partition(".")
             if not separator or not node_id or not field:
+                if unresolved_references is not None:
+                    unresolved_references.append(reference)
                 return ""
             result = context.results.get(node_id)
             if (
@@ -1014,16 +1018,45 @@ class GuardrailPipeline:
                 == "context_extractor"
                 and not allow_context_payload
             ):
+                if unresolved_references is not None:
+                    unresolved_references.append(reference)
                 return ""
             payload = getattr(getattr(result, "signal", None), "payload", None)
             if not isinstance(payload, dict):
+                if unresolved_references is not None:
+                    unresolved_references.append(reference)
                 return ""
             value = payload.get(field)
             if value is None:
+                if unresolved_references is not None:
+                    unresolved_references.append(reference)
                 return ""
-            return str(value)
+            return self._render_template_value(value)
 
         return re.sub(r"\$\{([^{}]+)\}", resolve, template)
+
+    @staticmethod
+    def _render_template_value(value: Any) -> str:
+        """Render payload values deterministically without recursive expansion."""
+
+        if isinstance(value, str):
+            return value
+        if value is True:
+            return "true"
+        if value is False:
+            return "false"
+        if isinstance(value, (dict, list, int, float)):
+            try:
+                return json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+            except (TypeError, ValueError):
+                return str(value)
+        return str(value)
 
     def _render_system_constants(self, template: str) -> str:
         """Resolve static system constants without enabling other template inputs."""
@@ -1166,9 +1199,20 @@ class GuardrailPipeline:
     def _execute_strengthen_prompt(
         self, rule: NormalizedRule, context: RailContext
     ) -> RuleResult:
-        insertion_text = self._render_system_constants(
-            str(rule.config.get("insertion_text", ""))
+        unresolved_references: list[str] = []
+        insertion_text = self._render_stage_template(
+            self.config.rails["prompt_rail"],
+            context,
+            context.current_input,
+            str(rule.config.get("insertion_text", "")),
+            allow_context_payload=True,
+            unresolved_references=unresolved_references,
         )
+        if unresolved_references:
+            context.warnings.append(
+                f"{rule.rule_id}.insertion_text unresolved reference(s): "
+                + ", ".join(dict.fromkeys(unresolved_references))
+            )
         if not insertion_text:
             context.warnings.append(f"{rule.rule_id}.insertion_text is empty")
             return make_result(rule, matched=False, metadata={"reason": "empty_text"})

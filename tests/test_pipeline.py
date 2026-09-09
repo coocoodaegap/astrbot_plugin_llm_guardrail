@@ -36,6 +36,8 @@ from policy_library import (
     PolicyComponent,
     PolicyDefinition,
     PolicyLibrary,
+    PolicyRuleBinding,
+    RuleDefinition,
     compile_policy_to_runtime_config,
 )
 
@@ -3231,6 +3233,114 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(ctx.results["rag"].matched)
         self.assertFalse(ctx.results["rag"].signal.payload["score_available"])
         self.assertEqual(fake_context.kb_manager.retrieve_calls[0]["query"], "final prompt")
+
+    def test_strengthen_prompt_reads_rag_and_composed_payload_without_recursion(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition(
+                    "rag",
+                    "rag_judge",
+                    {"knowledge_bases": ["policy"], "min_score": 0.7},
+                ),
+            ),
+            policies=(
+                PolicyDefinition(
+                    "dynamic_prompt_policy",
+                    "Dynamic prompt policy",
+                    bindings=(
+                        PolicyRuleBinding(
+                            "rag", "request_rail", action_on_hit="observe"
+                        ),
+                    ),
+                    components=(
+                        PolicyComponent(
+                            "prepared",
+                            "compose_text",
+                            "request_rail",
+                            depend_on="?rag",
+                            config={"template": "all=${rag.evidence}"},
+                        ),
+                        PolicyComponent(
+                            "dynamic_prompt",
+                            "strengthen_prompt",
+                            "prompt_rail",
+                            depend_on="?prepared",
+                            config={
+                                "insertion_target": "system_suffix",
+                                "insertion_text": "${STATIC_PROMPT}\ntop=${rag.matched_text}\n${prepared.value}",
+                            },
+                        ),
+                    ),
+                    node_order=("rag", "prepared", "dynamic_prompt"),
+                ),
+            ),
+            active_policy_id="dynamic_prompt_policy",
+        )
+        raw, validation = compile_policy_to_runtime_config(
+            {"system_constants": {"STATIC_PROMPT": "Use the retrieved guidance."}},
+            library,
+        )
+        self.assertTrue(validation.valid, validation.fatal_errors)
+        cfg = normalize_config(raw)
+        event = FakeEvent("hello")
+        request = FakeRequest("final prompt", system_prompt="base")
+        fake_context = FakeContext()
+        fake_context.kb_manager.retrieve_result = {
+            "results": [
+                {
+                    "text": "Keep ${STATIC_PROMPT} literal.",
+                    "score": 0.9,
+                    "metadata": {},
+                }
+            ]
+        }
+
+        ctx = asyncio.run(
+            GuardrailPipeline(cfg, AstrBotAdapter(fake_context)).run_request(
+                event, request
+            )
+        )
+
+        self.assertTrue(ctx.results["dynamic_prompt"].matched)
+        self.assertIn("Use the retrieved guidance.", request.system_prompt)
+        self.assertIn("top=Keep ${STATIC_PROMPT} literal.", request.system_prompt)
+        self.assertIn(
+            'all=[{"metadata":{"index":0,"metadata":{},"score":0.9},"score":0.9,"text":"Keep ${STATIC_PROMPT} literal."}]',
+            request.system_prompt,
+        )
+        self.assertNotIn("top=Keep Use the retrieved guidance.", request.system_prompt)
+
+    def test_strengthen_prompt_renders_missing_payload_as_empty_with_diagnostic(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {"enabled": False},
+                "routing_rail": {"enabled": False},
+                "request_rail": {"enabled": False},
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "strengthen_prompt",
+                            "rule_id": "dynamic_prompt",
+                            "insertion_target": "system_suffix",
+                            "insertion_text": "prefix:${missing.value}",
+                        }
+                    ]
+                },
+            }
+        )
+        event = FakeEvent("hello")
+        request = FakeRequest("final prompt", system_prompt="base")
+
+        ctx = asyncio.run(GuardrailPipeline(cfg).run_request(event, request))
+
+        self.assertEqual(request.system_prompt, "base\n\nprefix:")
+        self.assertTrue(
+            any(
+                "dynamic_prompt.insertion_text unresolved reference(s): missing.value"
+                in warning
+                for warning in ctx.warnings
+            )
+        )
 
     def test_request_rag_judge_uses_context_text_when_results_empty(self):
         cfg = normalize_config(

@@ -30,7 +30,7 @@ RULE_TEMPLATES: dict[str, set[str]] = {
         "rag_judge",
         "llm_review",
     },
-    "prompt_rail": {"strengthen_prompt"},
+    "prompt_rail": set(),
     "routing_rail": {"route_policy"},
     "output_rail": {
         "plain_keywords",
@@ -46,6 +46,7 @@ RULE_TEMPLATES: dict[str, set[str]] = {
 COMPONENT_TEMPLATES: dict[str, set[str]] = {
     rail_name: {"logic_gate", "random_signal"} for rail_name in RAIL_NAMES
 }
+COMPONENT_TEMPLATES["prompt_rail"].add("strengthen_prompt")
 COMPONENT_TEMPLATES["input_rail"].update(
     {
         "encoded_payload_detector",

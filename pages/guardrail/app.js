@@ -493,7 +493,6 @@ const templates = [
     "contains_request_user_id",
     "rag_judge",
     "llm_review",
-    "strengthen_prompt",
     "route_policy",
   ],
   hitActions = [
@@ -576,7 +575,7 @@ const templateParameterFields = {
   ],
   strengthen_prompt: [
     { key: "insertion_target", label: "注入位置", hint: "选择要写入系统提示、临时上下文或输入包装的位置。", type: "select", default: "temp_user_context", options: [["system_prefix", "系统提示开头（system_prefix）"], ["system_suffix", "系统提示结尾（system_suffix）"], ["temp_user_context", "临时用户上下文（temp_user_context）"], ["input_wrapper", "包装用户输入（input_wrapper）"]] },
-    { key: "insertion_text", label: "加固内容", hint: "写入所选位置的提示词内容。", type: "text", fullWidth: true },
+    { key: "insertion_text", label: "加固内容", hint: "可引用 ${CONSTANT_NAME} 和渲染时已经提交的任意 ${node_id.field}；引用不会自动建立依赖。", type: "text", fullWidth: true },
   ],
   route_policy: [
     { key: "provider_id", label: "目标 Provider", hint: "留空表示保持 AstrBot 本轮默认请求模型。", type: "provider", fullWidth: true },
@@ -1527,7 +1526,7 @@ const policyGraphSteps = [
 const supportedTemplatesByRail = {
   input_rail: new Set(["plain_keywords", "regex_pattern", "contains_request_user_id", "rag_judge", "llm_review"]),
   request_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review"]),
-  prompt_rail: new Set(["strengthen_prompt"]),
+  prompt_rail: new Set(),
   routing_rail: new Set(["route_policy"]),
   output_rail: new Set(["plain_keywords", "regex_pattern", "rag_judge", "llm_review", "format_violation_detector", "poor_quality_detector", "metadata_leakage_detector", "refusal_leakage_detector", "language_drift_detector", "sensitive_echo_detector"]),
 };
@@ -1543,6 +1542,17 @@ const inputRedirectTemplates = new Set([
   "instruction_override_detector",
 ]);
 const componentDefinitions = {
+  strengthen_prompt: {
+    label: "增强提示词",
+    description: "仅在 Step 4 修改当前请求；可读取系统常量和此前节点的任意 payload 字段。",
+    rails: new Set(["prompt_rail"]),
+    fields: templateParameterFields.strengthen_prompt,
+    defaultConfig: () => ({
+      insertion_target: "temp_user_context",
+      insertion_text: "",
+    }),
+    defaultAction: "observe",
+  },
   random_signal: {
     label: "随机信号",
     description: "按配置概率在每次策略执行中独立抽样，产出可供任意后续节点消费的真假信号；可观察或阻断。",
@@ -1671,7 +1681,7 @@ const componentDefinitions = {
   },
   compose_text: {
     label: "文本组合器",
-    description: "渲染策略内文本模板，产出仅供后续检查内容重定向读取的 payload.value；不构成风险命中，也不会改写阶段对象。",
+    description: "渲染策略内文本模板，产出可供后续检查或 Step 4 提示词增强读取的 payload.value；不构成风险命中，也不会改写阶段对象。",
     rails: new Set(["input_rail", "request_rail", "output_rail"]),
     defaultConfig: () => ({ template: "" }),
     defaultAction: "observe",

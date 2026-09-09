@@ -25,7 +25,7 @@
 | 能力 | 说明 |
 | --- | --- |
 | 输入与最终请求检查 | 支持关键词、正则、本地检测元件、逻辑门、RAG 与 LLM 复核；可观察、净化或阻断。 |
-| 提示词加固 | 可按前序结果替换请求或向 system prompt、临时上下文、输入包装注入固定加固文本。 |
+| 提示词加固 | Step 4 策略元件可读取系统常量及此前节点 payload，并向 system prompt、临时上下文或输入包装注入动态文本。 |
 | Provider 路由 | 支持策略内 first-hit 路由，在本轮请求中选择聊天 Provider。 |
 | 输出检查 | 支持质量、格式、敏感回显、元数据泄露、拒答泄露、语言漂移等检测，以及观察、净化、阻断。 |
 | 有界输出重试 | Step 5 命中 `retry_generation` 时，只使用本轮实际 Provider 重新生成并再次检查输出；通过才交付，失败或耗尽则一次性阻断。 |
@@ -52,7 +52,9 @@
 
 使用方法是：先创建一个“随机信号”元件并给它一个 ID，例如 `sample_review`；再在**下游节点**的“依赖（`depend_on`）”中选择它。普通依赖表示只有抽样命中才继续执行。`probability: 0` 永不命中，`probability: 1` 每次命中；中间值适合灰度加固、抽样旁审和观察性实验。它可使用该 Rail 的 `observe` 或 `block` 动作。
 
-`compose_text`（Pages 名称：“文本组合器”）则是策略局部的文本准备元件。它的“生成文本（`template`）”可以拼接当前 Step 可见的 origin、系统常量和已完成节点的 `${node_id.value}`，再由后续节点通过 `${compose_id.value}` 写入自己的 `inspection_template` 使用。它不是通用模板引擎，不会自动建立 `depend_on`，也不会改写请求或输出。
+`compose_text`（Pages 名称：“文本组合器”）则是策略局部的文本准备元件。它的“生成文本（`template`）”可以拼接当前 Step 可见的 origin、系统常量和已完成节点的 `${node_id.value}`，再由后续检查节点写入 `inspection_template`，或由 Step 4 的 `strengthen_prompt` 注入请求。它不会自动建立 `depend_on`，也不会自行改写请求或输出。
+
+`strengthen_prompt`（Pages 名称：“增强提示词”）现在是仅能放置在 Step 4 的策略局部元件，不再属于规则库。固定文本需要跨策略复用时使用公用常量；`insertion_text` 还可直接引用渲染时已经完成的任意 `${node_id.field}`。引用不自动建立依赖，来源缺失时渲染为空；策略作者对选择的 payload 和注入位置负责。
 
 Step 2 和 Step 4 现在提供“默认命中动作”“默认错误动作”和“阻断提示”。通用信号元件保留 `action_on_hit: default` 时，会回退到本 Step 的默认命中动作；执行错误保留 `action_on_error: default` 时，同样回退到本 Step 的默认错误动作。默认值为 `observe` / `discard`，因此不会改变已有路由或提示词强化策略。
 

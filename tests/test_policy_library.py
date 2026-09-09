@@ -248,13 +248,18 @@ class PolicyLibraryTests(unittest.TestCase):
 
     def test_known_template_cannot_be_bound_to_an_unsupported_step(self):
         library = PolicyLibrary(
-            rules=(RuleDefinition("strengthen", "strengthen_prompt", {}),),
             policies=(
                 PolicyDefinition("_default", "Default", builtin=True),
                 PolicyDefinition(
                     "invalid_step",
                     "Invalid step",
-                    bindings=(PolicyRuleBinding("strengthen", "input_rail"),),
+                    components=(
+                        PolicyComponent(
+                            "strengthen",
+                            "strengthen_prompt",
+                            "input_rail",
+                        ),
+                    ),
                 ),
             ),
             active_policy_id="invalid_step",
@@ -264,6 +269,48 @@ class PolicyLibraryTests(unittest.TestCase):
 
         self.assertFalse(validation.valid)
         self.assertIn("Step 1", validation.fatal_errors[0])
+
+    def test_legacy_strengthen_rule_is_inlined_as_step_four_component(self):
+        library = PolicyLibrary.from_dict(
+            {
+                "rules": [
+                    {
+                        "rule_id": "strengthen",
+                        "template_key": "strengthen_prompt",
+                        "template_config": {
+                            "insertion_target": "system_suffix",
+                            "insertion_text": "${PROMPT_TEXT}",
+                        },
+                        "default_priority": 80,
+                    }
+                ],
+                "policies": [
+                    {
+                        "policy_id": "legacy",
+                        "name": "Legacy",
+                        "bindings": [
+                            {
+                                "rule_id": "strengthen",
+                                "rail": "prompt_rail",
+                                "priority": 40,
+                                "depend_on": "request_check",
+                            }
+                        ],
+                        "node_order": ["request_check", "strengthen"],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(library.rules, ())
+        component = library.policies[0].components[0]
+        self.assertEqual(component.component_id, "strengthen")
+        self.assertEqual(component.component_type, "strengthen_prompt")
+        self.assertEqual(component.rail, "prompt_rail")
+        self.assertEqual(component.priority, 40)
+        self.assertEqual(component.depend_on, "request_check")
+        self.assertEqual(component.config["insertion_text"], "${PROMPT_TEXT}")
+        self.assertEqual(library.policies[0].node_order, ("request_check", "strengthen"))
 
     def test_retry_generation_warns_outside_step_five_without_rejecting_rule(self):
         library = PolicyLibrary(
