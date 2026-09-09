@@ -10,6 +10,7 @@ try:
     from .core import (
         RailContext,
         NodeSignal,
+        NodeResult,
         make_node_result,
     )
 except ImportError:  # pragma: no cover - fallback for direct script loading
@@ -17,6 +18,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from core import (
         RailContext,
         NodeSignal,
+        NodeResult,
         make_node_result,
     )
 
@@ -182,7 +184,7 @@ def _parse_llm_review_json(response_text: str) -> dict[str, Any]:
 
 def evaluate_rag_judge_evidence(
     rule: NormalizedNode, evidence: list[dict[str, Any]]
-):
+) -> NodeResult:
     try:
         min_score = float(rule.config.get("min_score", 0.72))
     except (TypeError, ValueError):
@@ -196,7 +198,7 @@ def evaluate_rag_judge_evidence(
     max_score = max(score_values) if score_values else None
     normalized_evidence = [
         {
-            "text": clip_text(str(item.get("text", "") or ""), 500),
+            "text": str(item.get("text", "") or ""),
             "score": item.get("score"),
             "metadata": item.get("metadata", {}),
         }
@@ -214,12 +216,12 @@ def evaluate_rag_judge_evidence(
         )
     ]
     matched = bool(matched_evidence)
-    evidence_payload = normalized_evidence[:5]
+    # top_k is applied by the adapter; downstream payloads retain complete records.
     payload = {
         "evidence_count": len(evidence),
-        "evidence": evidence_payload,
+        "evidence": normalized_evidence,
         "matched_evidence_count": len(matched_evidence),
-        "matched_text": _format_rag_matched_text(rule, matched_evidence[:3]),
+        "matched_text": _format_rag_matched_text(rule, matched_evidence),
         "score_available": score_available,
         "max_score": max_score,
         "min_score": min_score,
@@ -231,7 +233,7 @@ def evaluate_rag_judge_evidence(
             "score": item.get("score"),
             "metadata": item.get("metadata", {}),
         }
-        for item in evidence_payload
+        for item in normalized_evidence
     ]
     signal_value = max_score if max_score is not None else len(evidence)
     return make_node_result(

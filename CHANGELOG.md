@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.1] - 2026-09-09
+
+### Fixed
+
+- 修复 `rag_judge` 对下游 payload 的隐式裁剪：移除 `matched_text` 前 3 条、`evidence` 前 5 条及单条文本 500 字符的固定上限。检索数量由 `top_k` 控制，`matched_text` 格式化全部达标记录的全文，`evidence` 保留全部召回记录；日志摘要仍可独立截断。
+
 ## [0.7.0] - 2026-09-09
 
 ### Added

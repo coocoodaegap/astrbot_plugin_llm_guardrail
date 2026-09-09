@@ -1,4 +1,5 @@
 ﻿import asyncio
+import json
 import sys
 import types
 import unittest
@@ -3325,6 +3326,88 @@ class PipelineTests(unittest.TestCase):
             request.system_prompt,
         )
         self.assertNotIn("top=case:Keep Use the retrieved guidance.", request.system_prompt)
+
+    def test_rag_top_k_preserves_full_payload_through_policy_and_prompt(self):
+        retrieved = [
+            {
+                "text": f"case-{index}\n" + "完整指导。" * 150 + f"\nend-{index}",
+                "score": 0.2 if index in (0, 4) else 0.9,
+                "metadata": {"kb_name": "policy"},
+            }
+            for index in range(12)
+        ]
+        for top_k in (2, 7, 10):
+            with self.subTest(top_k=top_k):
+                library = PolicyLibrary(
+                    rules=(
+                        RuleDefinition(
+                            "rag", "rag_judge",
+                            {
+                                "knowledge_bases": ["policy"],
+                                "top_k": top_k,
+                                "min_score": 0.7,
+                                "value_item_template": "[${source}] ${value}",
+                                "value_separator": "\n---\n",
+                            },
+                        ),
+                    ),
+                    policies=(
+                        PolicyDefinition(
+                            "full_rag_prompt", "Full RAG prompt",
+                            bindings=(
+                                PolicyRuleBinding("rag", "request_rail", action_on_hit="observe"),
+                            ),
+                            components=(
+                                PolicyComponent(
+                                    "prepared", "compose_text", "request_rail",
+                                    depend_on="?rag",
+                                    config={"template": "${rag.evidence}"},
+                                ),
+                                PolicyComponent(
+                                    "prompt", "strengthen_prompt", "prompt_rail",
+                                    depend_on="?prepared",
+                                    config={
+                                        "insertion_target": "system_suffix",
+                                        "insertion_text": "${rag.matched_text}\nALL=${prepared.value}",
+                                    },
+                                ),
+                            ),
+                            node_order=("rag", "prepared", "prompt"),
+                        ),
+                    ),
+                    active_policy_id="full_rag_prompt",
+                )
+                raw, validation = compile_policy_to_runtime_config({}, library)
+                self.assertTrue(validation.valid, validation.fatal_errors)
+                fake_context = FakeContext()
+                fake_context.kb_manager.retrieve_result = {"results": retrieved}
+                request = FakeRequest("question", system_prompt="base")
+
+                ctx = asyncio.run(
+                    GuardrailPipeline(normalize_config(raw), AstrBotAdapter(fake_context))
+                    .run_request(FakeEvent("question"), request)
+                )
+
+                expected_records = retrieved[:top_k]
+                expected_matches = [item for item in expected_records if item["score"] >= 0.7]
+                expected_text = "\n---\n".join(
+                    "[policy] " + item["text"] for item in expected_matches
+                )
+                payload = ctx.results["rag"].signal.payload
+                self.assertEqual(fake_context.kb_manager.retrieve_calls[0]["top_m_final"], top_k)
+                self.assertEqual(payload["evidence_count"], top_k)
+                self.assertEqual(payload["matched_evidence_count"], len(expected_matches))
+                self.assertEqual(payload["matched_text"], expected_text)
+                expected_texts = [item["text"] for item in expected_records]
+                self.assertEqual([item["text"] for item in payload["evidence"]], expected_texts)
+                composed_evidence = ctx.results["prepared"].signal.payload["value"]
+                self.assertEqual(
+                    [item["text"] for item in json.loads(composed_evidence)], expected_texts
+                )
+                self.assertEqual(
+                    request.system_prompt,
+                    f"base\n\n{expected_text}\nALL={composed_evidence}",
+                )
 
     def test_strengthen_prompt_renders_missing_payload_as_empty_with_diagnostic(self):
         cfg = normalize_config(

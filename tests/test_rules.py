@@ -262,7 +262,7 @@ class RuleEvaluatorTests(unittest.TestCase):
         self.assertEqual(result.signal.payload["matched_text"], "")
         self.assertEqual(result.signal.payload["evidence"][0]["text"], "low evidence")
 
-    def test_rag_judge_counts_all_matches_beyond_payload_and_text_limits(self):
+    def test_rag_judge_preserves_all_records_and_full_text(self):
         cfg = normalize_config(
             {
                 "input_rail": {
@@ -279,17 +279,32 @@ class RuleEvaluatorTests(unittest.TestCase):
             }
         )
         rule = cfg.rails["input_rail"].rules[0]
-        evidence = [
-            {"text": f"item-{index}", "score": 0.9, "metadata": {}}
-            for index in range(6)
-        ]
+        for score in (0.9, None):
+            with self.subTest(score=score):
+                evidence = [
+                    {
+                        "text": f"item-{index}\n" + "完整证据。" * 150 + f"\nend-{index}",
+                        "score": score,
+                        "metadata": {"doc_name": f"case-{index}"},
+                    }
+                    for index in range(10)
+                ]
 
-        result = evaluate_rag_judge_evidence(rule, evidence)
+                result = evaluate_rag_judge_evidence(rule, evidence)
 
-        self.assertEqual(result.signal.payload["evidence_count"], 6)
-        self.assertEqual(len(result.signal.payload["evidence"]), 5)
-        self.assertEqual(result.signal.payload["matched_evidence_count"], 6)
-        self.assertEqual(result.signal.payload["matched_text"], "item-0|item-1|item-2")
+                self.assertTrue(result.matched)
+                self.assertEqual(result.signal.payload["evidence_count"], 10)
+                self.assertEqual(result.signal.payload["evidence"], evidence)
+                self.assertEqual(result.metadata["evidence"], evidence)
+                self.assertEqual(result.signal.payload["matched_evidence_count"], 10)
+                self.assertEqual(
+                    result.signal.payload["matched_text"],
+                    "|".join(item["text"] for item in evidence),
+                )
+                self.assertEqual(
+                    [hit["value"] for hit in result.hits],
+                    [item["text"] for item in evidence],
+                )
 
     def test_rag_judge_evidence_allows_zero_min_score(self):
         cfg = normalize_config(
