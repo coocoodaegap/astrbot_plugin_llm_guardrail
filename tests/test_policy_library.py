@@ -15,10 +15,193 @@ from policy_library import (
     PolicyRuleBinding,
     RuleDefinition,
     compile_policy_to_runtime_config,
+    rename_policy_node,
 )
 
 
 class PolicyLibraryTests(unittest.TestCase):
+    def test_binding_id_is_canonical_with_legacy_identity_fallbacks(self):
+        rule_binding = PolicyRuleBinding.from_dict(
+            {"rule_id": "shared_rule", "rail": "input_rail"}
+        )
+        component = PolicyComponent.from_dict(
+            {
+                "component_id": "legacy_gate",
+                "component_type": "logic_gate",
+                "rail": "input_rail",
+            }
+        )
+
+        self.assertEqual(rule_binding.node_id, "shared_rule")
+        self.assertEqual(rule_binding.to_dict()["binding_id"], "shared_rule")
+        self.assertEqual(component.node_id, "legacy_gate")
+        self.assertEqual(component.to_dict()["binding_id"], "legacy_gate")
+        self.assertEqual(component.to_dict()["component_id"], "legacy_gate")
+
+    def test_component_rejects_conflicting_binding_and_legacy_ids(self):
+        library = PolicyLibrary(
+            policies=(
+                PolicyDefinition(
+                    "policy",
+                    "Policy",
+                    components=(
+                        PolicyComponent.from_dict(
+                            {
+                                "binding_id": "canonical",
+                                "component_id": "legacy",
+                                "component_type": "random_signal",
+                                "rail": "input_rail",
+                            }
+                        ),
+                    ),
+                ),
+            )
+        )
+
+        validation = library.validate()
+
+        self.assertFalse(validation.valid)
+        self.assertIn("does not match legacy component_id", validation.fatal_errors[0])
+
+    def test_same_rule_can_have_multiple_policy_bindings(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition(
+                    "shared_rule",
+                    "plain_keywords",
+                    {"keywords": ["risk"]},
+                ),
+            ),
+            policies=(
+                PolicyDefinition(
+                    "policy",
+                    "Policy",
+                    bindings=(
+                        PolicyRuleBinding(
+                            "shared_rule", "input_rail", binding_id="first_check"
+                        ),
+                        PolicyRuleBinding(
+                            "shared_rule", "input_rail", binding_id="second_check"
+                        ),
+                    ),
+                    node_order=("first_check", "second_check"),
+                ),
+            ),
+            active_policy_id="policy",
+        )
+
+        raw, validation = compile_policy_to_runtime_config({}, library)
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(
+            [item["rule_id"] for item in raw["input_rail"]["rule_list"]],
+            ["first_check", "second_check"],
+        )
+        self.assertEqual(
+            [item["source_rule_id"] for item in raw["input_rail"]["rule_list"]],
+            ["shared_rule", "shared_rule"],
+        )
+
+    def test_rename_policy_node_updates_all_structured_references(self):
+        policy = PolicyDefinition(
+            "policy",
+            "Policy",
+            bindings=(
+                PolicyRuleBinding(
+                    "shared_rule",
+                    "input_rail",
+                    binding_id="source",
+                    inspection_template="${source.value} ${sourceful.value}",
+                ),
+                PolicyRuleBinding(
+                    "shared_rule",
+                    "request_rail",
+                    binding_id="consumer",
+                    depend_on="?source",
+                    inspection_template="${ source.matched_text }",
+                ),
+            ),
+            components=(
+                PolicyComponent(
+                    "gate",
+                    "logic_gate",
+                    "request_rail",
+                    config={"inputs": ["!source.value?", "consumer"]},
+                    binding_id="gate",
+                ),
+                PolicyComponent(
+                    "echo",
+                    "sensitive_echo_detector",
+                    "output_rail",
+                    depend_on="?gate",
+                    config={
+                        "skip_source_node_ids": ["source", "consumer"],
+                        "template": "${source.value}",
+                    },
+                    binding_id="echo",
+                ),
+            ),
+            node_order=("source", "consumer", "gate", "echo"),
+            rail_settings={
+                "request_rail": {"output_redirect_template": "${source.sanitized}"}
+            },
+        )
+
+        renamed = rename_policy_node(policy, "source", "source_2")
+
+        self.assertEqual(renamed.bindings[0].rule_id, "shared_rule")
+        self.assertEqual(renamed.bindings[0].node_id, "source_2")
+        self.assertEqual(
+            renamed.bindings[0].inspection_template,
+            "${source_2.value} ${sourceful.value}",
+        )
+        self.assertEqual(renamed.bindings[1].depend_on, "?source_2")
+        self.assertEqual(
+            renamed.bindings[1].inspection_template, "${ source_2.matched_text }"
+        )
+        self.assertEqual(
+            renamed.components[0].config["inputs"],
+            ["!source_2.value?", "consumer"],
+        )
+        self.assertEqual(
+            renamed.components[1].config["skip_source_node_ids"],
+            ["source_2", "consumer"],
+        )
+        self.assertEqual(renamed.components[1].config["template"], "${source_2.value}")
+        self.assertEqual(
+            renamed.rail_settings["request_rail"]["output_redirect_template"],
+            "${source_2.sanitized}",
+        )
+        self.assertEqual(
+            renamed.node_order, ("source_2", "consumer", "gate", "echo")
+        )
+
+        renamed_component = rename_policy_node(renamed, "gate", "gate_2")
+
+        self.assertEqual(renamed_component.components[0].binding_id, "gate_2")
+        self.assertEqual(renamed_component.components[0].component_id, "gate_2")
+        self.assertEqual(renamed_component.components[1].depend_on, "?gate_2")
+        self.assertEqual(
+            renamed_component.node_order,
+            ("source_2", "consumer", "gate_2", "echo"),
+        )
+
+    def test_rename_policy_node_rejects_collisions_without_mutating_source(self):
+        policy = PolicyDefinition(
+            "policy",
+            "Policy",
+            bindings=(
+                PolicyRuleBinding("first", "input_rail"),
+                PolicyRuleBinding("second", "input_rail"),
+            ),
+            node_order=("first", "second"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "already contains node second"):
+            rename_policy_node(policy, "first", "second")
+
+        self.assertEqual(policy.node_order, ("first", "second"))
+
     def test_rule_description_is_serialized_without_affecting_runtime_config(self):
         rule = RuleDefinition(
             rule_id="risk_words",

@@ -46,6 +46,10 @@ KNOWN_COMPONENT_TYPES = frozenset().union(*COMPONENT_TEMPLATES.values())
 SENSITIVE_ECHO_SOURCE_TEMPLATES = frozenset(
     {"plain_keywords", "regex_pattern", "rag_judge", "llm_review"}
 )
+TEMPLATE_NODE_REFERENCE_PATTERN = re.compile(
+    r"(\$\{\s*)([a-z][a-z0-9_]{0,63})"
+    r"(\.[a-z][a-z0-9_]{0,63}\s*\})"
+)
 CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
 COMPOSE_TEXT_COMPONENT_TYPE = "compose_text"
 RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
@@ -100,9 +104,17 @@ class PolicyRuleBinding:
     action_on_error: str | None = None
     depend_on: str = ""
     inspection_template: str = ""
+    binding_id: str = ""
+
+    @property
+    def node_id(self) -> str:
+        """Return the policy-local identity, with legacy ``rule_id`` fallback."""
+
+        return self.binding_id or self.rule_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "binding_id": self.node_id,
             "rule_id": self.rule_id,
             "rail": self.rail,
             "enabled": self.enabled,
@@ -124,6 +136,7 @@ class PolicyRuleBinding:
             action_on_error=_loaded_optional_error_action(value.get("action_on_error")),
             depend_on=str(value.get("depend_on") or "").strip(),
             inspection_template=str(value.get("inspection_template") or "").strip(),
+            binding_id=str(value.get("binding_id") or value.get("rule_id") or "").strip(),
         )
 
 
@@ -147,10 +160,20 @@ class PolicyComponent:
     depend_on: str = ""
     inspection_template: str = ""
     config: dict[str, Any] = field(default_factory=dict)
+    binding_id: str = ""
+
+    @property
+    def node_id(self) -> str:
+        """Return the canonical policy-local identity."""
+
+        return self.binding_id or self.component_id
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "component_id": self.component_id,
+            "binding_id": self.node_id,
+            # Kept as a transition mirror for snapshots and packages produced
+            # before binding_id became the canonical policy-node identity.
+            "component_id": self.node_id,
             "component_type": self.component_type,
             "rail": self.rail,
             "enabled": self.enabled,
@@ -164,8 +187,14 @@ class PolicyComponent:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "PolicyComponent":
+        binding_id = str(value.get("binding_id") or "").strip()
+        component_id = str(value.get("component_id") or "").strip()
+        if not binding_id:
+            binding_id = component_id
+        if not component_id:
+            component_id = binding_id
         return cls(
-            component_id=str(value.get("component_id") or "").strip(),
+            component_id=component_id,
             component_type=str(value.get("component_type") or "").strip(),
             rail=str(value.get("rail") or "").strip(),
             enabled=bool(value.get("enabled", True)),
@@ -175,6 +204,7 @@ class PolicyComponent:
             depend_on=str(value.get("depend_on") or "").strip(),
             inspection_template=str(value.get("inspection_template") or "").strip(),
             config=_copy_dict(value.get("config")),
+            binding_id=binding_id,
         )
 
 
@@ -501,37 +531,50 @@ class PolicyLibrary:
                     fatal_errors.append(
                         f"policy {policy.policy_id} references missing rule {binding.rule_id}"
                     )
-                if binding.rule_id in seen_node_ids:
+                if not RULE_ID_PATTERN.fullmatch(binding.node_id):
                     fatal_errors.append(
-                        f"policy {policy.policy_id} uses node id {binding.rule_id} more than once"
+                        f"invalid binding_id: {binding.node_id or '(empty)'}"
                     )
-                seen_node_ids.add(binding.rule_id)
+                elif binding.node_id in seen_node_ids:
+                    fatal_errors.append(
+                        f"policy {policy.policy_id} uses node id {binding.node_id} more than once"
+                    )
+                seen_node_ids.add(binding.node_id)
                 if binding.rail not in RAIL_NAMES:
                     fatal_errors.append(
                         f"policy {policy.policy_id} uses unknown rail {binding.rail}"
                     )
             for component in policy.components:
-                if not RULE_ID_PATTERN.fullmatch(component.component_id):
+                if (
+                    component.binding_id
+                    and component.component_id
+                    and component.binding_id != component.component_id
+                ):
                     fatal_errors.append(
-                        f"invalid component_id: {component.component_id or '(empty)'}"
+                        f"component binding_id {component.binding_id} does not match legacy "
+                        f"component_id {component.component_id}"
                     )
-                elif component.component_id in seen_node_ids:
+                if not RULE_ID_PATTERN.fullmatch(component.node_id):
                     fatal_errors.append(
-                        f"policy {policy.policy_id} uses node id {component.component_id} more than once"
+                        f"invalid binding_id: {component.node_id or '(empty)'}"
                     )
-                seen_node_ids.add(component.component_id)
+                elif component.node_id in seen_node_ids:
+                    fatal_errors.append(
+                        f"policy {policy.policy_id} uses node id {component.node_id} more than once"
+                    )
+                seen_node_ids.add(component.node_id)
                 if component.rail not in RAIL_NAMES:
                     fatal_errors.append(
                         f"policy {policy.policy_id} uses unknown rail {component.rail}"
                     )
                 elif component.component_type not in COMPONENT_TEMPLATES[component.rail]:
                     fatal_errors.append(
-                        f"policy {policy.policy_id} cannot place component {component.component_id} "
+                        f"policy {policy.policy_id} cannot place component {component.node_id} "
                         f"({component.component_type or 'unknown'}) in Step {STEP_BY_RAIL[component.rail]}"
                     )
             known_node_ids = {
-                *(binding.rule_id for binding in policy.bindings),
-                *(component.component_id for component in policy.components),
+                *(binding.node_id for binding in policy.bindings),
+                *(component.node_id for component in policy.components),
             }
             seen_order_ids: set[str] = set()
             for node_id in policy.node_order:
@@ -598,11 +641,11 @@ class PolicyLibrary:
                     gate = str(component_config.get("gate") or "all").strip().lower()
                     if gate not in {"all", "any"}:
                         fatal_errors.append(
-                            f"component {component.component_id} has invalid logic gate mode {gate}"
+                            f"component {component.node_id} has invalid logic gate mode {gate}"
                         )
                     if not _clean_string_list(component_config.get("inputs")):
                         fatal_errors.append(
-                            f"component {component.component_id} has no logic gate inputs"
+                            f"component {component.node_id} has no logic gate inputs"
                         )
                     invalid_inputs = [
                         value
@@ -611,7 +654,7 @@ class PolicyLibrary:
                     ]
                     if invalid_inputs:
                         fatal_errors.append(
-                            f"component {component.component_id} has invalid logic gate input(s): "
+                            f"component {component.node_id} has invalid logic gate input(s): "
                             + ", ".join(invalid_inputs)
                         )
                 elif component.component_type == "sensitive_echo_detector":
@@ -633,12 +676,12 @@ class PolicyLibrary:
                     and component.rail != "output_rail"
                 ):
                     warnings.append(
-                        f"component {component.component_id} uses retry_generation as its hit action outside Step 5; "
+                        f"component {component.node_id} uses retry_generation as its hit action outside Step 5; "
                         "it will fall back to the Step default"
                     )
                 if _is_retry_generation_action(component.action_on_error):
                     warnings.append(
-                        f"component {component.component_id} uses retry_generation as its error action; "
+                        f"component {component.node_id} uses retry_generation as its error action; "
                         "it will fall back to the Step default"
                     )
 
@@ -677,7 +720,7 @@ def _migrate_legacy_strengthen_prompt(
                 continue
             components.append(
                 PolicyComponent(
-                    component_id=binding.rule_id,
+                    component_id=binding.node_id,
                     component_type=STRENGTHEN_PROMPT_COMPONENT_TYPE,
                     rail=binding.rail,
                     enabled=binding.enabled,
@@ -699,6 +742,7 @@ def _migrate_legacy_strengthen_prompt(
                     depend_on=binding.depend_on,
                     inspection_template=binding.inspection_template,
                     config=copy.deepcopy(legacy_rule.template_config),
+                    binding_id=binding.node_id,
                 )
             )
         migrated_policies.append(
@@ -771,7 +815,8 @@ def _compile_binding(rule: RuleDefinition, binding: PolicyRuleBinding) -> dict[s
     item.update(
         {
             "__template_key": rule.template_key,
-            "rule_id": rule.rule_id,
+            "rule_id": binding.node_id,
+            "source_rule_id": rule.rule_id,
             "enabled": binding.enabled,
             "priority": rule.default_priority if binding.priority is None else binding.priority,
             "depend_on": binding.depend_on,
@@ -796,7 +841,7 @@ def _compile_component(component: PolicyComponent) -> dict[str, Any]:
     item.update(
         {
             "__template_key": component.component_type,
-            "rule_id": component.component_id,
+            "rule_id": component.node_id,
             "enabled": component.enabled,
             "priority": component.priority,
             "depend_on": component.depend_on,
@@ -835,9 +880,9 @@ def _ordered_policy_nodes(
 
     by_id: dict[str, tuple[str, PolicyRuleBinding | PolicyComponent]] = {}
     for binding in policy.bindings:
-        by_id[binding.rule_id] = ("rule", binding)
+        by_id[binding.node_id] = ("rule", binding)
     for component in policy.components:
-        by_id[component.component_id] = ("component", component)
+        by_id[component.node_id] = ("component", component)
     ordered: list[tuple[str, PolicyRuleBinding | PolicyComponent]] = []
     emitted: set[str] = set()
     for node_id in policy.node_order:
@@ -846,13 +891,13 @@ def _ordered_policy_nodes(
             ordered.append(node)
             emitted.add(node_id)
     for binding in policy.bindings:
-        if binding.rule_id not in emitted:
+        if binding.node_id not in emitted:
             ordered.append(("rule", binding))
-            emitted.add(binding.rule_id)
+            emitted.add(binding.node_id)
     for component in policy.components:
-        if component.component_id not in emitted:
+        if component.node_id not in emitted:
             ordered.append(("component", component))
-            emitted.add(component.component_id)
+            emitted.add(component.node_id)
     return ordered
 
 
@@ -921,6 +966,147 @@ def _logic_gate_input_target(value: Any) -> str:
     return text.partition(".")[0]
 
 
+def rename_policy_node(
+    policy: PolicyDefinition,
+    old_id: str,
+    new_id: str,
+) -> PolicyDefinition:
+    """Atomically rename one policy node and every structured reference to it.
+
+    The reusable rule definition identity is deliberately untouched: for a
+    rule binding only ``binding_id`` changes, while ``rule_id`` keeps pointing
+    at the same rule-library entry.
+    """
+
+    source_id = str(old_id or "").strip()
+    target_id = str(new_id or "").strip()
+    if not RULE_ID_PATTERN.fullmatch(target_id):
+        raise ValueError(f"invalid binding_id: {target_id or '(empty)'}")
+
+    nodes = [*policy.bindings, *policy.components]
+    matches = [node for node in nodes if node.node_id == source_id]
+    if not matches:
+        raise ValueError(f"policy {policy.policy_id} has no node {source_id or '(empty)'}")
+    if len(matches) != 1:
+        raise ValueError(f"policy {policy.policy_id} node id {source_id} is ambiguous")
+    if source_id == target_id:
+        return policy
+    if any(node.node_id == target_id for node in nodes):
+        raise ValueError(
+            f"policy {policy.policy_id} already contains node {target_id}"
+        )
+
+    bindings = tuple(
+        replace(
+            binding,
+            binding_id=(target_id if binding.node_id == source_id else binding.node_id),
+            depend_on=_rewrite_dependency_node_reference(
+                binding.depend_on, source_id, target_id
+            ),
+            inspection_template=_rewrite_template_node_references(
+                binding.inspection_template, source_id, target_id
+            ),
+        )
+        for binding in policy.bindings
+    )
+    components = tuple(
+        replace(
+            component,
+            binding_id=(target_id if component.node_id == source_id else component.node_id),
+            component_id=(
+                target_id if component.node_id == source_id else component.node_id
+            ),
+            depend_on=_rewrite_dependency_node_reference(
+                component.depend_on, source_id, target_id
+            ),
+            inspection_template=_rewrite_template_node_references(
+                component.inspection_template, source_id, target_id
+            ),
+            config=_rewrite_component_node_references(
+                component.config, source_id, target_id
+            ),
+        )
+        for component in policy.components
+    )
+    return replace(
+        policy,
+        bindings=bindings,
+        components=components,
+        node_order=tuple(
+            target_id if node_id == source_id else node_id
+            for node_id in policy.node_order
+        ),
+        rail_settings=_rewrite_template_node_references(
+            policy.rail_settings, source_id, target_id
+        ),
+    )
+
+
+def _rewrite_dependency_node_reference(value: Any, old_id: str, new_id: str) -> str:
+    text = str(value or "").strip()
+    prefix = text[:1] if text[:1] in {"!", "?", "~"} else ""
+    target = text[1:].strip() if prefix else text
+    return f"{prefix}{new_id if target == old_id else target}"
+
+
+def _rewrite_logic_gate_node_reference(value: Any, old_id: str, new_id: str) -> Any:
+    if not isinstance(value, str):
+        return value
+    prefix = value[:1] if value[:1] in {"!", "?", "~"} else ""
+    text = value[1:] if prefix else value
+    target, separator, remainder = text.partition(".")
+    if target == old_id:
+        target = new_id
+    return f"{prefix}{target}{separator}{remainder}"
+
+
+def _rewrite_template_node_references(value: Any, old_id: str, new_id: str) -> Any:
+    if isinstance(value, str):
+        return TEMPLATE_NODE_REFERENCE_PATTERN.sub(
+            lambda match: (
+                f"{match.group(1)}{new_id}{match.group(3)}"
+                if match.group(2) == old_id
+                else match.group(0)
+            ),
+            value,
+        )
+    if isinstance(value, list):
+        return [
+            _rewrite_template_node_references(item, old_id, new_id)
+            for item in value
+        ]
+    if isinstance(value, tuple):
+        return tuple(
+            _rewrite_template_node_references(item, old_id, new_id)
+            for item in value
+        )
+    if isinstance(value, Mapping):
+        return {
+            key: _rewrite_template_node_references(item, old_id, new_id)
+            for key, item in value.items()
+        }
+    return copy.deepcopy(value)
+
+
+def _rewrite_component_node_references(
+    value: Any,
+    old_id: str,
+    new_id: str,
+) -> dict[str, Any]:
+    config = _copy_dict(value)
+    inputs = config.get("inputs")
+    if isinstance(inputs, list):
+        config["inputs"] = [
+            _rewrite_logic_gate_node_reference(item, old_id, new_id)
+            for item in inputs
+        ]
+    for key in ("skip_source_node_ids", "source_node_ids"):
+        node_ids = config.get(key)
+        if isinstance(node_ids, list):
+            config[key] = [new_id if item == old_id else item for item in node_ids]
+    return _rewrite_template_node_references(config, old_id, new_id)
+
+
 def _policy_dependency_references(
     policy: PolicyDefinition,
     rule_by_id: Mapping[str, RuleDefinition],
@@ -930,15 +1116,15 @@ def _policy_dependency_references(
     references: list[tuple[str, str, str]] = []
     for binding in policy.bindings:
         if binding.depend_on:
-            references.append((binding.rule_id, binding.depend_on, "depend_on"))
+            references.append((binding.node_id, binding.depend_on, "depend_on"))
     for component in policy.components:
         if component.depend_on:
-            references.append((component.component_id, component.depend_on, "depend_on"))
+            references.append((component.node_id, component.depend_on, "depend_on"))
         if component.component_type != "logic_gate":
             continue
         config = component.config if isinstance(component.config, Mapping) else {}
         for value in _clean_string_list(config.get("inputs")):
-            references.append((component.component_id, value, "logic input"))
+            references.append((component.node_id, value, "logic input"))
     return references
 
 
@@ -953,17 +1139,17 @@ def _validate_sensitive_echo_component(
     config = component.config if isinstance(component.config, Mapping) else {}
     if "source_node_ids" in config:
         return [
-            f"component {component.component_id} source_node_ids has been replaced by skip_source_node_ids"
+            f"component {component.node_id} source_node_ids has been replaced by skip_source_node_ids"
         ]
     raw_skips = config.get("skip_source_node_ids", [])
     if not isinstance(raw_skips, list):
         errors.append(
-            f"component {component.component_id} skip_source_node_ids must be a list"
+            f"component {component.node_id} skip_source_node_ids must be a list"
         )
     skip_ids = [str(value).strip() for value in raw_skips if str(value).strip()]
     if len(skip_ids) != len(set(skip_ids)):
         errors.append(
-            f"component {component.component_id} skip_source_node_ids must not contain duplicates"
+            f"component {component.node_id} skip_source_node_ids must not contain duplicates"
         )
 
     max_sources = _as_int(config.get("max_rechecked_sources"), 4)
@@ -971,38 +1157,38 @@ def _validate_sensitive_echo_component(
     max_external = _as_int(config.get("max_external_rechecks"), 2)
     if not 1 <= max_sources <= 32:
         errors.append(
-            f"component {component.component_id} max_rechecked_sources must be 1..32"
+            f"component {component.node_id} max_rechecked_sources must be 1..32"
         )
     if not 1 <= min_sources <= max_sources:
         errors.append(
-            f"component {component.component_id} min_rechecked_sources must be 1..max_rechecked_sources"
+            f"component {component.node_id} min_rechecked_sources must be 1..max_rechecked_sources"
         )
     if not 0 <= max_external <= 16:
         errors.append(
-            f"component {component.component_id} max_external_rechecks must be 0..16"
+            f"component {component.node_id} max_external_rechecks must be 0..16"
         )
-    bindings_by_id = {binding.rule_id: binding for binding in policy.bindings}
+    bindings_by_id = {binding.node_id: binding for binding in policy.bindings}
     for source_id in sorted(set(skip_ids)):
         binding = bindings_by_id.get(source_id)
         if binding is None:
             errors.append(
-                f"component {component.component_id} skip source {source_id} is not a rule binding in this policy"
+                f"component {component.node_id} skip source {source_id} is not a rule binding in this policy"
             )
             continue
         if not binding.enabled:
             errors.append(
-                f"component {component.component_id} skip source {source_id} is disabled"
+                f"component {component.node_id} skip source {source_id} is disabled"
             )
             continue
         if binding.rail not in {"input_rail", "request_rail"}:
             errors.append(
-                f"component {component.component_id} skip source {source_id} must be in Step 1 or Step 3"
+                f"component {component.node_id} skip source {source_id} must be in Step 1 or Step 3"
             )
             continue
-        rule = rule_by_id.get(source_id)
+        rule = rule_by_id.get(binding.rule_id)
         if rule is None or rule.template_key not in SENSITIVE_ECHO_SOURCE_TEMPLATES:
             errors.append(
-                f"component {component.component_id} skip source {source_id} is not a replayable rule"
+                f"component {component.node_id} skip source {source_id} is not a replayable rule"
             )
     return errors
 
@@ -1017,24 +1203,24 @@ def _validate_context_extractor_component(component: PolicyComponent) -> list[st
         turns = int(raw_turns)
     except (TypeError, ValueError):
         errors.append(
-            f"component {component.component_id} turns must be a non-negative integer"
+            f"component {component.node_id} turns must be a non-negative integer"
         )
     else:
         if turns < 0:
             errors.append(
-                f"component {component.component_id} turns must be a non-negative integer"
+                f"component {component.node_id} turns must be a non-negative integer"
             )
     if str(component.inspection_template or "").strip():
         errors.append(
-            f"component {component.component_id} cannot use inspection_template"
+            f"component {component.node_id} cannot use inspection_template"
         )
     if str(component.action_on_hit or "default").strip() not in {"default", "observe"}:
         errors.append(
-            f"component {component.component_id} action_on_hit is fixed to observe"
+            f"component {component.node_id} action_on_hit is fixed to observe"
         )
     if str(component.action_on_error or "default").strip() not in {"default", "discard"}:
         errors.append(
-            f"component {component.component_id} action_on_error is fixed to discard"
+            f"component {component.node_id} action_on_error is fixed to discard"
         )
     return errors
 
@@ -1048,12 +1234,12 @@ def _validate_random_signal_component(component: PolicyComponent) -> list[str]:
         probability = float(config.get("probability", 0.5))
     except (TypeError, ValueError):
         errors.append(
-            f"component {component.component_id} probability must be within 0.0..1.0"
+            f"component {component.node_id} probability must be within 0.0..1.0"
         )
     else:
         if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
             errors.append(
-                f"component {component.component_id} probability must be within 0.0..1.0"
+                f"component {component.node_id} probability must be within 0.0..1.0"
             )
     return errors
 
@@ -1064,13 +1250,13 @@ def _validate_compose_text_component(component: PolicyComponent) -> list[str]:
     errors: list[str] = []
     config = component.config if isinstance(component.config, Mapping) else {}
     if not isinstance(config.get("template", ""), str):
-        errors.append(f"component {component.component_id} template must be a string")
+        errors.append(f"component {component.node_id} template must be a string")
     if str(component.inspection_template or "").strip():
-        errors.append(f"component {component.component_id} cannot use inspection_template")
+        errors.append(f"component {component.node_id} cannot use inspection_template")
     if str(component.action_on_hit or "default").strip() not in {"default", "observe"}:
-        errors.append(f"component {component.component_id} action_on_hit is fixed to observe")
+        errors.append(f"component {component.node_id} action_on_hit is fixed to observe")
     if str(component.action_on_error or "default").strip() not in {"default", "discard"}:
-        errors.append(f"component {component.component_id} action_on_error is fixed to discard")
+        errors.append(f"component {component.node_id} action_on_error is fixed to discard")
     return errors
 
 
@@ -1078,7 +1264,7 @@ def _validate_context_extractor_payload_uses(policy: PolicyDefinition) -> list[s
     """Restrict context payload to inspection and compose-text consumers."""
 
     context_ids = {
-        component.component_id
+        component.node_id
         for component in policy.components
         if component.component_type == CONTEXT_EXTRACTOR_COMPONENT_TYPE
     }
@@ -1088,16 +1274,16 @@ def _validate_context_extractor_payload_uses(policy: PolicyDefinition) -> list[s
     errors: list[str] = []
     consumers: list[tuple[str, str]] = []
     consumers.extend(
-        (binding.rule_id, binding.inspection_template)
+        (binding.node_id, binding.inspection_template)
         for binding in policy.bindings
     )
     consumers.extend(
-        (component.component_id, component.inspection_template)
+        (component.node_id, component.inspection_template)
         for component in policy.components
         if component.component_type != CONTEXT_EXTRACTOR_COMPONENT_TYPE
     )
     consumers.extend(
-        (component.component_id, component.config.get("template", ""))
+        (component.node_id, component.config.get("template", ""))
         for component in policy.components
         if component.component_type == COMPOSE_TEXT_COMPONENT_TYPE
         and isinstance(component.config, Mapping)
@@ -1127,7 +1313,7 @@ def _validate_compose_text_payload_uses(policy: PolicyDefinition) -> list[str]:
     """Keep composed text inside inspection or another compose-text template."""
 
     compose_ids = {
-        component.component_id
+        component.node_id
         for component in policy.components
         if component.component_type == COMPOSE_TEXT_COMPONENT_TYPE
     }
@@ -1136,14 +1322,14 @@ def _validate_compose_text_payload_uses(policy: PolicyDefinition) -> list[str]:
 
     errors: list[str] = []
     consumers: list[tuple[str, str]] = []
-    consumers.extend((binding.rule_id, binding.inspection_template) for binding in policy.bindings)
+    consumers.extend((binding.node_id, binding.inspection_template) for binding in policy.bindings)
     consumers.extend(
-        (component.component_id, component.inspection_template)
+        (component.node_id, component.inspection_template)
         for component in policy.components
         if component.component_type != COMPOSE_TEXT_COMPONENT_TYPE
     )
     consumers.extend(
-        (component.component_id, component.config.get("template", ""))
+        (component.node_id, component.config.get("template", ""))
         for component in policy.components
         if component.component_type == COMPOSE_TEXT_COMPONENT_TYPE
         and isinstance(component.config, Mapping)
@@ -1194,10 +1380,10 @@ def _validate_policy_dependency_graph(
 
     errors: list[str] = []
     nodes_by_id: dict[str, PolicyRuleBinding | PolicyComponent] = {
-        binding.rule_id: binding for binding in policy.bindings
+        binding.node_id: binding for binding in policy.bindings
     }
     nodes_by_id.update(
-        {component.component_id: component for component in policy.components}
+        {component.node_id: component for component in policy.components}
     )
     adjacency: dict[str, set[str]] = {node_id: set() for node_id in nodes_by_id}
 

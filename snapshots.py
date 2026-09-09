@@ -605,16 +605,16 @@ def _runtime_dependency_references(
     references: list[tuple[str, str, str]] = []
     for binding in policy.bindings:
         if binding.depend_on:
-            references.append((binding.rule_id, binding.depend_on, "depend_on"))
+            references.append((binding.node_id, binding.depend_on, "depend_on"))
     for component in policy.components:
         if component.depend_on:
-            references.append((component.component_id, component.depend_on, "depend_on"))
+            references.append((component.node_id, component.depend_on, "depend_on"))
         if component.component_type != "logic_gate":
             continue
         inputs = component.config.get("inputs")
         if isinstance(inputs, list):
             references.extend(
-                (component.component_id, str(item), "logic_input")
+                (component.node_id, str(item), "logic_input")
                 for item in inputs
                 if str(item).strip()
             )

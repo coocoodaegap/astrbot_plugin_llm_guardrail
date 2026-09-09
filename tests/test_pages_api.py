@@ -730,6 +730,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
         copied_policy = copied_library.get_policy("input_policy_copy")
         self.assertIsNotNone(copied_policy)
         self.assertEqual(copied_policy.bindings[0].rule_id, "risk_copy")
+        self.assertEqual(copied_policy.bindings[0].node_id, "risk")
 
     def test_configuration_package_rejects_policy_without_packaged_rule(self):
         plugin = _Plugin()

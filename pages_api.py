@@ -1297,7 +1297,7 @@ def _rewrite_imported_policy(
     rule_id_map: Mapping[str, str],
     constant_name_map: Mapping[str, str],
 ) -> PolicyDefinition:
-    """Rewrite only imported rule references; policy-local component IDs stay stable."""
+    """Rewrite reusable rule references without changing policy-local node IDs."""
 
     payload = _rewrite_shared_constant_references(policy.to_dict(), constant_name_map)
     payload["policy_id"] = policy_id
@@ -1305,19 +1305,9 @@ def _rewrite_imported_policy(
         {
             **binding,
             "rule_id": rule_id_map.get(str(binding.get("rule_id") or ""), binding.get("rule_id")),
-            "depend_on": _rewrite_dependency_reference(binding.get("depend_on"), rule_id_map),
         }
         for binding in payload["bindings"]
     ]
-    payload["components"] = [
-        {
-            **component,
-            "depend_on": _rewrite_dependency_reference(component.get("depend_on"), rule_id_map),
-            "config": _rewrite_component_config(component.get("config"), rule_id_map),
-        }
-        for component in payload["components"]
-    ]
-    payload["node_order"] = [rule_id_map.get(node_id, node_id) for node_id in payload["node_order"]]
     return PolicyDefinition.from_dict(payload)
 
 
@@ -1340,32 +1330,6 @@ def _rewrite_shared_constant_references(
             for key, item in value.items()
         }
     return value
-
-
-def _rewrite_dependency_reference(value: Any, rule_id_map: Mapping[str, str]) -> str:
-    text = str(value or "").strip()
-    prefix = text[:1] if text[:1] in {"!", "?", "~"} else ""
-    target = text[1:] if prefix else text
-    return f"{prefix}{rule_id_map.get(target, target)}"
-
-
-def _rewrite_component_config(value: Any, rule_id_map: Mapping[str, str]) -> dict[str, Any]:
-    config = copy.deepcopy(dict(value)) if isinstance(value, Mapping) else {}
-    inputs = config.get("inputs")
-    if isinstance(inputs, list):
-        config["inputs"] = [
-            _rewrite_logic_gate_input(item, rule_id_map) for item in inputs
-        ]
-    return config
-
-
-def _rewrite_logic_gate_input(value: Any, rule_id_map: Mapping[str, str]) -> Any:
-    if not isinstance(value, str):
-        return value
-    prefix = value[:1] if value[:1] in {"!", "?", "~"} else ""
-    text = value[1:] if prefix else value
-    target, separator, remainder = text.partition(".")
-    return f"{prefix}{rule_id_map.get(target, target)}{separator}{remainder}"
 
 
 def _replace_library_entries(

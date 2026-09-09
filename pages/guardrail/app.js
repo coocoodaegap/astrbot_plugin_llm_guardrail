@@ -77,6 +77,7 @@ const status = $("status"),
   policyRulePickerDialog = $("policy-rule-picker-dialog"),
   policyRulePickerTitle = $("policy-rule-picker-title"),
   policyRulePickerDescription = $("policy-rule-picker-description"),
+  newPolicyRuleBindingId = $("new-policy-rule-binding-id"),
   policyRulePickerStatus = $("policy-rule-picker-status"),
   policyRulePickerList = $("policy-rule-picker-list"),
   cancelPolicyRulePicker = $("cancel-policy-rule-picker"),
@@ -1822,6 +1823,120 @@ function parsePolicyGraphReference(value) {
   const payloadPath = dot < 0 ? "" : targetAndPath.slice(dot + 1);
   return { raw, targetId, mode, payloadPath, allowEmptyString };
 }
+function policyRuleBindingId(binding) {
+  return String(binding?.binding_id || binding?.rule_id || "").trim();
+}
+function policyComponentBindingId(component) {
+  return String(component?.binding_id || component?.component_id || "").trim();
+}
+function policyGraphDraftNodeIds(draft = getPolicyGraphDraft()) {
+  return new Set([
+    ...(draft?.bindings || []).map(policyRuleBindingId),
+    ...(draft?.components || []).map(policyComponentBindingId),
+  ].filter(Boolean));
+}
+function allocatePolicyBindingId(sourceId, draft = getPolicyGraphDraft()) {
+  const base = String(sourceId || "").trim();
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(base)) return "";
+  const occupied = policyGraphDraftNodeIds(draft);
+  if (!occupied.has(base)) return base;
+  for (let number = 2; ; number += 1) {
+    const suffix = `_${number}`;
+    const candidate = `${base.slice(0, 64 - suffix.length)}${suffix}`;
+    if (!occupied.has(candidate)) return candidate;
+  }
+}
+function rewritePolicyDependencyNodeId(value, oldId, newId) {
+  const text = String(value || "").trim();
+  const prefix = new Set(["!", "?", "~"]).has(text[0]) ? text[0] : "";
+  const target = prefix ? text.slice(1).trim() : text;
+  return `${prefix}${target === oldId ? newId : target}`;
+}
+function rewritePolicyLogicInputNodeId(value, oldId, newId) {
+  if (typeof value !== "string") return value;
+  const prefix = new Set(["!", "?", "~"]).has(value[0]) ? value[0] : "";
+  const text = prefix ? value.slice(1) : value;
+  const separatorIndex = text.indexOf(".");
+  const target = separatorIndex < 0 ? text : text.slice(0, separatorIndex);
+  const remainder = separatorIndex < 0 ? "" : text.slice(separatorIndex);
+  return `${prefix}${target === oldId ? newId : target}${remainder}`;
+}
+function rewritePolicyTemplateNodeIds(value, oldId, newId) {
+  if (typeof value === "string") {
+    return value.replace(
+      /(\$\{\s*)([a-z][a-z0-9_]{0,63})(\.[a-z][a-z0-9_]{0,63}\s*\})/g,
+      (whole, opening, nodeId, closing) => (
+        nodeId === oldId ? `${opening}${newId}${closing}` : whole
+      ),
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewritePolicyTemplateNodeIds(item, oldId, newId));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      rewritePolicyTemplateNodeIds(item, oldId, newId),
+    ]));
+  }
+  return value;
+}
+function rewritePolicyComponentNodeIds(config, oldId, newId) {
+  const rewritten = rewritePolicyTemplateNodeIds(structuredClone(config || {}), oldId, newId);
+  if (Array.isArray(rewritten.inputs)) {
+    rewritten.inputs = rewritten.inputs.map((item) => rewritePolicyLogicInputNodeId(item, oldId, newId));
+  }
+  for (const key of ["skip_source_node_ids", "source_node_ids"]) {
+    if (Array.isArray(rewritten[key])) {
+      rewritten[key] = rewritten[key].map((item) => item === oldId ? newId : item);
+    }
+  }
+  return rewritten;
+}
+function renamePolicyNode(oldId, newId, draft = getPolicyGraphDraft()) {
+  const sourceId = String(oldId || "").trim();
+  const targetId = String(newId || "").trim();
+  if (!draft) throw new Error("当前没有可编辑的策略草稿。");
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(targetId)) {
+    throw new Error("Binding ID 必须以小写字母开头，并只包含小写字母、数字和下划线。");
+  }
+  const matches = [
+    ...(draft.bindings || []).filter((binding) => policyRuleBindingId(binding) === sourceId),
+    ...(draft.components || []).filter((component) => policyComponentBindingId(component) === sourceId),
+  ];
+  if (matches.length !== 1) throw new Error(`找不到唯一的节点“${sourceId}”。`);
+  if (sourceId === targetId) return false;
+  if (policyGraphDraftNodeIds(draft).has(targetId)) {
+    throw new Error(`Binding ID“${targetId}”已被当前策略中的节点使用。`);
+  }
+  for (const binding of draft.bindings || []) {
+    if (policyRuleBindingId(binding) === sourceId) binding.binding_id = targetId;
+    else binding.binding_id = policyRuleBindingId(binding);
+    binding.depend_on = rewritePolicyDependencyNodeId(binding.depend_on, sourceId, targetId);
+    binding.inspection_template = rewritePolicyTemplateNodeIds(binding.inspection_template || "", sourceId, targetId);
+  }
+  for (const component of draft.components || []) {
+    const currentId = policyComponentBindingId(component);
+    const updatedId = currentId === sourceId ? targetId : currentId;
+    component.binding_id = updatedId;
+    component.component_id = updatedId;
+    component.depend_on = rewritePolicyDependencyNodeId(component.depend_on, sourceId, targetId);
+    component.inspection_template = rewritePolicyTemplateNodeIds(component.inspection_template || "", sourceId, targetId);
+    component.config = rewritePolicyComponentNodeIds(component.config, sourceId, targetId);
+  }
+  draft.node_order = (draft.node_order || []).map((nodeId) => nodeId === sourceId ? targetId : nodeId);
+  draft.rail_settings = rewritePolicyTemplateNodeIds(draft.rail_settings || {}, sourceId, targetId);
+  if (policyGraphState.selectedNodeId === sourceId) policyGraphState.selectedNodeId = targetId;
+  if (policyGraphState.dependencySelection?.dependentId === sourceId) {
+    policyGraphState.dependencySelection.dependentId = targetId;
+  }
+  if (policyGraphState.pendingDependencySourceId === sourceId) {
+    policyGraphState.pendingDependencySourceId = targetId;
+  }
+  policyGraphState.dirtyNodeIds.delete(sourceId);
+  markPolicyGraphNodeDirty(targetId);
+  return true;
+}
 function graphNodeInputs(node) {
   const inputs = node?.component?.config?.inputs || node?.rule?.template_config?.inputs;
   return Array.isArray(inputs)
@@ -1886,7 +2001,7 @@ function buildPolicyGraphModel(policy) {
   };
   for (const binding of Array.isArray(policy?.bindings) ? policy.bindings : []) {
     appendNode({
-      id: binding.rule_id,
+      id: policyRuleBindingId(binding),
       kind: "rule",
       binding,
       rule: ruleById.get(binding.rule_id) || null,
@@ -1894,7 +2009,7 @@ function buildPolicyGraphModel(policy) {
   }
   for (const component of Array.isArray(policy?.components) ? policy.components : []) {
     appendNode({
-      id: component.component_id,
+      id: policyComponentBindingId(component),
       kind: "component",
       component,
     });
@@ -2418,9 +2533,9 @@ function openPolicyDependencyModeDialog(sourceId) {
   policyDependencyModeDialog.showModal();
 }
 function findPolicyGraphDraftNode(nodeId, draft = getPolicyGraphDraft()) {
-  const binding = draft?.bindings?.find((item) => item.rule_id === nodeId);
+  const binding = draft?.bindings?.find((item) => policyRuleBindingId(item) === nodeId);
   if (binding) return { kind: "rule", data: binding };
-  const component = draft?.components?.find((item) => item.component_id === nodeId);
+  const component = draft?.components?.find((item) => policyComponentBindingId(item) === nodeId);
   if (component) return { kind: "component", data: component };
   return null;
 }
@@ -2428,8 +2543,8 @@ function removePolicyGraphDraftNode(nodeId, draft = getPolicyGraphDraft()) {
   if (!draft) return false;
   const bindingCount = draft.bindings?.length || 0;
   const componentCount = draft.components?.length || 0;
-  draft.bindings = (draft.bindings || []).filter((binding) => binding.rule_id !== nodeId);
-  draft.components = (draft.components || []).filter((component) => component.component_id !== nodeId);
+  draft.bindings = (draft.bindings || []).filter((binding) => policyRuleBindingId(binding) !== nodeId);
+  draft.components = (draft.components || []).filter((component) => policyComponentBindingId(component) !== nodeId);
   draft.node_order = (draft.node_order || []).filter((id) => id !== nodeId);
   return draft.bindings.length !== bindingCount || draft.components.length !== componentCount;
 }
@@ -2919,7 +3034,8 @@ function renderPolicyGraphNodeEditor(node) {
   summary.className = "policy-graph-editor-summary";
   const step = policyGraphStepByRail.get(node.rail);
   for (const [label, value] of [
-    [isComponent ? "元件 ID" : "规则 ID", node.id || "未命名"],
+    ["Binding ID", node.id || "未命名"],
+    ...(!isComponent ? [["来源规则", node.binding?.rule_id || "未知"]] : []),
     [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || "未知类型"],
     ["所属 Step", step?.label || node.rail],
     ["依赖", nodeData.depend_on || "未设置"],
@@ -2933,6 +3049,31 @@ function renderPolicyGraphNodeEditor(node) {
   if (rule) editor.append(renderPolicyRuleBusinessSummary(rule));
   const grid = document.createElement("div");
   grid.className = "form-grid";
+  const bindingId = document.createElement("input");
+  bindingId.type = "text";
+  bindingId.autocomplete = "off";
+  bindingId.pattern = "[a-z][a-z0-9_]{0,63}";
+  bindingId.value = node.id;
+  bindingId.addEventListener("change", () => {
+    const nextId = bindingId.value.trim();
+    try {
+      if (!renamePolicyNode(node.id, nextId)) return;
+    } catch (error) {
+      bindingId.value = node.id;
+      setPolicyGraphEditorStatus(error?.message || "Binding ID 修改失败。", true);
+      return;
+    }
+    renderPolicyGraph(getPolicyGraphDraft());
+    renderPolicyGraphEditor();
+    setPolicyGraphEditorStatus(`已将节点“${node.id}”重命名为“${nextId}”，相关引用已同步更新；点击“保存策略”后写入快照。`);
+  });
+  grid.append(createPolicyGraphEditorField(
+    "策略内身份（binding_id）",
+    isComponent
+      ? "仅修改当前策略中的元件实例身份，并同步更新全部节点关联。"
+      : `来源规则仍为 ${node.binding?.rule_id || "未知"}；修改这里只会重命名策略节点，不会修改 rule_id。`,
+    bindingId,
+  ));
   const enabled = document.createElement("input");
   enabled.type = "checkbox";
   enabled.className = "setting-checkbox";
@@ -3174,27 +3315,33 @@ function renderPolicyGraphNodeEditor(node) {
   return editor;
 }
 function availableRulesForPolicyRail(rail) {
-  const draft = getPolicyGraphDraft();
   const supportedTemplates = supportedTemplatesByRail[rail] || new Set();
-  const boundRuleIds = new Set((draft?.bindings || []).map((binding) => binding.rule_id));
   return ruleLibrary.rules.filter((rule) => (
     !pendingRuleDeletionIds.has(rule.rule_id)
-    && supportedTemplates.has(rule.template_key) && !boundRuleIds.has(rule.rule_id)
+    && supportedTemplates.has(rule.template_key)
   ));
 }
 function renderPolicyRulePicker(rail) {
   const definition = policyStepDefinition(rail);
   const rules = availableRulesForPolicyRail(rail);
   policyRulePickerTitle.textContent = `添加已有规则 · ${definition?.title || rail}`;
-  policyRulePickerDescription.textContent = "仅显示与当前 Step 兼容、且尚未加入此策略的规则。可一次添加多条；新节点会先留在策略草稿中。";
+  policyRulePickerDescription.textContent = "选择一个与当前 Step 兼容的规则；每次选择都会根据规则原名生成未占用的 Binding ID。";
   policyRulePickerStatus.textContent = rules.length ? "" : "没有可添加的规则。可先到规则库创建兼容的规则。";
+  newPolicyRuleBindingId.value = "";
   policyRulePickerList.replaceChildren();
   for (const rule of rules) {
     const item = document.createElement("label");
     item.className = "policy-rule-picker-item";
     const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
+    checkbox.type = "radio";
+    checkbox.name = "policy-rule-picker-selection";
     checkbox.value = rule.rule_id;
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        newPolicyRuleBindingId.value = allocatePolicyBindingId(rule.rule_id);
+        policyRulePickerStatus.textContent = "";
+      }
+    });
     const body = document.createElement("span");
     const heading = document.createElement("strong");
     heading.textContent = rule.rule_id;
@@ -3224,42 +3371,46 @@ function addSelectedPolicyRules() {
   const rail = pendingPolicyBindingRail;
   const draft = getPolicyGraphDraft();
   if (!rail || !draft) return;
-  const selectedRuleIds = [...policyRulePickerList.querySelectorAll("input:checked")]
-    .map((input) => input.value);
-  if (!selectedRuleIds.length) {
-    policyRulePickerStatus.textContent = "请至少选择一条规则。";
+  const selected = policyRulePickerList.querySelector("input:checked");
+  const ruleId = String(selected?.value || "");
+  const bindingId = newPolicyRuleBindingId.value.trim();
+  if (!ruleId) {
+    policyRulePickerStatus.textContent = "请选择一条规则。";
     return;
   }
   const availableRuleIds = new Set(availableRulesForPolicyRail(rail).map((rule) => rule.rule_id));
-  const validRuleIds = selectedRuleIds.filter((ruleId) => availableRuleIds.has(ruleId));
-  if (!validRuleIds.length) {
+  if (!availableRuleIds.has(ruleId)) {
     policyRulePickerStatus.textContent = "可添加规则已变化，请重新选择。";
     renderPolicyRulePicker(rail);
     return;
   }
-  const nodeOrder = completePolicyGraphNodeOrder(draft);
-  for (const ruleId of validRuleIds) {
-    draft.bindings.push({ rule_id: ruleId, rail, enabled: true });
-    nodeOrder.push(ruleId);
-    markPolicyGraphNodeDirty(ruleId);
+  if (!/^[a-z][a-z0-9_]{0,63}$/.test(bindingId)) {
+    policyRulePickerStatus.textContent = "Binding ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
+    newPolicyRuleBindingId.focus();
+    return;
   }
+  if (policyGraphDraftNodeIds(draft).has(bindingId)) {
+    policyRulePickerStatus.textContent = "Binding ID 已被当前策略中的节点使用。";
+    newPolicyRuleBindingId.focus();
+    return;
+  }
+  const nodeOrder = completePolicyGraphNodeOrder(draft);
+  draft.bindings.push({ binding_id: bindingId, rule_id: ruleId, rail, enabled: true });
+  nodeOrder.push(bindingId);
+  markPolicyGraphNodeDirty(bindingId);
   draft.node_order = nodeOrder;
   policyRulePickerDialog.close();
   pendingPolicyBindingRail = null;
+  policyGraphState.selectedNodeId = bindingId;
+  policyGraphState.selectedRail = null;
   renderPolicyGraph(draft);
   renderPolicyGraphEditor();
-  setPolicyGraphEditorStatus(`已暂存添加 ${validRuleIds.length} 条规则；点击“保存策略”后写入快照。`);
-}
-function policyGraphDraftNodeIds(draft = getPolicyGraphDraft()) {
-  return new Set([
-    ...(draft?.bindings || []).map((binding) => binding.rule_id),
-    ...(draft?.components || []).map((component) => component.component_id),
-  ].filter(Boolean));
+  setPolicyGraphEditorStatus(`已暂存规则“${ruleId}”的绑定“${bindingId}”；点击“保存策略”后写入快照。`);
 }
 function completePolicyGraphNodeOrder(draft = getPolicyGraphDraft()) {
   const allIds = [
-    ...(draft?.bindings || []).map((binding) => binding.rule_id),
-    ...(draft?.components || []).map((component) => component.component_id),
+    ...(draft?.bindings || []).map(policyRuleBindingId),
+    ...(draft?.components || []).map(policyComponentBindingId),
   ].filter(Boolean);
   const allIdSet = new Set(allIds);
   const order = [];
@@ -3288,6 +3439,8 @@ function renderPolicyComponentOptions(rail) {
     option.append(title, description);
     option.addEventListener("click", () => {
       selectedNewComponentType = type;
+      newPolicyComponentId.value = allocatePolicyBindingId(type);
+      policyComponentCreationStatus.textContent = "";
       renderPolicyComponentOptions(rail);
     });
     policyComponentOptions.append(option);
@@ -3352,18 +3505,18 @@ function createPolicyComponent() {
   const type = selectedNewComponentType;
   const id = newPolicyComponentId.value.trim();
   if (!id) {
-    policyComponentCreationStatus.textContent = "请输入元件 ID。";
+    policyComponentCreationStatus.textContent = "请输入 Binding ID。";
     newPolicyComponentId.focus();
     return;
   }
   if (!/^[a-z][a-z0-9_]{0,63}$/.test(id)) {
-    policyComponentCreationStatus.textContent = "元件 ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
+    policyComponentCreationStatus.textContent = "Binding ID 必须以小写字母开头，并只包含小写字母、数字和下划线。";
     newPolicyComponentId.focus();
     return;
   }
   const draft = getPolicyGraphDraft();
   if (policyGraphDraftNodeIds(draft).has(id)) {
-    policyComponentCreationStatus.textContent = "元件 ID 已被当前策略中的节点使用。";
+    policyComponentCreationStatus.textContent = "Binding ID 已被当前策略中的节点使用。";
     newPolicyComponentId.focus();
     return;
   }
@@ -3378,6 +3531,7 @@ function createPolicyComponent() {
   }
   const nodeOrder = completePolicyGraphNodeOrder(draft);
   draft.components = [...(draft.components || []), {
+    binding_id: id,
     component_id: id,
     component_type: type,
     rail,
