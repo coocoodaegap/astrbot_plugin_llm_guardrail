@@ -4,7 +4,7 @@
 
 `LLM Guardrail` 不是只做关键词拦截的安全插件。它把一次 LLM 请求拆为五个明确阶段，让你按策略组合本地检测、RAG/LLM 复核、提示词加固、Provider 路由和输出处置，同时保留清晰的依赖、日志和会话状态边界。
 
-> 当前为 **v0.6.2 测试版**。欢迎用于真实群聊或私聊环境，但建议先从观察模式和少量策略开始配置。
+> 当前为 **v0.7.0 测试版**。欢迎用于真实群聊或私聊环境，但建议先从观察模式和少量策略开始配置。
 
 ## 能做什么
 
@@ -48,22 +48,6 @@
 `depend_on` 是**控制流依赖**，不负责传递文本。普通 `source` 表示“来源节点命中后才运行”；`!source` 表示来源未命中；`?source` 表示来源已执行即可；`~source` 表示来源执行失败时才运行。Pages 的“选择依赖项”会用可视化方式设置它，通常不必手写。若要读取来源产生的数据，则在 `inspection_template` 中写 `${source.field}`；这是一项非阻塞数据引用，想确保来源先完成时仍应同时设置 `depend_on`。
 
 规则的 `rule_id` 是规则库身份，只能通过“另存为”创建新的 ID；同一规则可以用不同 `binding_id` 多次加入一个策略。重命名 Binding ID 时，策略会同步更新节点顺序、依赖、逻辑门输入、节点列表以及 `${node_id.field}` 引用。添加规则或元件时，Pages 会先采用其原名，并在冲突时自动尝试 `_2`、`_3` 等可用名称。
-
-## v0.6.2：概率编排、文本组合与全流程动作回退
-
-`random_signal`（Pages 名称：“随机信号”）是策略局部的**概率开关**，不是风险检测器。它只按 `probability`（`0.0` 至 `1.0`）为每次策略执行独立生成真假信号，并在 payload 中记录概率、抽样值和结果。它可放在全部五个 Step，适合灰度启用 `strengthen_prompt`、模型路由或 RAG/LLM 旁审分支；不要把它作为唯一的基础安全检查。
-
-使用方法是：先创建一个“随机信号”元件并给它一个 ID，例如 `sample_review`；再在**下游节点**的“依赖（`depend_on`）”中选择它。普通依赖表示只有抽样命中才继续执行。`probability: 0` 永不命中，`probability: 1` 每次命中；中间值适合灰度加固、抽样旁审和观察性实验。它可使用该 Rail 的 `observe` 或 `block` 动作。
-
-`compose_text`（Pages 名称：“文本组合器”）则是策略局部的文本准备元件。它的“生成文本（`template`）”可以拼接当前 Step 可见的 origin、系统常量和已完成节点的 `${node_id.value}`，再由后续检查节点写入 `inspection_template`，或由 Step 4 的 `strengthen_prompt` 注入请求。它不会自动建立 `depend_on`，也不会自行改写请求或输出。
-
-`strengthen_prompt`（Pages 名称：“增强提示词”）现在是仅能放置在 Step 4 的策略局部元件，不再属于规则库。固定文本需要跨策略复用时使用公用常量；`insertion_text` 还可直接引用渲染时已经完成的任意 `${node_id.field}`。引用不自动建立依赖，来源缺失时渲染为空；策略作者对选择的 payload 和注入位置负责。
-
-`rag_judge` 的 `evidence_count` 与 `evidence` 保留实际检索结果，便于观察召回质量；`matched_evidence_count` 只统计达到 `min_score` 的记录，`matched_text` 也只拼接其中前 3 条。规则可用 `value_item_template`（`${value}`／`${source}`）和 `value_separator` 控制这段文本的格式，供后续检查或 Step 4 显式引用。若检索后端完全不提供 score，则维持兼容行为，将返回 evidence 视为匹配证据。
-
-Step 2 和 Step 4 现在提供“默认命中动作”“默认错误动作”和“阻断提示”。通用信号元件保留 `action_on_hit: default` 时，会回退到本 Step 的默认命中动作；执行错误保留 `action_on_error: default` 时，同样回退到本 Step 的默认错误动作。默认值为 `observe` / `discard`，因此不会改变已有路由或提示词强化策略。
-
-Step 5 的默认命中动作也支持 `observe`、`block` 与 `retry_generation`。这使新输出策略可以先统一观察所有保持 `default` 的节点，再逐步改为阻断或有界重试。`retry_generation` 只在 Step 5 可选；策略图的 Step 1 至 Step 4 已隐藏该无效选项。关键词与正则规则始终在 payload 中提供 `sanitized`：它按规则的“净化替换文本”替换全部命中区间（留空则移除），只有策略显式引用 `${规则名.sanitized}` 作为输出重定向时才会影响后续内容。
 
 ## 安装
 

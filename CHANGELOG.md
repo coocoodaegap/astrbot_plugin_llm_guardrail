@@ -2,13 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.7.0] - 2026-09-09
+
+### Added
+
+- 为策略内所有规则与元件节点新增可修改的 `binding_id`；同一规则可以不同 Binding ID 多次加入同一策略，旧元件的 `component_id` 字段继续作为兼容镜像保留。
+- 新增策略节点重命名能力：修改 Binding ID 时同步更新节点顺序、依赖、逻辑门输入、节点列表以及 `${node_id.field}` 引用；规则库身份 `rule_id` 仍只能通过“另存为”改变。
+- 添加规则或元件时，Binding ID 会自动采用来源原名；若名称已被占用，则依次尝试 `_2`、`_3` 等可用名称。
+- `rag_judge` 新增 `matched_evidence_count`，用于统计全部达到 `min_score` 的检索记录。
+- `rag_judge` 新增 `value_item_template` 与 `value_separator`，可使用 `${value}` 和 `${source}` 控制 `matched_text` 的逐项格式与拼接方式。
 
 ### Changed
 
 - 将 `strengthen_prompt` 从可复用规则迁移为 Step 4 策略局部元件；公用常量继续承担固定文本复用。
 - `strengthen_prompt.insertion_text` 现在可读取渲染时已经提交的任意节点 payload 字段，支持 RAG 证据和 `compose_text` 产出的动态提示词。
 - 旧快照或旧策略包中的 `strengthen_prompt` 规则绑定会以内联元件方式兼容迁移。
+- `rag_judge.matched_text` 现在只包含达到 `min_score` 的前 3 条记录；`evidence_count` 与受限的 `evidence` 仍保留实际召回结果，以便观察低分记录和排查知识库质量。
+- 当一次 RAG 查询同时返回有分数与无分数记录时，无分数记录不再参与匹配；只有后端完全不提供分数时，才维持“返回 evidence 即可匹配”的兼容行为。
 
 ## [0.6.2] - 2026-09-04
 
