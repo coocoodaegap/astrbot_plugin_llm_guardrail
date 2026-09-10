@@ -48,7 +48,7 @@ VALID_PHASES = frozenset(
 )
 VALID_OUTCOMES = frozenset(("allowed", "blocked", "skipped"))
 VALID_REQUEST_TARGET_SOURCES = frozenset(
-    ("provider_request", "event_selected_provider", "unavailable")
+    ("provider_request", "event_selected_provider", "agent_runner", "unavailable")
 )
 
 

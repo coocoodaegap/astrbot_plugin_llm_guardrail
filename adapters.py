@@ -15,6 +15,7 @@ from typing import Any
 
 ROUTE_TARGET_PROVIDER_EXTRA = "_llm_guardrail_target_provider"
 ROUTE_SELECTED_PROVIDER_EXTRA = "selected_provider"
+AGENT_PROVIDER_ID_EXTRA = "_llm_guardrail_agent_provider_id"
 VIDEO_FILE_EXTENSIONS = frozenset(
     {"3gp", "avi", "flv", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "webm", "wmv"}
 )
@@ -856,8 +857,11 @@ class AstrBotAdapter:
         ):
             unsupported_reason = "request has tools"
 
-        provider_id = self._request_provider_id(request)
-        provider_source = "provider_request" if provider_id else ""
+        provider_id = str(self.get_event_extra(event, AGENT_PROVIDER_ID_EXTRA, "") or "")
+        provider_source = "agent_runner" if provider_id else ""
+        if not provider_id:
+            provider_id = self._request_provider_id(request)
+            provider_source = "provider_request" if provider_id else ""
         if not provider_id:
             provider_id = self.get_selected_request_provider_id(event)
             provider_source = "event_selected_provider" if provider_id else ""
@@ -1095,6 +1099,9 @@ class AstrBotAdapter:
     async def get_current_request_provider_id(self, event: Any) -> str:
         """Return the Provider selected for the event's main request, if known."""
 
+        agent_provider = self.get_event_extra(event, AGENT_PROVIDER_ID_EXTRA, "")
+        if agent_provider:
+            return str(agent_provider)
         selected = self.get_selected_request_provider_id(event)
         if selected:
             return selected

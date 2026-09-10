@@ -693,7 +693,10 @@ class ConfigNormalizerTests(unittest.TestCase):
 
         self.assertEqual(
             cfg.debug_settings,
-            {"enable_stats": False, "stats_max_records": 8, "logging": True},
+            {
+                "enable_stats": False, "stats_max_records": 8, "logging": True,
+                "enable_agent_request_entry": False,
+            },
         )
         self.assertEqual(cfg.warnings, [])
 

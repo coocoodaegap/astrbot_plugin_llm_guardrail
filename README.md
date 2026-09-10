@@ -116,6 +116,8 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 
 ## 路线图
 
+主动 Agent 请求入口正在实验：在 AstrBot 插件配置或 Pages 系统设置的“调试设置”中开启“实验：主动 Agent 请求入口”，然后重载插件。使用 AstrBot 默认主 Agent hooks、但绕过普通请求 Hook 的调用可进入 Step 3／4，继续沿用原 Provider 和 Step 5；不补跑 Step 1／2。普通请求不会重复加固。关闭后新请求立即跳过，重载或卸载恢复入口。该功能适配 AstrBot 4.26.x 内部 Runner 接口，默认关闭，待实机验收；不覆盖直接 Provider 调用、自定义 Agent hooks、直接发送消息及其他插件自己的后备生成链。直接运行 Agent 的发起方也不一定发送 Guardrail 的阻断占位提示。
+
 以下是 P4 中已批准待设计的轨道；P4 是自 v0.4.0 起的扩展阶段，并不等同于单一发布版本：
 
 1. **自定义检测器**：定义安全、可验证的扩展契约，让项目可以在不修改核心调度链路的前提下接入领域检测能力。

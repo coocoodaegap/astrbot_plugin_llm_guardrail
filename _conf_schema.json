@@ -202,6 +202,12 @@
     "type": "object",
     "description": "调试设置",
     "items": {
+      "enable_agent_request_entry": {
+        "type": "bool",
+        "description": "实验：主动 Agent 请求入口",
+        "hint": "将绕过普通请求 Hook 的主 Agent 请求接入 Step 3/4，沿用原 Provider，不运行 Step 1/2。开启后需重载插件；关闭后新请求立即跳过。适配 AstrBot 4.26.x 内部 Runner 接口，待实机验收。",
+        "default": false
+      },
       "enable_stats": {
         "type": "bool",
         "description": "启用统计",

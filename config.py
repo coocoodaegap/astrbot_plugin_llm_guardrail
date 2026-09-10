@@ -1395,6 +1395,9 @@ def _normalize_debug_settings(
         "enable_stats": _as_bool(raw_settings.get("enable_stats"), True),
         "stats_max_records": stats_max_records,
         "logging": _as_bool(raw_settings.get("logging"), False),
+        "enable_agent_request_entry": _as_bool(
+            raw_settings.get("enable_agent_request_entry"), False
+        ),
     }
 
 

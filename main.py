@@ -1,5 +1,6 @@
 """AstrBot LLM Guardrail plugin."""
 
+import copy
 import json
 import time
 import uuid
@@ -24,7 +25,8 @@ try:
         AccessControlService,
         make_principal_identity,
     )
-    from .adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA
+    from .adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA, AGENT_PROVIDER_ID_EXTRA
+    from .agent_entry import AgentRequestEntry
     from .config import resolve_session_scope
     from .constants import (
         GUARDRAIL_ACCESS_GATE_PRIORITY,
@@ -48,7 +50,8 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         AccessControlService,
         make_principal_identity,
     )
-    from adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA
+    from adapters import AstrBotAdapter, ROUTE_SELECTED_PROVIDER_EXTRA, AGENT_PROVIDER_ID_EXTRA
+    from agent_entry import AgentRequestEntry
     from config import resolve_session_scope
     from constants import (
         GUARDRAIL_ACCESS_GATE_PRIORITY,
@@ -72,6 +75,8 @@ POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
 ACCESS_GATE_BLOCKED_EXTRA = "_llm_guardrail_access_gate_blocked"
+REQUEST_HANDLED_EXTRA = "_llm_guardrail_request_handled"
+REQUEST_ENTRY_EXTRA = "_llm_guardrail_request_entry"
 ACCESS_COMMAND_DEFAULT_LIMIT = 20
 ACCESS_COMMAND_MAX_LIMIT = 100
 POLICY_COMMAND_DEFAULT_LIMIT = 20
@@ -115,6 +120,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         super().__init__(context)
         self.context = context
         self.config = config
+        self.agent_request_entry: AgentRequestEntry | None = None
         self.adapter = AstrBotAdapter(context)
         self.snapshot_manager = ConfigSnapshotManager(
             config,
@@ -143,6 +149,20 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             access_control=self.access_control,
             rag_experience=self.rag_experience,
         )
+        if self.normalized_config.debug_settings.get("enable_agent_request_entry", False):
+            try:
+                from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+                from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
+
+                if self.agent_request_entry is None:
+                    entry = AgentRequestEntry(
+                        self.context, MAIN_AGENT_HOOKS, self._prepare_agent_request
+                    )
+                    entry.install(ToolLoopAgentRunner)
+                    self.agent_request_entry = entry
+                logger.info("[LLMGuardrail] experimental Step 3 Agent entry installed")
+            except Exception as exc:
+                logger.error("[LLMGuardrail] Agent entry unavailable: %s", exc, exc_info=True)
         logger.info(
             "[LLMGuardrail] loaded P3 v%s | warnings=%s",
             PLUGIN_VERSION,
@@ -230,7 +250,12 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
+                self.adapter.set_event_extra(event, AGENT_PROVIDER_ID_EXTRA, "")
+                self.adapter.set_event_extra(event, REQUEST_ENTRY_EXTRA, "llm_request")
                 rail_context = await self._pipeline_for_event(event).run_request(event, req)
+                self.adapter.set_event_extra(
+                    event, REQUEST_HANDLED_EXTRA, (req, rail_context.input_blocked)
+                )
                 await self._record_session_policy_state(
                     "request",
                     event,
@@ -241,6 +266,59 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             logger.error("[LLMGuardrail] request pipeline failed: %s", exc, exc_info=True)
             return
         self._log_context_summary("request", rail_context)
+
+    async def _prepare_agent_request(self, event: Any, req: Any, provider: Any) -> bool:
+        """Run Step 3/4 before Runner.reset assembles this unhandled request."""
+        if not self.snapshot_manager.current.runtime_config.debug_settings.get(
+            "enable_agent_request_entry", False
+        ) or self._is_internal_request(req):
+            return False
+        if not self.adapter.get_umo(event):
+            return False
+        try:
+            async with self.umo_locks.hold(self.adapter.get_umo(event)):
+                handled = self.adapter.get_event_extra(event, REQUEST_HANDLED_EXTRA, None)
+                if isinstance(handled, tuple) and len(handled) == 2 and handled[0] is req:
+                    return bool(handled[1])
+                # Copy only fields Step 3/4 can mutate. Preserve the identities
+                # of tools, conversation, media and other host-owned resources.
+                candidate = copy.copy(req)
+                fields = ("prompt", "system_prompt", "extra_user_content_parts")
+                originals = {name: getattr(req, name) for name in fields}
+                for name, value in originals.items():
+                    setattr(candidate, name, copy.deepcopy(value))
+                provider_config = getattr(provider, "provider_config", {})
+                provider_id = str(provider_config.get("id", "") or "")
+                self.adapter.set_event_extra(event, AGENT_PROVIDER_ID_EXTRA, provider_id)
+                self.adapter.set_event_extra(event, REQUEST_ENTRY_EXTRA, "agent_reset")
+                pipeline = self._pipeline_for_event(event)
+                # A synthetic sender is not a reliable principal identity.
+                # Session scope and normal policy actions still apply.
+                pipeline.access_control = None
+                rail_context = await pipeline.run_request(event, candidate)
+                if not rail_context.input_blocked:
+                    try:
+                        for name in fields:
+                            setattr(req, name, getattr(candidate, name))
+                    except Exception:
+                        for name, value in originals.items():
+                            setattr(req, name, value)
+                        raise
+                self.adapter.set_event_extra(
+                    event, REQUEST_HANDLED_EXTRA, (req, rail_context.input_blocked)
+                )
+                # Monitoring must not turn a committed block into fail-open.
+                try:
+                    await self._record_session_policy_state(
+                        "request", event, rail_context, request=req
+                    )
+                    self._log_context_summary("request", rail_context)
+                except Exception as exc:
+                    logger.error("[LLMGuardrail] Agent entry reporting failed: %s", exc)
+                return rail_context.input_blocked
+        except Exception as exc:
+            logger.error("[LLMGuardrail] Agent entry failed: %s", exc, exc_info=True)
+            return False
 
     @filter.on_llm_response(priority=GUARDRAIL_RESPONSE_PRIORITY)
     async def on_llm_response(
@@ -732,6 +810,8 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
 
     async def terminate(self) -> None:
         """Clean up plugin resources."""
+        if self.agent_request_entry is not None:
+            self.agent_request_entry.uninstall()
         logger.info("[LLMGuardrail] stopped")
 
     def _pipeline_for_event(self, event: AstrMessageEvent) -> GuardrailPipeline:
@@ -1022,6 +1102,13 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         model_id = self._request_string_field(request, "model")
         if not model_id:
             model_id = self._request_string_field(request, "model_id")
+        agent_provider = self.adapter.get_event_extra(event, AGENT_PROVIDER_ID_EXTRA, "")
+        if agent_provider:
+            return {
+                "provider_id": str(agent_provider),
+                "model_id": model_id,
+                "source": "agent_runner",
+            }
         if provider_id or model_id:
             return {
                 "provider_id": provider_id,
@@ -1142,7 +1229,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             for item in rail_context.prompt_mutations
         ]
         logger.info(
-            "[LLMGuardrail] %s | umo=%s | policy=%s | session=%s | executed=%s | matched=%s | errors=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s",
+            "[LLMGuardrail] %s | umo=%s | policy=%s | session=%s | executed=%s | matched=%s | errors=%s | input_blocked=%s | output_blocked=%s | route=%s | mutations=%s | warnings=%s | last_warning=%s | entry=%s",
             phase,
             rail_context.umo,
             policy_id,
@@ -1158,4 +1245,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             self._clip_text(rail_context.warnings[-1], 180)
             if rail_context.warnings
             else "-",
+            self.adapter.get_event_extra(rail_context.event, REQUEST_ENTRY_EXTRA, "-")
+            if phase == "request" else "-",
         )

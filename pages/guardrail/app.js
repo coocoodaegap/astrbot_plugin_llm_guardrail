@@ -4521,7 +4521,9 @@ function requestTargetSourceLabel(source) {
     ? "ProviderRequest 字段"
     : source === "event_selected_provider"
       ? "Step 3 显式请求选择"
-      : "当前请求未提供可观察目标";
+      : source === "agent_runner"
+        ? "主动 Agent 实际 Provider"
+        : "当前请求未提供可观察目标";
 }
 function sessionPolicyOutcomeLabel(outcome) {
   return outcome === "blocked" ? "已阻断" : outcome === "allowed" ? "已放行" : "已跳过";
