@@ -20,7 +20,7 @@
 
 下面是一套完整策略的依赖图示例：
 
-![LLM Guardrail 策略依赖图示例](https://assets.coocoodaegap.com/astrbot_plugin_llm_guardrail_preset1.png)
+![LLM Guardrail 策略依赖图示例](https://assets.coocoodaegap.com/astrbot_plugin_llm_guardrail_preview.png)
 
 | 能力 | 说明 |
 | --- | --- |
