@@ -8,6 +8,8 @@
 
 - `rag_judge` 新增 `experience_candidate_threshold`。留空时仅记录规则命中；有效值为 `[0, 1]`，最高分达到阈值即可作为经验候选入库，而不改变 RAG 命中、动作或检索流程；无效值会禁用经验候选并写入配置警告。
 - Pages 的 RAG 规则参数新增“经验候选阈值”输入，并在经验详情和列表中区分“规则命中”与“高分候选”。
+- 新增默认关闭的实验性“主动 Agent 请求入口”。开启 `debug_settings.enable_agent_request_entry` 后，同一 AstrBot Context、使用标准主 Agent hooks 且未经过 `on_llm_request` 的请求会在 `ToolLoopAgentRunner.reset` 组装前接入 Step 3／4，随后继续原 Agent 与既有 Step 5；不补跑 Step 1／2，也不改变发起方选择的 Provider。
+- 主动 Agent 请求在 Step 3 阻断时不会调用 Provider；未阻断时只提交策略允许修改的 prompt 字段，并以 `entry=agent_reset` 记录入口，便于与普通 `on_llm_request` 链路区分。
 
 ### Changed
 
