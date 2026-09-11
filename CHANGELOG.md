@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的结构，并使用 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- `rag_judge` 新增 `experience_candidate_threshold`。留空时仅记录规则命中；有效值为 `[0, 1]`，最高分达到阈值即可作为经验候选入库，而不改变 RAG 命中、动作或检索流程；无效值会禁用经验候选并写入配置警告。
+- Pages 的 RAG 规则参数新增“经验候选阈值”输入，并在经验详情和列表中区分“规则命中”与“高分候选”。
+
+### Changed
+
+- RAG 经验记录的列表排序和容量淘汰改为最高分优先、同分时最近编辑优先；来源身份缺失的最高分证据仍保留其分数和预览供诊断，但不会开放写入知识库。
+
 ## [0.7.1] - 2026-09-09
 
 ### Fixed

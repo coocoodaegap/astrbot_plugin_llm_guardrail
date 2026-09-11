@@ -11,7 +11,11 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
-from rag_experience import RagExperienceService, select_best_evidence_source
+from rag_experience import (
+    RagExperienceService,
+    _prune_capacity,
+    select_best_evidence_source,
+)
 from state import MemoryStateStore
 
 
@@ -59,6 +63,8 @@ class RagExperienceServiceTests(unittest.TestCase):
         self.assertEqual(result.record["source_doc_id"], "doc-2")
         self.assertEqual(result.record["source_score"], 0.91)
         self.assertEqual(result.record["title"], "winner.md")
+        self.assertTrue(result.record["matched"])
+        self.assertEqual(result.record["candidate_reason"], "matched")
 
     def test_capture_without_stable_source_remains_viewable(self) -> None:
         result = asyncio.run(
@@ -124,6 +130,45 @@ class RagExperienceServiceTests(unittest.TestCase):
         self.assertNotIn("content", listed.items[0])
         self.assertIn("content_preview", listed.items[0])
 
+    def test_high_score_candidates_are_listed_and_retained_first(self) -> None:
+        self._capture()
+        self.now += 1
+        asyncio.run(
+            self.service.capture_match(
+                rail="input_rail",
+                rule_id="rag_policy",
+                content="A lower-score but newer request",
+                evidence=[
+                    {
+                        "text": "lower source",
+                        "score": 0.35,
+                        "metadata": {"kb_name": "lower"},
+                    }
+                ],
+                matched=False,
+                candidate_reason="score_threshold",
+            )
+        )
+
+        listed = asyncio.run(self.service.list_records())
+
+        self.assertEqual(
+            [item["record_id"] for item in listed.items], ["record-a", "record-b"]
+        )
+        self.assertTrue(listed.items[0]["matched"])
+        self.assertFalse(listed.items[1]["matched"])
+        self.assertEqual(listed.items[1]["candidate_reason"], "score_threshold")
+
+        table = {
+            "records": {
+                "low": {"source_score": 0.1, "updated_at": 99},
+                "high": {"source_score": 0.9, "updated_at": 1},
+                "mid": {"source_score": 0.5, "updated_at": 2},
+            }
+        }
+        _prune_capacity(table, 2)
+        self.assertEqual(set(table["records"]), {"high", "mid"})
+
 
 class SourceSelectionTests(unittest.TestCase):
     def test_equal_scores_keep_first_retrieval_result(self) -> None:
@@ -176,6 +221,8 @@ class SourceSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(source["source_kb_name"], "")
+        self.assertEqual(source["source_score"], 0.9)
+        self.assertEqual(source["source_evidence_preview"], "top")
 
 
 if __name__ == "__main__":

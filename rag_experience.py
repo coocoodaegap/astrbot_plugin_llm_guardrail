@@ -91,7 +91,7 @@ class RagExperienceDetailResult:
 
 
 class RagExperienceService:
-    """Persist RAG matches and expose a minimal editable record lifecycle."""
+    """Persist RAG experience candidates and expose their local lifecycle."""
 
     def __init__(
         self,
@@ -111,8 +111,10 @@ class RagExperienceService:
         rule_id: Any,
         content: Any,
         evidence: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None,
+        matched: Any = True,
+        candidate_reason: Any = "matched",
     ) -> RagExperienceMutationResult:
-        """Store one matched ``rag_judge`` result without raising into the rail.
+        """Store one eligible ``rag_judge`` result without raising into the rail.
 
         The selected source is the evidence record with the highest finite
         numeric score.  If an adapter cannot provide both a score and a source
@@ -123,6 +125,7 @@ class RagExperienceService:
             normalized_rail = _clean_identifier(rail, "rail")
             normalized_rule_id = _clean_identifier(rule_id, "rule_id")
             normalized_content = _clean_content(content)
+            candidate = _normalize_candidate_metadata(matched, candidate_reason)
             source = select_best_evidence_source(evidence)
             record_id = _clean_record_id(self._record_id_factory())
         except (TypeError, ValueError) as exc:
@@ -142,6 +145,7 @@ class RagExperienceService:
             "rule_id": normalized_rule_id,
             "title": _default_title(normalized_rule_id, source),
             "content": normalized_content,
+            **candidate,
             **source,
         }
         try:
@@ -173,7 +177,7 @@ class RagExperienceService:
         page: Any = 1,
         page_size: Any = 30,
     ) -> RagExperienceListResult:
-        """Return newest records first, without loading full editor content."""
+        """Return highest-scoring records first, without editor content."""
         try:
             normalized_page = _positive_int(page, 1)
             normalized_page_size = min(_positive_int(page_size, 30), MAX_PAGE_SIZE)
@@ -211,7 +215,11 @@ class RagExperienceService:
                 ).casefold()
             ]
         summaries.sort(
-            key=lambda item: (-_non_negative_int(item.get("updated_at"), 0), item["record_id"])
+            key=lambda item: (
+                -_experience_score_priority(item),
+                -_non_negative_int(item.get("updated_at"), 0),
+                item["record_id"],
+            )
         )
         total = len(summaries)
         offset = (normalized_page - 1) * normalized_page_size
@@ -377,10 +385,11 @@ def select_best_evidence_source(
 ) -> dict[str, Any]:
     """Project the highest-scoring evidence into stable source fields.
 
-    A source is deliberately absent when no finite score or no knowledge-base
-    identity (ID or name) is available.  That avoids silently choosing a
-    configured but non-winning knowledge base on compatibility/fallback
-    retrieval paths.
+    A source identity is deliberately absent when no finite score or no
+    knowledge-base identity (ID or name) is available.  When a highest-scored
+    result has no identity, its score and evidence preview remain available for
+    candidate ranking and diagnostics, without silently choosing a configured
+    but non-winning knowledge base on a compatibility/fallback retrieval path.
     """
     best: tuple[float, int, Mapping[str, Any]] | None = None
     for index, item in enumerate(evidence or ()):
@@ -401,7 +410,14 @@ def select_best_evidence_source(
     kb_id = _safe_text(metadata.get("kb_id"), MAX_IDENTIFIER_LENGTH)
     kb_name = _safe_text(metadata.get("kb_name"), MAX_IDENTIFIER_LENGTH)
     if not kb_id and not kb_name:
-        return _empty_source()
+        # Keep the score and evidence preview for candidate ranking and Pages
+        # diagnostics, while deliberately leaving the upload target empty.
+        source = _empty_source()
+        source["source_score"] = score
+        source["source_evidence_preview"] = _safe_text(
+            item.get("text"), MAX_EVIDENCE_PREVIEW_LENGTH
+        )
+        return source
     return {
         "source_kb_id": kb_id,
         "source_kb_name": kb_name,
@@ -463,6 +479,9 @@ def _normalized_record(raw: Any, *, fallback_record_id: Any) -> dict[str, Any] |
     updated_at = _non_negative_int(raw.get("updated_at"), created_at)
     if not created_at:
         created_at = updated_at
+    candidate = _normalize_candidate_metadata(
+        raw.get("matched", True), raw.get("candidate_reason", "matched")
+    )
     return {
         "schema_version": RAG_EXPERIENCE_SCHEMA_VERSION,
         "record_id": record_id,
@@ -473,6 +492,7 @@ def _normalized_record(raw: Any, *, fallback_record_id: Any) -> dict[str, Any] |
         "rule_id": rule_id,
         "title": title,
         "content": content,
+        **candidate,
         **source,
     }
 
@@ -491,6 +511,8 @@ def _summary_record(record: Mapping[str, Any]) -> dict[str, Any]:
         "rail": record["rail"],
         "rule_id": record["rule_id"],
         "title": record["title"],
+        "matched": bool(record.get("matched", True)),
+        "candidate_reason": str(record.get("candidate_reason", "matched") or "matched"),
         "source_kb_name": record["source_kb_name"],
         "source_doc_name": record["source_doc_name"],
         "source_score": record["source_score"],
@@ -506,6 +528,7 @@ def _prune_capacity(table: dict[str, Any], max_entries: int) -> None:
     for record_id, _record in sorted(
         records.items(),
         key=lambda pair: (
+            _experience_score_priority(pair[1]),
             _non_negative_int(pair[1].get("updated_at"), 0),
             pair[0],
         ),
@@ -516,6 +539,20 @@ def _prune_capacity(table: dict[str, Any], max_entries: int) -> None:
 def _default_title(rule_id: str, source: Mapping[str, Any]) -> str:
     source_doc = _safe_text(source.get("source_doc_name"), MAX_TITLE_LENGTH)
     return _clean_title(source_doc or f"RAG experience · {rule_id}")
+
+
+def _normalize_candidate_metadata(matched: Any, candidate_reason: Any) -> dict[str, Any]:
+    """Normalize candidate provenance while keeping legacy records readable."""
+    normalized_matched = bool(matched)
+    reason = _safe_text(candidate_reason, 64)
+    if reason not in {"matched", "score_threshold"}:
+        reason = "matched" if normalized_matched else "score_threshold"
+    return {"matched": normalized_matched, "candidate_reason": reason}
+
+
+def _experience_score_priority(record: Mapping[str, Any]) -> float:
+    score = _finite_float(record.get("source_score"))
+    return score if score is not None else -1.0
 
 
 def _clean_record_id(value: Any) -> str:

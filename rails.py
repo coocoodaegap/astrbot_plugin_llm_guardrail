@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 from typing import Any
 
@@ -132,6 +133,41 @@ RETRY_GENERATION_TIMEOUT_SECONDS = 30.0
 RAIL_MAX_PARALLEL_CHECKS = 4
 GLOBAL_PARALLEL_CHECK_SEMAPHORE = asyncio.Semaphore(8)
 EXTERNAL_CHECK_TEMPLATES = frozenset({"llm_review", "rag_judge"})
+
+
+def _rag_experience_candidate_reason(
+    rule: NormalizedRule, result: NodeResult
+) -> str:
+    """Return why a completed RAG result should enter local experience storage."""
+    raw_threshold = rule.config.get("experience_candidate_threshold")
+    if raw_threshold == "disabled":
+        return ""
+    if raw_threshold is None:
+        return "matched" if result.matched else ""
+    # ``0`` is the explicit opt-in for every successful compatibility match,
+    # including an adapter result that did not expose a numeric score.
+    if raw_threshold == 0 and result.matched:
+        return "matched"
+    max_score = result.metadata.get("max_score")
+    if isinstance(max_score, bool):
+        return ""
+    try:
+        score = float(max_score)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(score):
+        return ""
+    if isinstance(raw_threshold, bool):
+        return ""
+    try:
+        threshold = float(raw_threshold)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        return ""
+    if score < threshold:
+        return ""
+    return "matched" if result.matched else "score_threshold"
 
 
 def _uses_global_check_slot(rule: NormalizedRule) -> bool:
@@ -896,7 +932,14 @@ class GuardrailPipeline:
             content = capture.get("content")
             evidence = capture.get("evidence")
             if isinstance(content, str) and isinstance(evidence, list):
-                await self._capture_rag_experience(rule, content, evidence, context)
+                await self._capture_rag_experience(
+                    rule,
+                    content,
+                    evidence,
+                    context,
+                    matched=bool(capture.get("matched", False)),
+                    candidate_reason=str(capture.get("candidate_reason", "") or ""),
+                )
 
     @staticmethod
     def _input_execution_closes_intake(
@@ -1910,10 +1953,13 @@ class GuardrailPipeline:
             "raw_result_type", ""
         )
         deferred: dict[str, Any] = {}
-        if result.matched:
+        candidate_reason = _rag_experience_candidate_reason(rule, result)
+        if candidate_reason:
             deferred["rag_experience"] = {
                 "content": inspected_text,
                 "evidence": evidence,
+                "matched": result.matched,
+                "candidate_reason": candidate_reason,
             }
         return NodeExecution(
             result=result,
@@ -2075,8 +2121,11 @@ class GuardrailPipeline:
         inspected_text: str,
         evidence: list[dict[str, Any]],
         context: RailContext,
+        *,
+        matched: bool,
+        candidate_reason: str,
     ) -> None:
-        """Store one newly matched RAG result without changing rail behavior."""
+        """Store one selected RAG experience candidate without changing the rail."""
         service = self.rag_experience
         if service is None:
             return
@@ -2086,6 +2135,8 @@ class GuardrailPipeline:
                 rule_id=rule.user_rule_id or rule.rule_id,
                 content=inspected_text,
                 evidence=evidence,
+                matched=matched,
+                candidate_reason=candidate_reason,
             )
         except Exception as exc:  # Defensive boundary for an optional recorder.
             context.warnings.append(

@@ -2903,7 +2903,7 @@ class PipelineTests(unittest.TestCase):
                 child_executed.set()
             return evaluate_text_rule_impl(rule, context, text)
 
-        async def capture_match(rule, inspected_text, evidence, context):
+        async def capture_match(rule, inspected_text, evidence, context, **_kwargs):
             capture_finished.set()
 
         def observe_rag_log(rule, result):
@@ -2998,7 +2998,7 @@ class PipelineTests(unittest.TestCase):
         fake_context.kb_manager.retrieve = slow_retrieve
         pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
 
-        async def capture_match(rule, inspected_text, evidence, context):
+        async def capture_match(rule, inspected_text, evidence, context, **_kwargs):
             event.effects.append("capture")
             capture_finished.set()
 
@@ -3099,7 +3099,7 @@ class PipelineTests(unittest.TestCase):
         fake_context.providers["default-provider"] = provider
         pipeline = GuardrailPipeline(cfg, AstrBotAdapter(fake_context))
 
-        async def capture_match(rule, inspected_text, evidence, context):
+        async def capture_match(rule, inspected_text, evidence, context, **_kwargs):
             effects.append("capture")
 
         async def scenario():

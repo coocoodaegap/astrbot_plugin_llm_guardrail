@@ -510,6 +510,36 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(rule.config["min_score"], 0.0)
         self.assertEqual(rule.config["timeout_seconds"], 0.0)
 
+    def test_rag_experience_candidate_threshold_normalizes_blank_valid_and_invalid(self):
+        def rule_for(value):
+            return normalize_config(
+                {
+                    "input_rail": {
+                        "rule_list": [
+                            {
+                                "__template_key": "rag_judge",
+                                "rule_id": "rag",
+                                "knowledge_bases": ["policy"],
+                                "experience_candidate_threshold": value,
+                            }
+                        ]
+                    }
+                }
+            ).rails["input_rail"].rules[0]
+
+        self.assertIsNone(rule_for(" ").config["experience_candidate_threshold"])
+        self.assertEqual(rule_for(0).config["experience_candidate_threshold"], 0.0)
+        self.assertEqual(rule_for("0.85").config["experience_candidate_threshold"], 0.85)
+        invalid = rule_for(1.1)
+        self.assertEqual(invalid.config["experience_candidate_threshold"], "disabled")
+        self.assertIn("experience candidates disabled", " ".join(invalid.warnings))
+        self.assertEqual(
+            rule_for(False).config["experience_candidate_threshold"], "disabled"
+        )
+        self.assertEqual(
+            rule_for(-0.01).config["experience_candidate_threshold"], "disabled"
+        )
+
     def test_rag_judge_empty_knowledge_bases_disables_rule(self):
         cfg = normalize_config(
             {

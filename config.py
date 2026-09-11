@@ -1186,6 +1186,31 @@ def _normalize_rag_judge(
         warnings.append(f"{rule_id}.knowledge_bases is empty; rule skipped")
     config["top_k"] = max(_as_int(config.get("top_k", 5), 5), 1)
     config["min_score"] = max(_as_float(config.get("min_score", 0.72), 0.72), 0.0)
+    raw_candidate_threshold = config.get("experience_candidate_threshold")
+    if raw_candidate_threshold is None or (
+        isinstance(raw_candidate_threshold, str)
+        and not raw_candidate_threshold.strip()
+    ):
+        config["experience_candidate_threshold"] = None
+    elif isinstance(raw_candidate_threshold, bool):
+        config["experience_candidate_threshold"] = "disabled"
+        warnings.append(
+            f"{rule_id}.experience_candidate_threshold must be blank or within 0.0..1.0; "
+            "experience candidates disabled"
+        )
+    else:
+        try:
+            candidate_threshold = float(raw_candidate_threshold)
+        except (TypeError, ValueError):
+            candidate_threshold = float("nan")
+        if not math.isfinite(candidate_threshold) or not 0.0 <= candidate_threshold <= 1.0:
+            config["experience_candidate_threshold"] = "disabled"
+            warnings.append(
+                f"{rule_id}.experience_candidate_threshold must be blank or within 0.0..1.0; "
+                "experience candidates disabled"
+            )
+        else:
+            config["experience_candidate_threshold"] = candidate_threshold
     value_item_template = _as_str(config.get("value_item_template", "${value}"))
     if not _value_item_template_is_valid(value_item_template):
         warnings.append(

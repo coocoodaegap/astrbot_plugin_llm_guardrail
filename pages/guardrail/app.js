@@ -567,6 +567,7 @@ const templateParameterFields = {
     { key: "knowledge_bases", label: "知识库列表", hint: "每行一个 AstrBot 知识库名称；至少填写一个。", type: "list", default: [], fullWidth: true },
     { key: "top_k", label: "检索数量", hint: "每个知识库最多取回的候选数量。", type: "integer", default: 5 },
     { key: "min_score", label: "最低分数", hint: "存在证据且分数达到此值时判为命中。", type: "number", default: 0.72 },
+    { key: "experience_candidate_threshold", label: "经验候选阈值", hint: "留空时仅在规则命中后建档；填写 0–1 时，最高分达到此值即可建档，不改变规则命中与动作。无效配置会禁用经验候选。", type: "number", default: null, min: 0, max: 1, step: "0.01" },
     { key: "value_item_template", label: "匹配条目格式", hint: "逐条格式化达到门槛的证据；仅支持 ${value}（证据文本）与 ${source}（知识库或文档来源）。", type: "text", default: "${value}", fullWidth: true },
     { key: "value_separator", label: "匹配条目分隔符", hint: "拼接 matched_text 时置于匹配证据之间；默认单个空格，可输入换行。", type: "text", default: " ", fullWidth: true },
     { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
@@ -3957,7 +3958,9 @@ function createTemplateParameterControl(field, value) {
   }
   const input = document.createElement("input");
   input.type = field.type === "string" ? "text" : "number";
-  input.step = field.type === "integer" ? "1" : "any";
+  input.step = field.step || (field.type === "integer" ? "1" : "any");
+  if (field.min !== undefined) input.min = String(field.min);
+  if (field.max !== undefined) input.max = String(field.max);
   input.value = String(value ?? field.default ?? "");
   return input;
 }
@@ -5007,7 +5010,7 @@ function renderRagExperienceList() {
   if (!ragExperienceItems.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "尚无符合条件的 RAG 命中经验记录。";
+    empty.textContent = "尚无符合条件的 RAG 经验候选记录。";
     ragExperienceList.append(empty);
     return;
   }
@@ -5023,10 +5026,14 @@ function renderRagExperienceList() {
     const sourceKb = String(item.source_kb_name || "").trim();
     const sourceDoc = String(item.source_doc_name || "").trim();
     title.textContent = item.title || "未命名经验";
-    summary.textContent = [item.rail, item.rule_id].filter(Boolean).join(" · ") || "RAG 命中";
+    summary.textContent = [
+      item.matched ? "规则命中" : "高分候选",
+      item.rail,
+      item.rule_id,
+    ].filter(Boolean).join(" · ");
     source.textContent = sourceKb
       ? `最高分来源：${sourceKb}${sourceDoc ? ` · ${sourceDoc}` : ""} · 分数 ${formatRagExperienceScore(item.source_score)}`
-      : "最高分来源未提供可确认的知识库，不能写入。";
+      : `最高分来源未提供可确认的知识库，不能写入 · 分数 ${formatRagExperienceScore(item.source_score)}`;
     preview.textContent = item.content_preview || "（内容为空）";
     metadata.textContent = `最近编辑 ${formatStateTime(item.updated_at)} · 版本 ${item.record_revision ?? "-"}`;
     button.append(title, summary, source, preview, metadata);
@@ -5040,7 +5047,7 @@ function renderRagExperienceDetail(record) {
   selectedRagExperience = record || null;
   ragExperienceDetailHeading.textContent = record?.title || "经验详情";
   ragExperienceDetailMeta.textContent = record
-    ? `规则 ${record.rule_id || "-"} · ${record.rail || "-"} · 记录版本 ${record.record_revision ?? 0} · 最近编辑 ${formatStateTime(record.updated_at)}`
+    ? `${record.matched ? "规则命中" : "高分候选"} · 规则 ${record.rule_id || "-"} · ${record.rail || "-"} · 记录版本 ${record.record_revision ?? 0} · 最近编辑 ${formatStateTime(record.updated_at)}`
     : "未找到该经验记录。";
   ragExperienceTitle.value = record?.title || "";
   ragExperienceContent.value = record?.content || "";
