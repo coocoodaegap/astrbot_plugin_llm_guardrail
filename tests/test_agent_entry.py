@@ -11,9 +11,19 @@ from enum import Enum
 from unittest.mock import patch
 
 from agent_entry import AgentRequestEntry
-from constants import INTERNAL_MARKER
-from policy_library import PolicyComponent, PolicyDefinition, PolicyLibrary, PolicyRuleBinding, RuleDefinition
-from rails import RESULTS_EXTRA_KEY, RETRY_REQUEST_SNAPSHOT_EXTRA_KEY
+from internal_runtime import internal_guardrail_call, is_internal_guardrail_call
+from policy_library import (
+    PolicyComponent,
+    PolicyDefinition,
+    PolicyLibrary,
+    PolicyRuleBinding,
+    RuleDefinition,
+)
+from rails import (
+    OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
+    RESULTS_EXTRA_KEY,
+    RETRY_REQUEST_SNAPSHOT_EXTRA_KEY,
+)
 from test_main_handlers import _install_astrbot_stubs
 from test_pipeline import FakeContext, FakeEvent, FakeRequest, FakeResponse
 
@@ -184,13 +194,76 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
             _, _, provider, _, _ = await self.run_request()
         self.assertEqual(provider.calls, [])
 
-    async def test_internal_other_context_and_custom_hooks_are_untouched(self):
+    async def test_other_context_and_custom_hooks_are_untouched(self):
         await self.policy()
-        for kwargs in ({"context": object()}, {"hooks": object()}, {"req": FakeRequest(INTERNAL_MARKER)}):
+        for kwargs in ({"context": object()}, {"hooks": object()}):
             event, req, provider, _, _ = await self.run_request(**kwargs)
             self.assertNotIn("ADDED", req.system_prompt)
             self.assertIsNone(event.get_extra(RESULTS_EXTRA_KEY))
             self.assertEqual(len(provider.calls), 1)
+
+    async def test_legacy_internal_marker_is_checked_as_ordinary_input(self):
+        await self.policy()
+        legacy_marker = "__astrbot_plugin_llm_guardrail_internal__"
+
+        event, req, provider, _, _ = await self.run_request(
+            FakeRequest(legacy_marker)
+        )
+
+        self.assertIn(f"ADDED {legacy_marker}", req.system_prompt)
+        self.assertIn("check", event.get_extra(RESULTS_EXTRA_KEY))
+        self.assertEqual(len(provider.calls), 1)
+
+    async def test_runtime_identity_skips_step1_step3_step5_and_agent_done(self):
+        await self.policy()
+        event = FakeEvent("deny")
+        req = FakeRequest("deny", "base")
+        history = types.SimpleNamespace(
+            messages=[{"role": "assistant", "content": "original"}],
+        )
+        event.set_extra(
+            OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY,
+            {"action": "commit", "text": "replacement"},
+        )
+
+        with internal_guardrail_call():
+            await self.plugin.guardrail_access_gate(event)
+            await self.plugin.guardrail_waiting_rails(event)
+            await self.plugin.on_llm_request(event, req)
+            _, req, provider, _, responses = await self.run_request(req, event)
+            await self.plugin.on_llm_response(event, responses[0])
+            await self.plugin.on_agent_done(event, history, responses[0])
+
+        self.assertEqual(req.system_prompt, "base")
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIsNone(event.get_extra(RESULTS_EXTRA_KEY))
+        self.assertEqual(history.messages[-1]["content"], "original")
+        self.assertFalse(event.stopped)
+
+    async def test_llm_review_nested_agent_call_uses_runtime_identity(self):
+        await self.policy(error=True)
+        nested = []
+
+        async def nested_agent_review(chat_provider_id, prompt, system_prompt=None):
+            self.assertTrue(is_internal_guardrail_call())
+            event, req, provider, _, _ = await self.run_request(
+                FakeRequest(prompt, system_prompt or ""),
+                FakeEvent("nested review"),
+            )
+            nested.append((event, req, provider))
+            return FakeResponse('{"matched": false, "payload": {}}')
+
+        self.context.llm_generate = nested_agent_review
+        _, _, outer_provider, _, responses = await self.run_request()
+
+        self.assertEqual(len(nested), 1)
+        nested_event, nested_req, nested_provider = nested[0]
+        self.assertIsNone(nested_event.get_extra(RESULTS_EXTRA_KEY))
+        self.assertNotIn("ADDED", nested_req.system_prompt)
+        self.assertEqual(len(nested_provider.calls), 1)
+        self.assertEqual(len(outer_provider.calls), 1)
+        self.assertEqual(len(responses), 1)
+        self.assertFalse(is_internal_guardrail_call())
 
     async def test_actual_provider_recorded_for_retry_and_output_hook_still_runs(self):
         await self.policy()

@@ -33,8 +33,8 @@ try:
         GUARDRAIL_REQUEST_PRIORITY,
         GUARDRAIL_RESPONSE_PRIORITY,
         GUARDRAIL_WAITING_RAILS_PRIORITY,
-        INTERNAL_MARKER,
     )
+    from .internal_runtime import is_internal_guardrail_call
     from .rails import GuardrailPipeline, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY
     from .pages_api import GuardrailPagesApiMixin
     from .rag_experience import RagExperienceService
@@ -58,8 +58,8 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         GUARDRAIL_REQUEST_PRIORITY,
         GUARDRAIL_RESPONSE_PRIORITY,
         GUARDRAIL_WAITING_RAILS_PRIORITY,
-        INTERNAL_MARKER,
     )
+    from internal_runtime import is_internal_guardrail_call
     from rails import GuardrailPipeline, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY
     from pages_api import GuardrailPagesApiMixin
     from rag_experience import RagExperienceService
@@ -174,7 +174,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
         """在其他等待阶段插件之前拦截被封禁主体。"""
-        if not self or not getattr(self, "normalized_config", None):
+        if (
+            not self
+            or not getattr(self, "normalized_config", None)
+            or is_internal_guardrail_call()
+        ):
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
@@ -198,7 +202,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self, event: AstrMessageEvent, *_args, **_kwargs
     ) -> None:
         """在同一低优先级临界区依次执行输入分析和模型路由。"""
-        if not self or not getattr(self, "normalized_config", None):
+        if (
+            not self
+            or not getattr(self, "normalized_config", None)
+            or is_internal_guardrail_call()
+        ):
             return
         if self.adapter.get_event_extra(event, ACCESS_GATE_BLOCKED_EXTRA, False):
             return
@@ -244,9 +252,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self, event: AstrMessageEvent, req: ProviderRequest, *_args, **_kwargs
     ) -> None:
         """主模型调用前执行最终请求检查与提示词变更。"""
-        if not self or not getattr(self, "normalized_config", None):
-            return
-        if self._is_internal_request(req):
+        if (
+            not self
+            or not getattr(self, "normalized_config", None)
+            or is_internal_guardrail_call()
+        ):
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
@@ -269,9 +279,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
 
     async def _prepare_agent_request(self, event: Any, req: Any, provider: Any) -> bool:
         """Run Step 3/4 before Runner.reset assembles this unhandled request."""
-        if not self.snapshot_manager.current.runtime_config.debug_settings.get(
-            "enable_agent_request_entry", False
-        ) or self._is_internal_request(req):
+        if is_internal_guardrail_call() or not (
+            self.snapshot_manager.current.runtime_config.debug_settings.get(
+                "enable_agent_request_entry", False
+            )
+        ):
             return False
         if not self.adapter.get_umo(event):
             return False
@@ -325,7 +337,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self, event: AstrMessageEvent, resp: LLMResponse, *_args, **_kwargs
     ) -> None:
         """在模型回复发送前执行输出护栏。"""
-        if not self or not getattr(self, "normalized_config", None):
+        if (
+            not self
+            or not getattr(self, "normalized_config", None)
+            or is_internal_guardrail_call()
+        ):
             return
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
@@ -350,7 +366,11 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     ) -> None:
         """仅将通过输出审核的输出提交到对话记录中。"""
 
-        if not self or not getattr(self, "normalized_config", None):
+        if (
+            not self
+            or not getattr(self, "normalized_config", None)
+            or is_internal_guardrail_call()
+        ):
             return
         directive = self.adapter.get_event_extra(
             event, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY, None
@@ -1173,12 +1193,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         if len(value) <= limit:
             return value
         return f"{value[:limit]}..."
-
-    @staticmethod
-    def _is_internal_request(req: ProviderRequest) -> bool:
-        system_prompt = str(getattr(req, "system_prompt", "") or "")
-        prompt = str(getattr(req, "prompt", "") or "")
-        return INTERNAL_MARKER in system_prompt or INTERNAL_MARKER in prompt
 
     def _log_context_summary(self, phase: str, rail_context) -> None:
         if not self.normalized_config.debug_settings["logging"]:

@@ -9,7 +9,6 @@ if str(PLUGIN_DIR) not in sys.path:
 
 from components import evaluate_output_detector
 from config import normalize_config
-from constants import INTERNAL_MARKER
 from core import RailContext
 
 
@@ -120,17 +119,16 @@ class PoorQualityDetectorTests(unittest.TestCase):
 
 
 class MetadataLeakageDetectorTests(unittest.TestCase):
-    def test_detects_internal_control_marker_without_returning_it(self):
-        response = f"Unexpected control value: {INTERNAL_MARKER}"
+    def test_legacy_internal_marker_is_ordinary_output_text(self):
+        response = "Unexpected value: __astrbot_plugin_llm_guardrail_internal__"
         node, context = _output_node(
             "metadata_leakage_detector", {}, "request", response,
         )
         result = evaluate_output_detector(node, context, response)
 
-        self.assertTrue(result.matched)
-        self.assertEqual(result.metadata["reason_codes"], ["internal_control_marker"])
+        self.assertFalse(result.matched)
+        self.assertEqual(result.metadata["reason_codes"], [])
         self.assertEqual(result.metadata["core_material_version"], "core-materials-v8")
-        self.assertNotIn(INTERNAL_MARKER, str(result.metadata))
 
     def test_bounds_tool_structure_scanning_before_later_candidates(self):
         response = (

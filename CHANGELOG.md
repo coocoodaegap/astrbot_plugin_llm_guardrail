@@ -13,6 +13,11 @@
 
 - RAG 经验记录的列表排序和容量淘汰改为最高分优先、同分时最近编辑优先；来源身份缺失的最高分证据仍保留其分数和预览供诊断，但不会开放写入知识库。
 
+### Security
+
+- 彻底移除以固定 `INTERNAL_MARKER` 文本识别内部请求的机制。Guardrail 自有的 LLM 旁审、虚拟复检和重试生成改用支持嵌套、并发隔离与异常恢复的 task-local 运行时身份，并在 Step 1、Step 3、Step 5 及 Agent 收尾阶段统一跳过内部调用。
+- prompt、system prompt 和 payload 不再能够声明内部身份；旧 marker 字符串按普通输入／输出处理。同步移除旁审提示词中的 marker 以及 `metadata_leakage_detector` 对该字符串的特殊判定。
+
 ## [0.7.1] - 2026-09-09
 
 ### Fixed

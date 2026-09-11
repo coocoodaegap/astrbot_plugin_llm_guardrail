@@ -31,7 +31,6 @@ try:
         NormalizedNode,
         resolve_session_scope,
     )
-    from .constants import INTERNAL_MARKER
     from .core import (
         RailContext,
         RouteDecision,
@@ -79,7 +78,6 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         NormalizedNode,
         resolve_session_scope,
     )
-    from constants import INTERNAL_MARKER
     from core import (
         RailContext,
         RouteDecision,
@@ -2211,7 +2209,6 @@ class GuardrailPipeline:
     @staticmethod
     def _build_llm_review_system_prompt(audit_prompt: str) -> str:
         return (
-            f"{INTERNAL_MARKER}\n\n"
             f"{audit_prompt.strip()}\n\n"
             f"{LLM_REVIEW_STRUCTURE_INSTRUCTION}"
         )

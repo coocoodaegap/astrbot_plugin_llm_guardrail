@@ -12,6 +12,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+try:
+    from .internal_runtime import internal_guardrail_call
+except ImportError:  # pragma: no cover - fallback for direct script loading
+    from internal_runtime import internal_guardrail_call
+
 
 ROUTE_TARGET_PROVIDER_EXTRA = "_llm_guardrail_target_provider"
 ROUTE_SELECTED_PROVIDER_EXTRA = "selected_provider"
@@ -779,11 +784,12 @@ class AstrBotAdapter:
             return await text_chat(prompt=prompt, system_prompt=system_prompt, contexts=[])
 
         try:
-            response = (
-                await asyncio.wait_for(call(), timeout_seconds)
-                if timeout_seconds > 0
-                else await call()
-            )
+            with internal_guardrail_call():
+                response = (
+                    await asyncio.wait_for(call(), timeout_seconds)
+                    if timeout_seconds > 0
+                    else await call()
+                )
         except TimeoutError:
             return AdapterResult(
                 False,
@@ -963,7 +969,8 @@ class AstrBotAdapter:
 
         started_at = time.monotonic()
         try:
-            response = await asyncio.wait_for(call(), timeout_seconds)
+            with internal_guardrail_call():
+                response = await asyncio.wait_for(call(), timeout_seconds)
         except TimeoutError:
             return AdapterResult(
                 False,

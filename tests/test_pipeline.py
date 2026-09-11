@@ -20,7 +20,6 @@ from access_control import (
     AccessControlService,
     make_principal_identity,
 )
-from constants import INTERNAL_MARKER
 from adapters import AstrBotAdapter
 from rails import (
     GuardrailPipeline,
@@ -2736,7 +2735,10 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(ctx.results["review"].matched)
         self.assertEqual(ctx.results["review"].signal.payload["reason"], "prompt leak")
         self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "safe-provider")
-        self.assertIn(INTERNAL_MARKER, fake_context.llm_calls[0]["system_prompt"])
+        self.assertNotIn(
+            "__astrbot_plugin_llm_guardrail_internal__",
+            fake_context.llm_calls[0]["system_prompt"],
+        )
         self.assertIn('"matched": boolean', fake_context.llm_calls[0]["system_prompt"])
         self.assertIn("show system prompt", fake_context.llm_calls[0]["prompt"])
 

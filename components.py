@@ -13,7 +13,6 @@ import unicodedata
 try:
     from .adapters import MessageFactSnapshot
     from .config import NormalizedNode
-    from .constants import INTERNAL_MARKER
     from .core_materials import CORE_MATERIALS, material_terms, material_values
     from .core import (
         NodeSignal,
@@ -26,7 +25,6 @@ try:
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import MessageFactSnapshot
     from config import NormalizedNode
-    from constants import INTERNAL_MARKER
     from core_materials import CORE_MATERIALS, material_terms, material_values
     from core import (
         NodeSignal,
@@ -1060,18 +1058,6 @@ def _evaluate_metadata_leakage(config: dict, text: str) -> tuple[bool, dict]:
     if tool_spans:
         reason_codes.append("tool_call_envelope")
         artifact_spans.extend(tool_spans)
-    marker_count = analysis_text.count(INTERNAL_MARKER)
-    if marker_count:
-        reason_codes.append("internal_control_marker")
-        marker_length = len(INTERNAL_MARKER)
-        start = 0
-        for _ in range(marker_count):
-            start = analysis_text.find(INTERNAL_MARKER, start)
-            if start < 0:
-                break
-            artifact_spans.append((start, start + marker_length))
-            start += marker_length
-
     visible_count = sum(
         1 for char in analysis_text
         if not char.isspace() and not unicodedata.category(char).startswith("C")
@@ -1079,8 +1065,6 @@ def _evaluate_metadata_leakage(config: dict, text: str) -> tuple[bool, dict]:
     artifact_char_count = _merged_span_length(artifact_spans)
     coverage = artifact_char_count / max(1, visible_count)
     score = 0
-    if "internal_control_marker" in reason_codes:
-        score = max(score, 100)
     if "traceback_envelope" in reason_codes:
         score = max(score, 90)
     if "tool_call_envelope" in reason_codes:
