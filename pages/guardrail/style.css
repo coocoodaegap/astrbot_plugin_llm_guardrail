@@ -878,6 +878,10 @@ button:disabled {
     box-shadow: 0 20px 45px rgb(15 23 42 / 20%)
 }
 
+.policy-component-creation-dialog {
+    width: min(960px, calc(100vw - 32px));
+}
+
 .policy-rule-picker-dialog::backdrop {
     background: rgb(15 23 42 / 38%)
 }
@@ -886,6 +890,10 @@ button:disabled {
     display: grid;
     gap: 9px;
     margin-top: 12px
+}
+
+.policy-picker-options {
+    margin-top: 18px;
 }
 
 .policy-rule-picker-dialog .form-status {
@@ -3165,6 +3173,12 @@ textarea,
     color: var(--muted);
 }
 
+.template-option > strong > .field-label-heading,
+.policy-rule-picker-template > .field-label-heading,
+.policy-rule-picker-item > span > strong {
+    color: var(--text);
+}
+
 .policy-rule-picker-template {
     color: #a8dcff;
     font-family: var(--font-display);
@@ -3732,6 +3746,14 @@ textarea,
     border-top: 1px solid var(--edge-soft);
 }
 
+.dialog-actions.policy-picker-actions {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+}
+
 .form-status:empty {
     display: none;
 }
@@ -3844,6 +3866,15 @@ textarea,
 
     .page-sticky-header-content {
         padding: 17px 14px 0;
+    }
+
+    .policy-picker-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .policy-picker-actions {
+        align-self: flex-end;
     }
 
     .brand-lockup {

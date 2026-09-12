@@ -164,9 +164,9 @@
       </div>
       <dialog id="rule-creation-dialog" class="rule-creation-dialog" aria-label="新建规则">
         <form method="dialog">
-        <div class="form-heading">
+        <div class="form-heading policy-picker-heading">
           <div><p class="eyebrow">CREATE RULE</p><h3>选择规则类型</h3><p>创建后模板类型将固定，业务参数可在下一步编辑。</p></div>
-          <button id="cancel-rule-creation" type="button" class="button-secondary">取消</button>
+          <div class="dialog-actions policy-picker-actions"><button id="cancel-rule-creation" type="button" class="button-secondary">取消</button><button id="confirm-rule-creation" type="button">创建规则</button></div>
         </div>
         <div class="form-grid creation-fields">
           <label>规则 ID<input id="new-rule-id" autocomplete="off" placeholder="例如 input_keywords" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
@@ -174,7 +174,6 @@
         </div>
         <p id="rule-creation-status" class="form-status" aria-live="polite"></p>
         <div id="template-options" class="template-options" role="listbox" aria-label="规则类型"></div>
-        <div class="creation-actions"><button id="confirm-rule-creation" type="button">创建规则</button></div>
         </form>
       </dialog>
       <dialog id="save-rule-as-dialog" class="save-rule-as-dialog">
@@ -325,20 +324,18 @@
       </dialog>
       <dialog id="policy-rule-picker-dialog" class="policy-rule-picker-dialog" aria-labelledby="policy-rule-picker-title">
         <form method="dialog">
-          <div class="form-heading"><div><p class="eyebrow">ADD EXISTING RULE</p><h3 id="policy-rule-picker-title">添加已有规则</h3><p id="policy-rule-picker-description">选择与当前 Step 兼容的规则，并配置其策略内 Binding ID。</p></div></div>
+          <div class="form-heading policy-picker-heading"><div><p class="eyebrow">ADD EXISTING RULE</p><h3 id="policy-rule-picker-title">添加已有规则</h3><p id="policy-rule-picker-description">选择与当前 Step 兼容的规则，并配置其策略内 Binding ID。</p></div><div class="dialog-actions policy-picker-actions"><button id="cancel-policy-rule-picker" type="button" class="button-secondary">取消</button><button id="confirm-policy-rule-picker" type="button">添加规则</button></div></div>
           <label>Binding ID<input id="new-policy-rule-binding-id" autocomplete="off" placeholder="选择规则后自动生成" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
           <p id="policy-rule-picker-status" class="form-status" aria-live="polite"></p>
-          <div id="policy-rule-picker-list" class="policy-rule-picker-list" aria-label="可添加规则"></div>
-          <div class="dialog-actions"><button id="cancel-policy-rule-picker" type="button" class="button-secondary">取消</button><button id="confirm-policy-rule-picker" type="button">添加规则</button></div>
+          <div id="policy-rule-picker-list" class="policy-rule-picker-list policy-picker-options" aria-label="可添加规则"></div>
         </form>
       </dialog>
-      <dialog id="policy-component-creation-dialog" class="policy-rule-picker-dialog" aria-labelledby="policy-component-creation-title">
+      <dialog id="policy-component-creation-dialog" class="policy-rule-picker-dialog policy-component-creation-dialog" aria-labelledby="policy-component-creation-title">
         <form method="dialog">
-          <div class="form-heading"><div><p class="eyebrow">ADD POLICY COMPONENT</p><h3 id="policy-component-creation-title">添加电子元件</h3><p id="policy-component-creation-description">电子元件仅属于当前策略，会随策略快照保存。</p></div></div>
-          <label>Binding ID<input id="new-policy-component-id" autocomplete="off" placeholder="选择元件后自动生成" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
+          <div class="form-heading policy-picker-heading"><div><p class="eyebrow">ADD POLICY COMPONENT</p><h3 id="policy-component-creation-title">添加电子元件</h3><p id="policy-component-creation-description">电子元件仅属于当前策略，会随策略快照保存。</p></div><div class="dialog-actions policy-picker-actions"><button id="cancel-policy-component-creation" type="button" class="button-secondary">取消</button><button id="confirm-policy-component-creation" type="button">添加元件</button></div></div>
+          <label>Binding ID<input id="new-policy-component-id" autocomplete="off" placeholder="选择元件后自动生成，可修改" required pattern="[a-z][a-z0-9_]{0,63}" /></label>
           <p id="policy-component-creation-status" class="form-status" aria-live="polite"></p>
-          <div id="policy-component-options" class="template-options" role="listbox" aria-label="电子元件类型"></div>
-          <div class="dialog-actions"><button id="cancel-policy-component-creation" type="button" class="button-secondary">取消</button><button id="confirm-policy-component-creation" type="button">添加元件</button></div>
+          <div id="policy-component-options" class="template-options policy-picker-options" role="listbox" aria-label="电子元件类型"></div>
         </form>
       </dialog>
       <dialog id="policy-save-issues-dialog" class="policy-save-issues-dialog" aria-labelledby="policy-save-issues-title">

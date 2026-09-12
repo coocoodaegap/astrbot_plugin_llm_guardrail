@@ -9,6 +9,7 @@ class GuardrailPagesUiTests(unittest.TestCase):
     def test_pages_use_documented_tabs_and_visual_rule_editor(self):
         html = (PAGES_DIR / "index.html").read_text(encoding="utf-8")
         javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")
+        stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
 
         for label in (
             "总览", "规则库", "策略编排", "访问控制", "知识库经验",
@@ -231,6 +232,23 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn('id="policy-rule-picker-dialog"', html)
         self.assertIn('id="new-policy-rule-binding-id"', html)
         self.assertIn('id="policy-component-creation-dialog"', html)
+        self.assertIn(
+            'class="policy-rule-picker-dialog policy-component-creation-dialog"',
+            html,
+        )
+        self.assertEqual(html.count('class="dialog-actions policy-picker-actions"'), 3)
+        rule_creation_start = html.index('id="rule-creation-dialog"')
+        rule_creation_end = html.index("</dialog>", rule_creation_start)
+        rule_creation_dialog = html[rule_creation_start:rule_creation_end]
+        self.assertIn('id="confirm-rule-creation"', rule_creation_dialog)
+        self.assertNotIn('class="creation-actions"', rule_creation_dialog)
+        self.assertEqual(html.count("policy-picker-options"), 2)
+        self.assertIn(".policy-component-creation-dialog", stylesheet)
+        self.assertIn("width: min(960px, calc(100vw - 32px))", stylesheet)
+        self.assertIn(".policy-picker-options", stylesheet)
+        self.assertIn("margin-top: 18px", stylesheet)
+        self.assertIn(".policy-rule-picker-template > .field-label-heading", stylesheet)
+        self.assertIn(".dialog-actions.policy-picker-actions", stylesheet)
         self.assertIn('id="confirm-policy-binding-remove-dialog"', html)
         self.assertIn('id="policy-save-issues-dialog"', html)
         self.assertNotIn("syncPolicyBindingsJson", javascript)
@@ -241,6 +259,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertNotIn('contains_request_user_id: {\n    label:', javascript)
         self.assertIn("function openPolicyComponentCreation", javascript)
         self.assertIn("function createPolicyComponent", javascript)
+        self.assertIn("Object.entries(componentDefinitions).sort", javascript)
+        self.assertIn("left < right ? -1 : left > right ? 1 : 0", javascript)
         self.assertIn("function updatePolicyComponentConfig", javascript)
         for field_name in (
             "duplicate_line_min_chars",

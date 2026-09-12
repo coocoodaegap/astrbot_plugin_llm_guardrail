@@ -3427,7 +3427,10 @@ function completePolicyGraphNodeOrder(draft = getPolicyGraphDraft()) {
 }
 function renderPolicyComponentOptions(rail) {
   policyComponentOptions.replaceChildren();
-  for (const [type, definition] of Object.entries(componentDefinitions)) {
+  const definitions = Object.entries(componentDefinitions).sort(([left], [right]) => (
+    left < right ? -1 : left > right ? 1 : 0
+  ));
+  for (const [type, definition] of definitions) {
     if (!definition.rails.has(rail)) continue;
     const option = document.createElement("button");
     option.type = "button";
