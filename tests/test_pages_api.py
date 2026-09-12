@@ -367,7 +367,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(set(result["schema"]), set(result["settings"]))
-        self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 6000)
+        self.assertEqual(result["settings"]["fallback_policy_settings"]["max_text_chars"], 0)
         self.assertEqual(result["settings"]["session_control"]["group_chat_mode"], "all_run")
         self.assertEqual(result["settings"]["access_control"]["blacklist_duration_minutes"], 60)
         self.assertEqual(

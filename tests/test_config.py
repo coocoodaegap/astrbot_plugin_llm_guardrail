@@ -596,6 +596,13 @@ class ConfigNormalizerTests(unittest.TestCase):
             cfg.fallback_policy_settings["enable_output_llm_review_in_fallback_policy"]
         )
 
+    def test_missing_max_text_chars_defaults_to_unlimited_for_all_execution_rails(self):
+        cfg = normalize_config({})
+
+        self.assertEqual(cfg.fallback_policy_settings["max_text_chars"], 0)
+        for rail_name in ("input_rail", "request_rail", "output_rail"):
+            self.assertEqual(cfg.rails[rail_name].settings["max_text_chars"], 0)
+
     def test_legacy_per_detector_fallback_switches_are_ignored_with_warning(self):
         cfg = normalize_config(
             {

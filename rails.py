@@ -638,7 +638,7 @@ class GuardrailPipeline:
         message_facts: Any | None = None,
     ) -> None:
         await self._log_step_provider(rail, context)
-        max_chars = int(rail.settings.get("max_text_chars", 6000))
+        max_chars = int(rail.settings.get("max_text_chars", 0))
         stage_text = context.original_input
         if message_facts is None and any(
             rule.enabled and rule.valid and rule.template_key in MESSAGE_FACT_TEMPLATES
@@ -702,7 +702,7 @@ class GuardrailPipeline:
 
     async def _run_request_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
-        max_chars = int(rail.settings.get("max_text_chars", 6000))
+        max_chars = int(rail.settings.get("max_text_chars", 0))
         request_text = (
             self.adapter.get_request_prompt(context.request) or context.current_input
         )
@@ -1501,7 +1501,7 @@ class GuardrailPipeline:
     async def _run_output_rail_attempt(
         self, rail: NormalizedRail, context: RailContext
     ) -> dict[str, str] | None:
-        max_chars = int(rail.settings.get("max_text_chars", 6000))
+        max_chars = int(rail.settings.get("max_text_chars", 0))
         stage_text = context.current_output
         retry_request: dict[str, str] | None = None
 

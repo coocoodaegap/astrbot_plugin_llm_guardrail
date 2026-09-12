@@ -1329,7 +1329,7 @@ def _normalize_fallback_policy_settings(
     """Normalize the only active system-wide guardrail settings in P1."""
 
     settings = {
-        "max_text_chars": max(_as_int(raw_settings.get("max_text_chars"), 6000), 0),
+        "max_text_chars": max(_as_int(raw_settings.get("max_text_chars"), 0), 0),
         "max_retries": max(_as_int(raw_settings.get("max_retries"), 0), 0),
         "default_llm_provider": _as_str(raw_settings.get("default_llm_provider", "")).strip(),
         "enable_llm_review_in_fallback_policy": _as_bool(
@@ -1485,7 +1485,7 @@ def _coerce_rail_settings(
         settings["default_action_on_error"] = error_action
         settings["block_message"] = _as_str(settings.get("block_message", ""))
     elif rail_name == "input_rail":
-        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 0), 0)
         settings["default_llm_provider"] = _as_str(
             settings.get("default_llm_provider", "")
         )
@@ -1509,7 +1509,7 @@ def _coerce_rail_settings(
             settings.get("output_redirect_template", STAGE_ORIGIN_TEMPLATES[rail_name])
         ) or STAGE_ORIGIN_TEMPLATES[rail_name]
     elif rail_name == "request_rail":
-        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 0), 0)
         settings["default_llm_provider"] = _as_str(
             settings.get("default_llm_provider", "")
         )
@@ -1533,7 +1533,7 @@ def _coerce_rail_settings(
             settings.get("output_redirect_template", STAGE_ORIGIN_TEMPLATES[rail_name])
         ) or STAGE_ORIGIN_TEMPLATES[rail_name]
     elif rail_name == "output_rail":
-        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 6000), 0)
+        settings["max_text_chars"] = max(_as_int(settings.get("max_text_chars"), 0), 0)
         settings["default_llm_provider"] = _as_str(
             settings.get("default_llm_provider", "")
         )

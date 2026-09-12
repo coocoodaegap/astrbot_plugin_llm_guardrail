@@ -16,10 +16,17 @@ from rules import (
     evaluate_plain_keywords,
     evaluate_rag_judge_evidence,
     evaluate_regex_pattern,
+    clip_text,
 )
 
 
 class RuleEvaluatorTests(unittest.TestCase):
+    def test_zero_text_limit_does_not_truncate(self):
+        text = "x" * 6_001
+
+        self.assertEqual(clip_text(text, 0), text)
+        self.assertEqual(clip_text(text, -1), text)
+
     def test_plain_keywords_scores_unique_keywords_case_insensitive(self):
         cfg = normalize_config(
             {

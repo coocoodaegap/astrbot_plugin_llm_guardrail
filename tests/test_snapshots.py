@@ -366,7 +366,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertTrue(result.conflict)
         self.assertEqual(manager.current.revision, 0)
-        self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 6000)
+        self.assertEqual(manager.current.runtime_config.fallback_policy_settings["max_text_chars"], 0)
 
     def test_persisted_snapshot_is_loaded_on_restart(self):
         with tempfile.TemporaryDirectory() as temp_dir:
