@@ -45,7 +45,59 @@ class _Event:
         return None
 
 
+class _Request:
+    def __init__(self, prompt="request input"):
+        self.prompt = prompt
+        self.system_prompt = ""
+        self.extra_user_content_parts = []
+
+
 class ComposeTextTests(unittest.TestCase):
+    def test_normalization_supports_all_five_rails(self):
+        rail_names = (
+            "input_rail",
+            "routing_rail",
+            "request_rail",
+            "prompt_rail",
+            "output_rail",
+        )
+        config = normalize_config(
+            {
+                rail_name: {
+                    "rule_list": [
+                        {
+                            "__template_key": "compose_text",
+                            "rule_id": f"compose_{index}",
+                            "template": "prepared",
+                        }
+                    ]
+                }
+                for index, rail_name in enumerate(rail_names, start=1)
+            }
+        )
+
+        for rail_name in rail_names:
+            self.assertEqual(
+                config.rails[rail_name].nodes[0].template_key,
+                "compose_text",
+            )
+
+        policy = PolicyDefinition(
+            "all_steps",
+            "All steps",
+            components=tuple(
+                PolicyComponent(
+                    f"policy_compose_{index}",
+                    "compose_text",
+                    rail_name,
+                    config={"template": "prepared"},
+                )
+                for index, rail_name in enumerate(rail_names, start=1)
+            ),
+        )
+        validation = PolicyLibrary(policies=(policy,)).validate()
+        self.assertTrue(validation.valid, validation.fatal_errors)
+
     def test_normalization_forces_data_only_actions_without_capping_template(self):
         template = "prefix:" + "x" * 20000
         config = normalize_config(
@@ -104,6 +156,48 @@ class ComposeTextTests(unittest.TestCase):
         self.assertEqual(composed.signal.payload["value"], f"header:{original}")
         self.assertEqual(composed.metadata["value_length"], len(f"header:{original}"))
         self.assertTrue(context.results["consumer"].matched)
+
+    def test_pipeline_executes_in_routing_and_prompt_rails(self):
+        config = normalize_config(
+            {
+                "routing_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "compose_text",
+                            "rule_id": "route_compose",
+                            "template": "route:${event_origin}",
+                        }
+                    ]
+                },
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "compose_text",
+                            "rule_id": "prompt_compose",
+                            "template": "prompt:${event_origin}|${req_origin}",
+                        }
+                    ]
+                },
+            }
+        )
+        pipeline = GuardrailPipeline(config)
+        event = _Event("event input")
+
+        route_context = asyncio.run(
+            pipeline.run_message_route(event, llm_request_confirmed=True)
+        )
+        prompt_context = asyncio.run(
+            pipeline.run_request(event, _Request("request input"))
+        )
+
+        self.assertEqual(
+            route_context.results["route_compose"].signal.payload["value"],
+            "route:event input",
+        )
+        self.assertEqual(
+            prompt_context.results["prompt_compose"].signal.payload["value"],
+            "prompt:event input|request input",
+        )
 
     def test_policy_compilation_allows_context_to_compose_to_inspection(self):
         context_component = PolicyComponent(

@@ -1674,8 +1674,8 @@ const componentDefinitions = {
   },
   context_extractor: {
     label: "对话上下文提取器",
-    description: "读取当前 AstrBot 对话分支的既有历史，产出仅供后续检查内容重定向使用的中性上下文数据；不构成风险命中。",
-    rails: new Set(["input_rail", "request_rail", "output_rail"]),
+    description: "读取当前 AstrBot 对话分支的既有历史，产出可供当前或后续阶段显式模板消费者读取的中性上下文数据；不构成风险命中。",
+    rails: new Set(["input_rail", "routing_rail", "request_rail", "prompt_rail", "output_rail"]),
     fields: [
       { key: "turns", label: "历史用户轮次", hint: "0 表示不读取历史；正整数取最近 N 个用户轮次。实际文本始终受 12,000 字符系统上限约束。", type: "integer", default: 3 },
       { key: "user_only", label: "仅保留用户消息", hint: "开启后省略同轮 Bot 回复；system、tool、空和损坏历史仍以中性说明保留。", type: "boolean", default: false },
@@ -1685,8 +1685,8 @@ const componentDefinitions = {
   },
   compose_text: {
     label: "文本组合器",
-    description: "渲染策略内文本模板，产出可供后续检查或 Step 4 提示词增强读取的 payload.value；不构成风险命中，也不会改写阶段对象。",
-    rails: new Set(["input_rail", "request_rail", "output_rail"]),
+    description: "渲染策略内文本模板，产出可供当前或后续阶段显式模板消费者读取的 payload.value；不构成风险命中，也不会改写阶段对象。",
+    rails: new Set(["input_rail", "routing_rail", "request_rail", "prompt_rail", "output_rail"]),
     defaultConfig: () => ({ template: "" }),
     defaultAction: "observe",
   },

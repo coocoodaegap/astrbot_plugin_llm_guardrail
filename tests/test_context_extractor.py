@@ -85,6 +85,48 @@ class _Context:
 
 
 class ContextExtractorFormatTests(unittest.TestCase):
+    def test_config_and_policy_compilation_support_all_five_rails(self):
+        rail_names = (
+            "input_rail",
+            "routing_rail",
+            "request_rail",
+            "prompt_rail",
+            "output_rail",
+        )
+        cfg = normalize_config(
+            {
+                rail_name: {
+                    "rule_list": [
+                        {
+                            "__template_key": "context_extractor",
+                            "rule_id": f"context_{index}",
+                        }
+                    ]
+                }
+                for index, rail_name in enumerate(rail_names, start=1)
+            }
+        )
+        for rail_name in rail_names:
+            self.assertEqual(
+                cfg.rails[rail_name].nodes[0].template_key,
+                "context_extractor",
+            )
+
+        policy = PolicyDefinition(
+            "all_steps",
+            "All steps",
+            components=tuple(
+                PolicyComponent(
+                    f"policy_context_{index}",
+                    "context_extractor",
+                    rail_name,
+                )
+                for index, rail_name in enumerate(rail_names, start=1)
+            ),
+        )
+        validation = PolicyLibrary(policies=(policy,)).validate()
+        self.assertTrue(validation.valid, validation.fatal_errors)
+
     def test_config_keeps_extractor_data_only_and_normalizes_turns(self):
         cfg = normalize_config(
             {
@@ -209,9 +251,19 @@ class ContextExtractorPipelineTests(unittest.TestCase):
                         },
                     ]
                 },
+                "routing_rail": {
+                    "rule_list": [
+                        {"__template_key": "context_extractor", "rule_id": "ctx_routing", "turns": 2}
+                    ]
+                },
                 "request_rail": {
                     "rule_list": [
                         {"__template_key": "context_extractor", "rule_id": "ctx_request", "turns": 1, "user_only": True}
+                    ]
+                },
+                "prompt_rail": {
+                    "rule_list": [
+                        {"__template_key": "context_extractor", "rule_id": "ctx_prompt", "turns": 2}
                     ]
                 },
                 "output_rail": {
@@ -239,8 +291,13 @@ class ContextExtractorPipelineTests(unittest.TestCase):
         self.assertTrue(input_context.results["history_consumer"].matched)
         self.assertNotIn("current input", input_context.results["ctx_input"].signal.payload["value"])
 
+        routing_context = asyncio.run(
+            pipeline.run_message_route(event, llm_request_confirmed=True)
+        )
+        self.assertTrue(routing_context.results["ctx_routing"].matched)
         request_context = asyncio.run(pipeline.run_request(event, _Request()))
         self.assertTrue(request_context.results["ctx_request"].matched)
+        self.assertTrue(request_context.results["ctx_prompt"].matched)
         output_context = asyncio.run(pipeline.run_response(event, _Response()))
         self.assertTrue(output_context.results["ctx_output"].matched)
         manager = adapter_context.conversation_manager

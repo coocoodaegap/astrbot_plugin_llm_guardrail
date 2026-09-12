@@ -1037,7 +1037,7 @@ class GuardrailPipeline:
         """
 
         origins = {"event_origin": context.original_input}
-        if rail.rail in {"request_rail", "output_rail"}:
+        if rail.rail in {"request_rail", "prompt_rail", "output_rail"}:
             origins["req_origin"] = self._get_request_origin(context.event)
         if rail.rail == "output_rail":
             origins["res_origin"] = original
@@ -1211,12 +1211,20 @@ class GuardrailPipeline:
 
     async def _run_prompt_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
+        stage_text = context.current_input
+
         async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
             try:
                 if rule.template_key == "logic_gate":
                     result = evaluate_logic_gate(rule, ctx)
                 elif rule.template_key == "random_signal":
                     result = evaluate_random_signal(rule)
+                elif rule.template_key == "compose_text":
+                    return self._execute_compose_text(rail, ctx, rule, stage_text)
+                elif rule.template_key == "context_extractor":
+                    execution = await self._execute_context_extractor(rule, ctx)
+                    self._log_check_completion(rule, execution)
+                    return execution
                 elif rule.template_key == "strengthen_prompt":
                     return NodeExecution(result=self._execute_strengthen_prompt(rule, ctx))
                 else:
@@ -1307,12 +1315,20 @@ class GuardrailPipeline:
 
     async def _run_routing_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)
+        stage_text = context.current_input
+
         async def execute(rule: NormalizedRule, ctx: RailContext) -> NodeExecution:
             try:
                 if rule.template_key == "logic_gate":
                     result = evaluate_logic_gate(rule, ctx)
                 elif rule.template_key == "random_signal":
                     result = evaluate_random_signal(rule)
+                elif rule.template_key == "compose_text":
+                    return self._execute_compose_text(rail, ctx, rule, stage_text)
+                elif rule.template_key == "context_extractor":
+                    execution = await self._execute_context_extractor(rule, ctx)
+                    self._log_check_completion(rule, execution)
+                    return execution
                 elif rule.template_key == "route_policy":
                     return NodeExecution(
                         result=await self._execute_route_policy(rule, ctx)

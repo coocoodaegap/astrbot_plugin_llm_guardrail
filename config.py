@@ -44,7 +44,13 @@ RULE_TEMPLATES: dict[str, set[str]] = {
 # They remain supported by the runtime normalizer because compiled policies emit
 # them into a rail's rule_list alongside reusable rules.
 COMPONENT_TEMPLATES: dict[str, set[str]] = {
-    rail_name: {"logic_gate", "random_signal"} for rail_name in RAIL_NAMES
+    rail_name: {
+        "logic_gate",
+        "random_signal",
+        "context_extractor",
+        "compose_text",
+    }
+    for rail_name in RAIL_NAMES
 }
 COMPONENT_TEMPLATES["prompt_rail"].add("strengthen_prompt")
 COMPONENT_TEMPLATES["input_rail"].update(
@@ -54,8 +60,6 @@ COMPONENT_TEMPLATES["input_rail"].update(
         "role_marker_spoofing_detector",
         "external_fetch_detector",
         "instruction_override_detector",
-        "context_extractor",
-        "compose_text",
         "contains_forward",
         "contains_file",
         "contains_image",
@@ -75,8 +79,6 @@ COMPONENT_TEMPLATES["request_rail"].update(
         "role_marker_spoofing_detector",
         "external_fetch_detector",
         "instruction_override_detector",
-        "context_extractor",
-        "compose_text",
     }
 )
 COMPONENT_TEMPLATES["output_rail"].update(
@@ -87,8 +89,6 @@ COMPONENT_TEMPLATES["output_rail"].update(
         "refusal_leakage_detector",
         "sensitive_echo_detector",
         "language_drift_detector",
-        "context_extractor",
-        "compose_text",
     }
 )
 SUPPORTED_TEMPLATES: dict[str, set[str]] = {

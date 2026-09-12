@@ -204,6 +204,12 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("binding.binding_id = targetId", javascript)
         self.assertIn("newPolicyComponentId.value = allocatePolicyBindingId(type)", javascript)
         self.assertIn("supportedTemplatesByRail", javascript)
+        self.assertGreaterEqual(
+            javascript.count(
+                'rails: new Set(["input_rail", "routing_rail", "request_rail", "prompt_rail", "output_rail"])'
+            ),
+            2,
+        )
         self.assertIn("function renderPolicyRuleBusinessSummary", javascript)
         self.assertIn('node.state === "unavailable"', javascript)
         self.assertIn("dirtyNodeIds", javascript)
