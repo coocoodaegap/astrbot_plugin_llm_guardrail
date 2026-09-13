@@ -521,6 +521,7 @@ const templateDescriptions = {
   external_fetch_detector: "外部资源操作检测器",
   instruction_override_detector: "指令覆盖检测器",
   random_signal: "随机信号",
+  request_entry_detector: "请求入口检测器",
   context_extractor: "对话上下文提取器",
   compose_text: "文本组合器",
   format_violation_detector: "输出格式违约检测器",
@@ -1565,6 +1566,17 @@ const componentDefinitions = {
       { key: "probability", label: "命中概率", hint: "0 表示永不命中，1 表示每次命中；中间值按本次策略执行独立抽样。", type: "number", default: 0.5 },
     ],
     defaultConfig: () => ({ probability: 0.5 }),
+    defaultAction: "observe",
+  },
+  request_entry_detector: {
+    label: "请求入口检测器",
+    description: "判断当前 Step 3 是由标准 on_llm_request Hook 还是主 Agent reset 补充入口触发；只表示技术入口，不判断主动请求。",
+    rails: new Set(["request_rail"]),
+    fields: [
+      { key: "match_llm_request", label: "匹配 on_llm_request", hint: "当前请求由 Guardrail 的标准请求 Hook 进入时命中。", type: "boolean", default: false },
+      { key: "match_agent_reset", label: "匹配 agent_reset", hint: "当前请求由主 Agent reset 补充入口进入时命中；不等同于 Bot 主动请求。", type: "boolean", default: true },
+    ],
+    defaultConfig: () => ({ match_llm_request: false, match_agent_reset: true }),
     defaultAction: "observe",
   },
   logic_gate: {
@@ -3042,7 +3054,7 @@ function renderPolicyGraphNodeEditor(node) {
     [isComponent ? "类型" : "模板", templateDescriptions[templateKey] || componentDefinitions[templateKey]?.label || "未知类型"],
     ["所属 Step", step?.label || node.rail],
     ["依赖", nodeData.depend_on || "未设置"],
-    ["检查内容", templateKey === "context_extractor" ? "当前对话历史（payload.value）" : templateKey === "compose_text" ? "策略内文本（payload.value）" : (nodeData.inspection_template || "当前阶段原文")],
+    ["检查内容", templateKey === "context_extractor" ? "当前对话历史（payload.value）" : templateKey === "compose_text" ? "策略内文本（payload.value）" : templateKey === "request_entry_detector" ? "Guardrail 请求入口事实" : (nodeData.inspection_template || "当前阶段原文")],
   ]) {
     const item = document.createElement("span");
     item.textContent = `${label}：${value}`;
@@ -4545,6 +4557,13 @@ function sessionPolicyRailOutcomeLabel(outcome) {
     invalid: "路由无效",
   }[outcome] || String(outcome || "-");
 }
+function requestEntryLabel(entry) {
+  return {
+    llm_request: "on_llm_request",
+    agent_reset: "agent_reset（从 Step 3 开始）",
+    unavailable: "未记录",
+  }[entry] || String(entry || "未记录");
+}
 function sessionPolicyActivityLabel(kind) {
   return {
     policy_stage_completed: "策略阶段完成",
@@ -4672,7 +4691,10 @@ function renderSessionPolicyActivities(items) {
     const retryProgress = item.kind === "retry_generation"
       ? `第 ${Number(item.attempt || 0)}/${Number(item.max_retries || 0)} 次`
       : "";
-    const parts = [item.phase, item.policy_id, item.provider_id, retryProgress, item.outcome]
+    const entry = item.request_entry && item.request_entry !== "unavailable"
+      ? requestEntryLabel(item.request_entry)
+      : "";
+    const parts = [item.phase, entry, item.policy_id, item.provider_id, retryProgress, item.outcome]
       .filter(Boolean)
       .map((value) => String(value));
     detail.textContent = parts.join(" · ") || "无额外摘要";
@@ -4761,6 +4783,11 @@ function renderSessionPolicyStateDetail(record, policySelection = null) {
     appendSessionStateMeta(sessionPolicyResultSummary, "策略", result.policy_id || "未记录");
     appendSessionStateMeta(sessionPolicyResultSummary, "快照 revision", result.snapshot_revision ?? "-");
     appendSessionStateMeta(sessionPolicyResultSummary, "最近阶段", result.last_stage || "-");
+    appendSessionStateMeta(
+      sessionPolicyResultSummary,
+      "请求入口",
+      requestEntryLabel(result.request_entry),
+    );
     appendSessionStateMeta(sessionPolicyResultSummary, "结果", sessionPolicyOutcomeLabel(result.outcome));
     appendSessionStateMeta(sessionPolicyResultSummary, "run_id", result.run_id || "-");
     appendSessionStateMeta(sessionPolicyResultSummary, "观察时间", formatStateTime(result.observed_at));

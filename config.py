@@ -74,6 +74,7 @@ STAGE_ORIGIN_TEMPLATES = {
 }
 COMPONENT_TEMPLATES["request_rail"].update(
     {
+        "request_entry_detector",
         "encoded_payload_detector",
         "length_anomaly_detector",
         "role_marker_spoofing_detector",
@@ -109,6 +110,7 @@ DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "sensitive_echo_detector",
     "language_drift_detector",
 }
+DEFAULT_OBSERVE_COMPONENT_TEMPLATES = {"request_entry_detector"}
 FIXED_OBSERVE_COMPONENT_TEMPLATES = {"context_extractor", "compose_text"}
 FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES = {"context_extractor", "compose_text"}
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
@@ -225,7 +227,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     """Normalize AstrBotConfig or a dict into runtime-only dataclasses."""
 
     warnings: list[str] = []
-    schema_version = "0.8.0"
+    schema_version = "0.8.1"
     fallback_policy_settings = _normalize_fallback_policy_settings(
         _as_dict(_config_get(raw_config, "fallback_policy_settings", {})),
         warnings,
@@ -548,6 +550,8 @@ def _normalize_node(
         _normalize_compose_text(rule_id, config, warnings)
     elif template_key == "random_signal":
         _normalize_random_signal(rule_id, config, warnings)
+    elif template_key == "request_entry_detector":
+        _normalize_request_entry_detector(rule_id, config, warnings)
     elif template_key == "poor_quality_detector":
         _normalize_poor_quality_detector(rule_id, config, warnings)
     elif template_key == "metadata_leakage_detector":
@@ -594,6 +598,7 @@ def _normalize_node(
         "context_extractor",
         "compose_text",
         "random_signal",
+        "request_entry_detector",
         "poor_quality_detector",
         "metadata_leakage_detector",
         "format_violation_detector",
@@ -608,6 +613,7 @@ def _normalize_node(
             raw_action_on_hit == "default"
             and (
                 template_key in MESSAGE_FACT_COMPONENT_TEMPLATES
+                or template_key in DEFAULT_OBSERVE_COMPONENT_TEMPLATES
                 or template_key in FIXED_OBSERVE_COMPONENT_TEMPLATES
                 or template_key in DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES
             )
@@ -933,6 +939,24 @@ def _normalize_random_signal(
         )
         probability = 0.5
     config["probability"] = probability
+
+
+def _normalize_request_entry_detector(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    """Normalize the two explicit Step 3 request-entry predicates."""
+
+    config["match_llm_request"] = _as_bool(
+        config.get("match_llm_request"), False
+    )
+    config["match_agent_reset"] = _as_bool(
+        config.get("match_agent_reset"), True
+    )
+    if _as_str(config.get("inspection_template", "")).strip():
+        warnings.append(
+            f"{rule_id}.inspection_template is ignored for request_entry_detector"
+        )
+    config["inspection_template"] = ""
 
 
 def _normalize_poor_quality_detector(

@@ -22,6 +22,11 @@ try:
         logic_gate_payload_value,
         make_node_result,
     )
+    from .constants import (
+        REQUEST_ENTRY_AGENT_RESET,
+        REQUEST_ENTRY_LLM_REQUEST,
+        normalize_request_entry,
+    )
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from adapters import MessageFactSnapshot
     from config import NormalizedNode
@@ -33,6 +38,11 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         logic_input_value,
         logic_gate_payload_value,
         make_node_result,
+    )
+    from constants import (
+        REQUEST_ENTRY_AGENT_RESET,
+        REQUEST_ENTRY_LLM_REQUEST,
+        normalize_request_entry,
     )
 
 
@@ -806,6 +816,37 @@ def evaluate_random_signal(node: NormalizedNode):
         node,
         matched=matched,
         action_on_hit=str(node.config.get("action_on_hit", "observe")),
+        metadata=payload,
+        signal=NodeSignal(value=matched, truthy=matched, payload=payload),
+    )
+
+
+def evaluate_request_entry_detector(
+    node: NormalizedNode, context: RailContext
+):
+    """Match the Guardrail hook which admitted the current Step 3 request."""
+
+    entry = normalize_request_entry(context.request_entry)
+    selected_entries = []
+    if bool(node.config.get("match_llm_request", False)):
+        selected_entries.append(REQUEST_ENTRY_LLM_REQUEST)
+    if bool(node.config.get("match_agent_reset", True)):
+        selected_entries.append(REQUEST_ENTRY_AGENT_RESET)
+    matched = entry in selected_entries
+    payload = {
+        "component": "request_entry_detector",
+        "entry": entry,
+        "entry_available": entry in {
+            REQUEST_ENTRY_LLM_REQUEST,
+            REQUEST_ENTRY_AGENT_RESET,
+        },
+        "selected_entries": selected_entries,
+        "score": 100 if matched else 0,
+    }
+    return make_node_result(
+        node,
+        matched=matched,
+        action_on_hit=str(node.config.get("action_on_hit", "default")),
         metadata=payload,
         signal=NodeSignal(value=matched, truthy=matched, payload=payload),
     )

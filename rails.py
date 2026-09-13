@@ -51,9 +51,11 @@ try:
         evaluate_message_fact_component,
         evaluate_output_detector,
         evaluate_random_signal,
+        evaluate_request_entry_detector,
         prepare_sensitive_echo_text,
     )
     from .context_extractor import build_context_extraction
+    from .constants import normalize_request_entry
     from .rules import (
         clip_text,
         evaluate_llm_review_response,
@@ -98,9 +100,11 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         evaluate_message_fact_component,
         evaluate_output_detector,
         evaluate_random_signal,
+        evaluate_request_entry_detector,
         prepare_sensitive_echo_text,
     )
     from context_extractor import build_context_extraction
+    from constants import normalize_request_entry
     from rules import (
         clip_text,
         evaluate_llm_review_response,
@@ -326,8 +330,16 @@ class GuardrailPipeline:
         self._store_context(event, context)
         return context
 
-    async def run_request(self, event: Any, request: Any) -> RailContext:
-        context = self._make_request_context(event, request)
+    async def run_request(
+        self,
+        event: Any,
+        request: Any,
+        *,
+        request_entry: str = "unavailable",
+    ) -> RailContext:
+        context = self._make_request_context(
+            event, request, request_entry=request_entry
+        )
         if self._bypass_admin_command(event):
             self._store_context(event, context)
             return context
@@ -389,7 +401,13 @@ class GuardrailPipeline:
         self._store_context(event, context)
         return context
 
-    def _make_request_context(self, event: Any, request: Any) -> RailContext:
+    def _make_request_context(
+        self,
+        event: Any,
+        request: Any,
+        *,
+        request_entry: str = "unavailable",
+    ) -> RailContext:
         previous_results = self.adapter.get_event_extra(event, RESULTS_EXTRA_KEY, {})
         if not isinstance(previous_results, dict):
             previous_results = {}
@@ -413,6 +431,7 @@ class GuardrailPipeline:
             original_input=original_input,
             current_input=prompt or original_input,
             current_output="",
+            request_entry=normalize_request_entry(request_entry),
             results=dict(previous_results),
             warnings=list(previous_warnings),
             input_blocked=bool(previous_state.get("input_blocked", False)),
@@ -759,6 +778,10 @@ class GuardrailPipeline:
             execution = NodeExecution(result=evaluate_logic_gate(rule, context))
         elif rule.template_key == "random_signal":
             execution = NodeExecution(result=evaluate_random_signal(rule))
+        elif rule.template_key == "request_entry_detector":
+            execution = NodeExecution(
+                result=evaluate_request_entry_detector(rule, context)
+            )
         elif rule.template_key == "context_extractor":
             execution = await self._execute_context_extractor(rule, context)
         elif rule.template_key in {

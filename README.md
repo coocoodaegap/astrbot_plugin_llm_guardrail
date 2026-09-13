@@ -4,7 +4,7 @@
 
 `LLM Guardrail` 不是只做关键词拦截的安全插件。它把一次 LLM 请求拆为五个明确阶段，让你按策略组合本地检测、RAG/LLM 复核、提示词加固、Provider 路由和输出处置，同时保留清晰的依赖、日志和会话状态边界。
 
-> 当前为 **v0.8.0 测试版**。欢迎用于真实群聊或私聊环境，但建议先从观察模式和少量策略开始配置。
+> 当前为 **v0.8.1 测试版**。欢迎用于真实群聊或私聊环境，但建议先从观察模式和少量策略开始配置。
 
 ## 能做什么
 
@@ -116,7 +116,7 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 
 ## 路线图
 
-主动 Agent 请求入口正在实验：在 AstrBot 插件配置或 Pages 系统设置的“调试设置”中开启“实验：主动 Agent 请求入口”，然后重载插件。使用 AstrBot 默认主 Agent hooks、但绕过普通请求 Hook 的调用可进入 Step 3／4，继续沿用原 Provider 和 Step 5；不补跑 Step 1／2。普通请求不会重复加固。关闭后新请求立即跳过，重载或卸载恢复入口。该功能适配 AstrBot 4.26.x 内部 Runner 接口，默认关闭，待实机验收；不覆盖直接 Provider 调用、自定义 Agent hooks、直接发送消息及其他插件自己的后备生成链。直接运行 Agent 的发起方也不一定发送 Guardrail 的阻断占位提示。
+主动 Agent 请求入口正在实验：在 AstrBot 插件配置或 Pages 系统设置的“调试设置”中开启“实验：主动 Agent 请求入口”，然后重载插件。使用 AstrBot 默认主 Agent hooks、但绕过普通请求 Hook 的调用可进入 Step 3／4，继续沿用原 Provider 和 Step 5；不补跑 Step 1／2。普通请求不会重复加固。Step 3 可放置 `request_entry_detector`，分别识别标准 `on_llm_request` 与 `agent_reset` 补充入口；这只是技术入口事实，不等同于 Bot 主动请求判定。会话策略监控会将 `agent_reset` 作为从 Step 3 开始的新 run，并继续关联 Step 5。关闭实验入口后新请求立即跳过，重载或卸载恢复入口。该功能适配 AstrBot 4.26.x 内部 Runner 接口，默认关闭，待实机验收；不覆盖直接 Provider 调用、自定义 Agent hooks、直接发送消息及其他插件自己的后备生成链。直接运行 Agent 的发起方也不一定发送 Guardrail 的阻断占位提示。
 
 以下是 P4 中已批准待设计的轨道；P4 是自 v0.4.0 起的扩展阶段，并不等同于单一发布版本：
 

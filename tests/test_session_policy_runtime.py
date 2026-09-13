@@ -105,8 +105,10 @@ class _Pipeline:
     async def run_message_route(self, _event, **_kwargs):
         return self.contexts["message_route"]
 
-    async def run_request(self, _event, _request):
-        return self.contexts["request"]
+    async def run_request(self, _event, _request, *, request_entry="unavailable"):
+        context = self.contexts["request"]
+        context.request_entry = request_entry
+        return context
 
     async def run_response(self, _event, response):
         return self.contexts["stream_chunk" if response.is_chunk else "response"]
@@ -446,8 +448,11 @@ class SessionPolicyRuntimeTests(unittest.TestCase):
         class _RequestPipeline:
             called = False
 
-            async def run_request(self, _event, _request):
+            async def run_request(
+                self, _event, _request, *, request_entry="unavailable"
+            ):
                 self.called = True
+                rail_context.request_entry = request_entry
                 return rail_context
 
         class _BrokenMonitor:

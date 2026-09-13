@@ -325,6 +325,8 @@ class GuardrailPagesUiTests(unittest.TestCase):
         self.assertIn("function sessionPolicyRailOutcomeLabel", javascript)
         self.assertIn("function showSessionPolicyStateDetail", javascript)
         self.assertIn("late_policy_stage_observed", javascript)
+        self.assertIn("request_entry_detector", javascript)
+        self.assertIn("agent_reset（从 Step 3 开始）", javascript)
         self.assertIn('requestTarget.source === "unavailable"', javascript)
         self.assertIn('return "未观察到目标"', javascript)
         self.assertIn('source === "event_selected_provider"', javascript)

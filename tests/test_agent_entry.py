@@ -80,6 +80,7 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
         self.context = FakeContext()
         self.plugin = self.module.LlmGuardrailPlugin(self.context, {
             "debug_settings": {"enable_agent_request_entry": True},
+            "session_policy_state": {"enabled": True},
         })
         self.hooks = object()
         self.entry = AgentRequestEntry(self.context, self.hooks, self.plugin._prepare_agent_request)
@@ -96,6 +97,13 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
             rules = [RuleDefinition("check", "llm_review", {"audit_prompt": "review"})]
         rules.append(RuleDefinition("output_check", "plain_keywords", {"keywords": ["model"]}))
         components = [
+            PolicyComponent(
+                "agent_entry",
+                "request_entry_detector",
+                "request_rail",
+                action_on_hit="observe",
+                config={"match_llm_request": False, "match_agent_reset": True},
+            ),
             PolicyComponent("prepared", "compose_text", "request_rail", config={"template": "ADDED ${req_origin}"}),
             PolicyComponent("strengthen", "strengthen_prompt", "prompt_rail", config={
                 "insertion_target": target, "insertion_text": "${prepared.value}",
@@ -108,7 +116,7 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
                 "check", "request_rail", action_on_hit="block" if block else "observe",
                 action_on_error="block" if error else "discard",
             ), PolicyRuleBinding("output_check", "output_rail", action_on_hit="observe")), components=tuple(components),
-            node_order=("input_stop", "check", "prepared", "strengthen", "output_check"),
+            node_order=("input_stop", "agent_entry", "check", "prepared", "strengthen", "output_check"),
         ),), active_policy_id="agent_policy")
         result = await self.plugin.snapshot_manager.publish_policy_library(
             library, expected_revision=self.plugin.snapshot_manager.current.revision
@@ -154,6 +162,11 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIs(runner.provider, provider)
                     results = event.get_extra(RESULTS_EXTRA_KEY)
                     self.assertNotIn("input_stop", results)
+                    self.assertTrue(results["agent_entry"].matched)
+                    self.assertEqual(
+                        results["agent_entry"].signal.payload["entry"],
+                        "agent_reset",
+                    )
                     self.assertEqual(results["prepared"].signal.payload["value"], "ADDED actual request")
                     self.assertTrue(results["strengthen"].matched)
                     if target == "temp_user_context":
@@ -164,6 +177,11 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
         event = FakeEvent()
         request = FakeRequest("one", "base")
         await self.plugin.on_llm_request(event, request)
+        self.assertFalse(event.get_extra(RESULTS_EXTRA_KEY)["agent_entry"].matched)
+        self.assertEqual(
+            event.get_extra(RESULTS_EXTRA_KEY)["agent_entry"].signal.payload["entry"],
+            "llm_request",
+        )
         _, req, provider, _, _ = await self.run_request(request, event)
         self.assertEqual(req.system_prompt.count("ADDED"), 1)
         self.assertEqual(len(provider.calls), 1)
@@ -276,6 +294,28 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
         observation = await self.plugin._request_target_observation(event, FakeRequest())
         self.assertEqual(observation["source"], "agent_runner")
         self.assertEqual(len(provider.calls), 1)
+
+    async def test_agent_entry_monitor_starts_at_request_without_step_one_or_two(self):
+        await self.policy()
+        event, _, _, _, responses = await self.run_request()
+        self.assertEqual(len(responses), 1)
+        await self.plugin.on_llm_response(event, responses[0])
+
+        detail = await self.plugin.session_policy_state.get_detail(
+            event.unified_msg_origin,
+            settings=self.plugin.normalized_config.session_policy_state,
+        )
+
+        self.assertTrue(detail.found)
+        result = detail.record["last_policy_result"]
+        self.assertEqual(result["request_entry"], "agent_reset")
+        self.assertEqual(result["last_stage"], "response")
+        self.assertNotIn("input_rail", result["rail_outcomes"])
+        self.assertNotIn("routing_rail", result["rail_outcomes"])
+        self.assertFalse(any(
+            item["kind"] == "late_policy_stage_observed"
+            for item in detail.record["activities"]["items"]
+        ))
 
     async def test_rag_evidence_is_injected_into_actual_agent_request(self):
         library = PolicyLibrary(rules=(RuleDefinition(

@@ -24,12 +24,22 @@ except ImportError:  # pragma: no cover - local unit tests do not load AstrBot.
     logger = logging.getLogger(__name__)
 
 try:
+    from .constants import (
+        REQUEST_ENTRY_AGENT_RESET,
+        REQUEST_ENTRY_UNAVAILABLE,
+        normalize_request_entry,
+    )
     from .session_lock import (
         UmoLockManager,
         get_global_session_policy_state_lock_manager,
     )
     from .state import StateStore
 except ImportError:  # pragma: no cover - fallback for direct script loading
+    from constants import (
+        REQUEST_ENTRY_AGENT_RESET,
+        REQUEST_ENTRY_UNAVAILABLE,
+        normalize_request_entry,
+    )
     from session_lock import (
         UmoLockManager,
         get_global_session_policy_state_lock_manager,
@@ -170,6 +180,7 @@ class SessionPolicyStateService:
         route_candidate: Mapping[str, Any] | None = None,
         request_target_observation: Mapping[str, Any] | None = None,
         retry_activities: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
+        request_entry: Any = REQUEST_ENTRY_UNAVAILABLE,
     ) -> SessionPolicyStateWriteResult:
         """Merge one completed pipeline phase into the UMO state.
 
@@ -177,9 +188,9 @@ class SessionPolicyStateService:
         newer message's "last policy result".  Its request-target and
         route-candidate observations are still useful, independent lifecycle
         facts, so they remain recordable and are explicitly marked in the
-        activity stream.  A different run is therefore allowed to replace the
-        current policy result only from ``message_input``; request-only
-        execution can still create a record when none exists.
+        activity stream.  A different run may replace the current policy
+        result from ``message_input`` or from an ``agent_reset`` request,
+        because that technical entry deliberately starts at Step 3.
         """
 
         if not _monitoring_enabled(settings):
@@ -202,6 +213,7 @@ class SessionPolicyStateService:
                 route_candidate=route_candidate,
                 request_target_observation=request_target_observation,
                 retry_activities=retry_activities,
+                request_entry=request_entry,
             )
         except (TypeError, ValueError) as exc:
             return SessionPolicyStateWriteResult(
@@ -227,6 +239,7 @@ class SessionPolicyStateService:
                         current_result,
                         normalized_run_id,
                         normalized_phase,
+                        observation["request_entry"],
                     )
                     before = copy.deepcopy(record)
                     _merge_phase_observation(
@@ -575,6 +588,7 @@ def _normalized_policy_result(raw: Any) -> dict[str, Any] | None:
         "snapshot_revision": _non_negative_int(raw.get("snapshot_revision"), 0),
         "started_at": _non_negative_int(raw.get("started_at"), 0),
         "last_stage": phase,
+        "request_entry": normalize_request_entry(raw.get("request_entry")),
         "outcome": outcome,
         "terminal_action": _safe_json_mapping(raw.get("terminal_action")),
         "rail_outcomes": _safe_json_mapping(raw.get("rail_outcomes")),
@@ -666,6 +680,7 @@ def _normalize_phase_observation(
     route_candidate: Mapping[str, Any] | None,
     request_target_observation: Mapping[str, Any] | None,
     retry_activities: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None,
+    request_entry: Any,
 ) -> dict[str, Any]:
     normalized_signals = _safe_json_signal_list(signals)
     if signals and len(normalized_signals) != len(signals):
@@ -685,6 +700,7 @@ def _normalize_phase_observation(
             request_target_observation
         ),
         "retry_activities": _normalize_retry_activities(retry_activities),
+        "request_entry": normalize_request_entry(request_entry),
     }
 
 
@@ -779,6 +795,7 @@ def _merge_phase_observation(
                 "snapshot_revision": observation["snapshot_revision"],
                 "started_at": observation["started_at"],
                 "last_stage": observation["phase"],
+                "request_entry": observation["request_entry"],
                 "outcome": observation["outcome"],
                 "terminal_action": observation["terminal_action"],
                 "rail_outcomes": {},
@@ -791,6 +808,8 @@ def _merge_phase_observation(
             current["policy_id"] = observation["policy_id"]
             current["snapshot_revision"] = observation["snapshot_revision"]
             current["last_stage"] = observation["phase"]
+            if observation["request_entry"] != REQUEST_ENTRY_UNAVAILABLE:
+                current["request_entry"] = observation["request_entry"]
             current["outcome"] = observation["outcome"]
             if (
                 observation["terminal_action"] is not None
@@ -812,6 +831,7 @@ def _merge_phase_observation(
                 "policy_id": observation["policy_id"],
                 "snapshot_revision": observation["snapshot_revision"],
                 "outcome": observation["outcome"],
+                "request_entry": observation["request_entry"],
                 "signal_count": len(observation["signals"]),
                 "terminal_action": _terminal_action_summary(observation["terminal_action"]),
             },
@@ -914,13 +934,17 @@ def _is_late_foreign_phase(
     current: dict[str, Any] | None,
     run_id: str,
     phase: str,
+    request_entry: str = REQUEST_ENTRY_UNAVAILABLE,
 ) -> bool:
     if current is None or current.get("run_id") == run_id:
         return False
-    # A message input is the start of a new event execution.  Other phases are
-    # continuations, so a foreign one is necessarily an older/late event while
-    # a state record already exists for this UMO.
-    return phase != "message_input"
+    # A message input starts a normal event execution.  A request admitted by
+    # the Agent reset bridge deliberately starts at Step 3, so it is also a
+    # valid new run rather than a late continuation of an older user event.
+    return not (
+        phase == "message_input"
+        or (phase == "request" and request_entry == REQUEST_ENTRY_AGENT_RESET)
+    )
 
 
 def _merge_signals(target: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> None:
@@ -1014,6 +1038,7 @@ def _summary_policy_result(result: dict[str, Any] | None) -> dict[str, Any] | No
             "policy_id",
             "snapshot_revision",
             "last_stage",
+            "request_entry",
             "outcome",
             "terminal_action",
             "observed_at",

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-13
+
+### Added
+
+- 新增仅可放置在 Step 3 的策略局部 `request_entry_detector` 元件，可分别勾选匹配标准 `on_llm_request` 与主 Agent `reset` 补充入口，并输出当前技术入口、可用性和布尔评分；它不判断请求是否由 Bot 主动发起。
+- 会话策略监控新增请求入口展示；`agent_reset` 请求可从 Step 3 合法开启新的策略 run，后续 Step 5 沿用同一结果，不再因缺少 Step 1／2 被登记为“迟到策略阶段”。
+
+### Changed
+
+- 请求入口事实由调用方直接写入本轮 `RailContext`，策略元件与会话监控不再依靠事件 extra、prompt、事件子类或第三方私有标记反推入口。主动 Agent 请求仍不补跑 Step 1／2，也不改变原 Provider。
+
 ## [0.8.0] - 2026-09-12
 
 ### Added

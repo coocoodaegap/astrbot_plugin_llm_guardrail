@@ -109,6 +109,9 @@ class RailContext:
     original_input: str
     current_input: str
     current_output: str
+    # The Guardrail hook which admitted this ProviderRequest.  This is a
+    # technical ingress fact, not a claim about proactive or reactive intent.
+    request_entry: str = "unavailable"
     results: dict[str, NodeResult] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     input_blocked: bool = False
@@ -949,6 +952,7 @@ class NodeScheduler:
             original_input=context.original_input,
             current_input=context.current_input,
             current_output=context.current_output,
+            request_entry=context.request_entry,
             results=copy.deepcopy(context.results),
             warnings=list(context.warnings),
             input_blocked=context.input_blocked,

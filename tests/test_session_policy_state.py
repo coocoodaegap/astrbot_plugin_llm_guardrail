@@ -355,6 +355,67 @@ class SessionPolicyStateServiceTests(unittest.TestCase):
             [item["kind"] for item in detail.record["activities"]["items"]],
         )
 
+    def test_agent_reset_request_starts_a_new_result_and_response_keeps_entry(self):
+        async def run_case():
+            service = self._service(_Clock(350))
+            common = {
+                "policy_id": "safe-chat",
+                "snapshot_revision": 2,
+                "started_at": 340,
+                "outcome": "allowed",
+                "terminal_action": None,
+                "signals": [],
+                "settings": _settings(),
+            }
+            await service.record_phase(
+                "qq:group:1",
+                run_id="run-user",
+                phase="message_input",
+                rail_outcomes={"input_rail": {"outcome": "completed"}},
+                **common,
+            )
+            request_write = await service.record_phase(
+                "qq:group:1",
+                run_id="run-agent",
+                phase="request",
+                request_entry="agent_reset",
+                rail_outcomes={
+                    "request_rail": {"outcome": "completed"},
+                    "prompt_rail": {"outcome": "skipped"},
+                },
+                **common,
+            )
+            await service.record_phase(
+                "qq:group:1",
+                run_id="run-agent",
+                phase="response",
+                rail_outcomes={"output_rail": {"outcome": "completed"}},
+                **common,
+            )
+            detail = await service.get_detail("qq:group:1", settings=_settings())
+            return request_write, detail
+
+        request_write, detail = asyncio.run(run_case())
+
+        self.assertEqual(request_write.warning, "")
+        result = detail.record["last_policy_result"]
+        self.assertEqual(result["run_id"], "run-agent")
+        self.assertEqual(result["request_entry"], "agent_reset")
+        self.assertEqual(result["last_stage"], "response")
+        self.assertNotIn("input_rail", result["rail_outcomes"])
+        self.assertNotIn("routing_rail", result["rail_outcomes"])
+        self.assertNotIn(
+            "late_policy_stage_observed",
+            [item["kind"] for item in detail.record["activities"]["items"]],
+        )
+        request_activity = next(
+            item
+            for item in detail.record["activities"]["items"]
+            if item["kind"] == "policy_stage_completed"
+            and item["phase"] == "request"
+        )
+        self.assertEqual(request_activity["request_entry"], "agent_reset")
+
     def test_activity_retention_ttl_and_capacity_are_bounded(self):
         async def run_case():
             clock = _Clock(100)

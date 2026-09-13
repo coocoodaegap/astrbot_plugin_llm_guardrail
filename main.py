@@ -33,6 +33,8 @@ try:
         GUARDRAIL_REQUEST_PRIORITY,
         GUARDRAIL_RESPONSE_PRIORITY,
         GUARDRAIL_WAITING_RAILS_PRIORITY,
+        REQUEST_ENTRY_AGENT_RESET,
+        REQUEST_ENTRY_LLM_REQUEST,
     )
     from .internal_runtime import is_internal_guardrail_call
     from .rails import GuardrailPipeline, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY
@@ -58,6 +60,8 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
         GUARDRAIL_REQUEST_PRIORITY,
         GUARDRAIL_RESPONSE_PRIORITY,
         GUARDRAIL_WAITING_RAILS_PRIORITY,
+        REQUEST_ENTRY_AGENT_RESET,
+        REQUEST_ENTRY_LLM_REQUEST,
     )
     from internal_runtime import is_internal_guardrail_call
     from rails import GuardrailPipeline, OUTPUT_HISTORY_DIRECTIVE_EXTRA_KEY
@@ -70,7 +74,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
-PLUGIN_VERSION = "0.8.0"
+PLUGIN_VERSION = "0.8.1"
 POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
@@ -261,8 +265,14 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         try:
             async with self.umo_locks.hold(self.adapter.get_umo(event)):
                 self.adapter.set_event_extra(event, AGENT_PROVIDER_ID_EXTRA, "")
-                self.adapter.set_event_extra(event, REQUEST_ENTRY_EXTRA, "llm_request")
-                rail_context = await self._pipeline_for_event(event).run_request(event, req)
+                self.adapter.set_event_extra(
+                    event, REQUEST_ENTRY_EXTRA, REQUEST_ENTRY_LLM_REQUEST
+                )
+                rail_context = await self._pipeline_for_event(event).run_request(
+                    event,
+                    req,
+                    request_entry=REQUEST_ENTRY_LLM_REQUEST,
+                )
                 self.adapter.set_event_extra(
                     event, REQUEST_HANDLED_EXTRA, (req, rail_context.input_blocked)
                 )
@@ -302,12 +312,18 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 provider_config = getattr(provider, "provider_config", {})
                 provider_id = str(provider_config.get("id", "") or "")
                 self.adapter.set_event_extra(event, AGENT_PROVIDER_ID_EXTRA, provider_id)
-                self.adapter.set_event_extra(event, REQUEST_ENTRY_EXTRA, "agent_reset")
+                self.adapter.set_event_extra(
+                    event, REQUEST_ENTRY_EXTRA, REQUEST_ENTRY_AGENT_RESET
+                )
                 pipeline = self._pipeline_for_event(event)
                 # A synthetic sender is not a reliable principal identity.
                 # Session scope and normal policy actions still apply.
                 pipeline.access_control = None
-                rail_context = await pipeline.run_request(event, candidate)
+                rail_context = await pipeline.run_request(
+                    event,
+                    candidate,
+                    request_entry=REQUEST_ENTRY_AGENT_RESET,
+                )
                 if not rail_context.input_blocked:
                     try:
                         for name in fields:
@@ -915,6 +931,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 route_candidate=route_candidate,
                 request_target_observation=request_target,
                 retry_activities=self._phase_retry_activities(phase, rail_context),
+                request_entry=getattr(rail_context, "request_entry", "unavailable"),
             )
             if not result.success and result.warning:
                 logger.warning(
@@ -1259,6 +1276,6 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             self._clip_text(rail_context.warnings[-1], 180)
             if rail_context.warnings
             else "-",
-            self.adapter.get_event_extra(rail_context.event, REQUEST_ENTRY_EXTRA, "-")
+            getattr(rail_context, "request_entry", "unavailable")
             if phase == "request" else "-",
         )
