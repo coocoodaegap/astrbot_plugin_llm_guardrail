@@ -116,13 +116,17 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 
 ## 路线图
 
-主动 Agent 请求入口正在实验：在 AstrBot 插件配置或 Pages 系统设置的“调试设置”中开启“实验：主动 Agent 请求入口”，然后重载插件。使用 AstrBot 默认主 Agent hooks、但绕过普通请求 Hook 的调用可进入 Step 3／4，继续沿用原 Provider 和 Step 5；不补跑 Step 1／2。普通请求不会重复加固。Step 3 可放置 `request_entry_detector`，分别识别标准 `on_llm_request` 与 `agent_reset` 补充入口；这只是技术入口事实，不等同于 Bot 主动请求判定。会话策略监控会将 `agent_reset` 作为从 Step 3 开始的新 run，并继续关联 Step 5。关闭实验入口后新请求立即跳过，重载或卸载恢复入口。该功能适配 AstrBot 4.26.x 内部 Runner 接口，默认关闭，待实机验收；不覆盖直接 Provider 调用、自定义 Agent hooks、直接发送消息及其他插件自己的后备生成链。直接运行 Agent 的发起方也不一定发送 Guardrail 的阻断占位提示。
-
 以下是 P4 中已批准待设计的轨道；P4 是自 v0.4.0 起的扩展阶段，并不等同于单一发布版本：
 
-1. **自定义检测器**：定义安全、可验证的扩展契约，让项目可以在不修改核心调度链路的前提下接入领域检测能力。
-2. **通用策略数据面**：扩展编码与外部资源语法，并在已交付的受限 `compose_text` 之外引入通用 `payload_schema`，让检查器间能够传递受约束的结构化结果。
+1. **主动 Agent 请求入口**：
+    - 实验中。在 AstrBot 插件配置或 Pages 系统设置的“调试设置”中开启“实验：主动 Agent 请求入口”，然后重载插件。
+    - 使用 AstrBot 默认主 Agent hooks、但绕过普通请求 Hook 的调用可进入 Step 3／4，继续沿用原 Provider 和 Step 5；不补跑 Step 1／2。普通请求不会重复加固。
+    - Step 3 可放置 `request_entry_detector`，分别识别标准 `on_llm_request` 与 `agent_reset` 补充入口；这只是技术入口事实，不等同于 Bot 主动请求判定。
+    - 会话策略监控会将 `agent_reset` 作为从 Step 3 开始的新 run，并继续关联 Step 5。关闭实验入口后新请求立即跳过，重载或卸载恢复入口。该功能适配 AstrBot 4.26.x 内部 Runner 接口，默认关闭；不覆盖直接 Provider 调用、自定义 Agent hooks、直接发送消息及其他插件自己的后备生成链。直接运行 Agent 的发起方也不一定发送 Guardrail 的阻断占位提示。
+    - 后续研究 Step 3 的“上一位真实入站发言者”能力及 `contains_last_inbound_user_id`。这项工作不仅是增加一个 ID 列表检测器，还需要先验证真实入站事件与后续 `on_llm_request`／`agent_reset` 请求的可靠关联、有效期、并发及多会话隔离，并排除合成唤醒事件。普通被动回复中，其语义应与 `contains_request_user_id` 一致；主动 Agent 链路中只能使用可靠保存的真实入站事实，无事实时不命中。`entry=agent_reset` 本身不代表 Bot 主动发起，“主动请求”判定仍需进一步研究可验证的来源证明。该能力尚未形成实施合同，也未进入当前版本。
+2. **自定义检测器**：定义安全、可验证的扩展契约，让项目可以在不修改核心调度链路的前提下接入领域检测能力。
 3. **执行治理与可追溯性**：增加 Token／预算控制、规则级并行和完整审计，明确每次策略执行的资源消耗、并发行为与决策依据。
+4. **通用策略数据面**：扩展编码与外部资源语法，并在已交付的受限 `compose_text` 之外引入通用 `payload_schema`，让检查器间能够传递受约束的结构化结果。
 
 每项在开始实现前都会先形成独立迷你合同，明确数据源、影响范围、失败语义、配置面和验收测试；随后经过回归测试与观察模式验证，才作为显式配置交付。它们不会通过隐藏开关或 system fallback 自动启用。
 
