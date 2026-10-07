@@ -688,7 +688,9 @@ class PolicyLibrary:
         for policy in self.policies:
             fatal_errors.extend(_validate_context_extractor_payload_uses(policy))
             fatal_errors.extend(_validate_compose_text_payload_uses(policy))
-            fatal_errors.extend(_validate_policy_dependency_graph(policy, rule_by_id))
+            dependency_validation = _validate_policy_dependency_graph(policy, rule_by_id)
+            fatal_errors.extend(dependency_validation.fatal_errors)
+            warnings.extend(dependency_validation.warnings)
 
         if self.active_policy_id and self.active_policy_id not in policy_ids:
             fatal_errors.append(f"active policy does not exist: {self.active_policy_id}")
@@ -1175,11 +1177,6 @@ def _validate_sensitive_echo_component(
                 f"component {component.node_id} skip source {source_id} is not a rule binding in this policy"
             )
             continue
-        if not binding.enabled:
-            errors.append(
-                f"component {component.node_id} skip source {source_id} is disabled"
-            )
-            continue
         if binding.rail not in {"input_rail", "request_rail"}:
             errors.append(
                 f"component {component.node_id} skip source {source_id} must be in Step 1 or Step 3"
@@ -1368,17 +1365,19 @@ def _template_payload_references(template: Any) -> list[tuple[str, str]]:
 def _validate_policy_dependency_graph(
     policy: PolicyDefinition,
     rule_by_id: Mapping[str, RuleDefinition],
-) -> list[str]:
+) -> LibraryValidation:
     """Validate references that must be safe before a policy can be published.
 
     Runtime Rails run from Step 1 through Step 5.  A dependency can therefore
     point to a rule in the same or an earlier Step, but never to a later Step.
     These checks intentionally operate on policy bindings, rather than the
     reusable rule definitions, because rail placement and enabled state belong
-    to the policy.
+    to the policy. Disabled targets are warnings: the graph remains valid even
+    though their dependents cannot consume a result until they are enabled.
     """
 
     errors: list[str] = []
+    warnings: list[str] = []
     nodes_by_id: dict[str, PolicyRuleBinding | PolicyComponent] = {
         binding.node_id: binding for binding in policy.bindings
     }
@@ -1410,7 +1409,7 @@ def _validate_policy_dependency_graph(
             continue
         adjacency.setdefault(dependent_id, set()).add(target_id)
         if not target.enabled:
-            errors.append(
+            warnings.append(
                 f"policy {policy.policy_id} node {dependent_id} {source_kind} references "
                 f"disabled node {target_id}"
             )
@@ -1424,7 +1423,7 @@ def _validate_policy_dependency_graph(
                 )
 
     errors.extend(_find_dependency_cycles(policy.policy_id, adjacency))
-    return errors
+    return LibraryValidation(tuple(errors), tuple(warnings))
 
 
 def _find_dependency_cycles(

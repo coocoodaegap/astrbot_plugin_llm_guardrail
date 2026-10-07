@@ -11,6 +11,7 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from snapshots import ConfigSnapshotManager, SYSTEM_FALLBACK_POLICY_ID
+from core import RailContext, RuleScheduler, build_graph_index
 from fallback_graph import FallbackDetectorSpec, build_fallback_runtime_config
 from policy_library import (
     PolicyComponent,
@@ -646,7 +647,7 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
             ],
         )
 
-    def test_publish_rejects_dependency_target_that_normalizes_as_unavailable(self):
+    def test_publish_allows_dependency_target_that_normalizes_as_unavailable(self):
         manager = ConfigSnapshotManager({})
         library = PolicyLibrary(
             rules=(
@@ -669,11 +670,12 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
 
-        self.assertFalse(result.success)
-        self.assertEqual(manager.current.revision, 0)
-        self.assertTrue(any("depends on unavailable rule broken_regex" in item for item in result.diagnostics))
+        self.assertTrue(result.success, result.diagnostics)
+        self.assertEqual(manager.current.revision, 1)
+        self.assertTrue(any("depends on unavailable rule broken_regex" in item for item in result.snapshot.library_validation.warnings))
+        self.assertFalse(result.snapshot.policy_runtime_configs["invalid_target"].rails["input_rail"].nodes[0].valid)
 
-    def test_publish_rejects_dependency_target_in_a_disabled_step(self):
+    def test_publish_allows_dependency_target_in_a_disabled_step(self):
         manager = ConfigSnapshotManager({})
         library = PolicyLibrary(
             rules=(
@@ -697,9 +699,93 @@ class ConfigSnapshotManagerTests(unittest.TestCase):
 
         result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
 
-        self.assertFalse(result.success)
-        self.assertEqual(manager.current.revision, 0)
-        self.assertTrue(any("but Step input_rail is disabled" in item for item in result.diagnostics))
+        self.assertTrue(result.success, result.diagnostics)
+        self.assertEqual(manager.current.revision, 1)
+        self.assertTrue(any("but Step input_rail is disabled" in item for item in result.snapshot.library_validation.warnings))
+        self.assertFalse(result.snapshot.policy_runtime_configs["disabled_step"].rails["input_rail"].enabled)
+
+    def test_warning_only_graph_is_persisted_and_reloaded_with_disabled_gate_chain(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("source", "plain_keywords", {"keywords": ["risk"]}),),
+            policies=(
+                PolicyDefinition(
+                    "warning_graph",
+                    "Warning graph",
+                    bindings=(PolicyRuleBinding("source", "input_rail", enabled=False),),
+                    components=(
+                        PolicyComponent("gate", "logic_gate", "input_rail", config={"inputs": ["source"]}),
+                        PolicyComponent("downstream", "length_anomaly_detector", "input_rail", depend_on="gate"),
+                    ),
+                ),
+            ),
+            active_policy_id="warning_graph",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "snapshot.json"
+            manager = ConfigSnapshotManager({}, persistence_path=path)
+
+            result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
+
+            self.assertTrue(result.success, result.diagnostics)
+            self.assertTrue(path.is_file())
+            reloaded = ConfigSnapshotManager({}, persistence_path=path)
+            self.assertEqual(reloaded.current.revision, 1)
+            self.assertTrue(reloaded.current.library_validation.valid)
+            self.assertEqual(reloaded.current.policy_library.to_dict(), library.to_dict())
+            warnings = reloaded.current.library_validation.warnings
+            self.assertTrue(any("references disabled node source" in warning for warning in warnings))
+            self.assertTrue(any("depends on unavailable rule gate" in warning for warning in warnings))
+            nodes = reloaded.current.policy_runtime_configs["warning_graph"].rails["input_rail"].nodes
+            self.assertFalse(nodes[0].enabled)
+            self.assertFalse(nodes[1].valid)
+            self.assertTrue(nodes[2].enabled)
+            runtime = reloaded.current.policy_runtime_configs["warning_graph"]
+            context = RailContext(None, None, None, "", "", "", "")
+
+            def unexpected_execution(node, _context):
+                self.fail(f"disabled dependency chain executed {node.node_id}")
+
+            RuleScheduler(build_graph_index(runtime)).run(
+                runtime.rails["input_rail"], context, unexpected_execution
+            )
+            self.assertFalse(context.results["source"].executed)
+            self.assertFalse(context.results["gate"].executed)
+            self.assertFalse(context.results["downstream"].executed)
+
+    def test_publish_retains_action_and_unsupported_template_warnings(self):
+        library = PolicyLibrary(
+            rules=(
+                RuleDefinition("future", "future_detector", {}),
+                RuleDefinition("retry", "plain_keywords", {"keywords": ["risk"]}, default_action_on_hit="retry_generation", default_action_on_error="retry_generation"),
+            ),
+            policies=(
+                PolicyDefinition(
+                    "warnings_only",
+                    "Warnings only",
+                    bindings=(
+                        PolicyRuleBinding("future", "input_rail"),
+                        PolicyRuleBinding("retry", "input_rail", depend_on="future"),
+                    ),
+                    components=(
+                        PolicyComponent("detector", "length_anomaly_detector", "input_rail", action_on_hit="retry_generation", action_on_error="retry_generation"),
+                    ),
+                ),
+            ),
+            active_policy_id="warnings_only",
+        )
+        manager = ConfigSnapshotManager({})
+
+        result = asyncio.run(manager.publish_policy_library(library, expected_revision=0))
+
+        self.assertTrue(result.success, result.diagnostics)
+        warnings = " ".join(result.snapshot.library_validation.warnings)
+        self.assertIn("unsupported template", warnings)
+        self.assertIn("rule retry uses retry_generation as its hit action outside Step 5", warnings)
+        self.assertIn("component detector uses retry_generation as its hit action outside Step 5", warnings)
+        self.assertIn("depends on unavailable rule future", warnings)
+        # Invalid error actions are normalized to discard when deserialized.
+        self.assertEqual(result.snapshot.policy_library.rules[1].default_action_on_error, "discard")
+        self.assertEqual(result.snapshot.policy_library.policies[0].components[0].action_on_error, "discard")
 
     def test_publish_accepts_failed_dependency_references(self):
         manager = ConfigSnapshotManager({})

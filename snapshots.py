@@ -493,14 +493,14 @@ class ConfigSnapshotManager:
             for policy in library.policies
         }
         if library_validation.valid:
-            dependency_errors = _runtime_dependency_errors(
+            dependency_warnings = _runtime_dependency_warnings(
                 library,
                 policy_runtime_configs,
             )
-            if dependency_errors:
+            if dependency_warnings:
                 library_validation = LibraryValidation(
-                    fatal_errors=(*library_validation.fatal_errors, *dependency_errors),
-                    warnings=library_validation.warnings,
+                    fatal_errors=library_validation.fatal_errors,
+                    warnings=(*library_validation.warnings, *dependency_warnings),
                 )
         graph = build_graph_index(runtime_config)
         fallback_graph = build_graph_index(fallback_runtime_config)
@@ -621,18 +621,19 @@ def _runtime_dependency_references(
     return references
 
 
-def _runtime_dependency_errors(
+def _runtime_dependency_warnings(
     library: PolicyLibrary,
     policy_runtime_configs: Mapping[str, NormalizedConfig],
 ) -> tuple[str, ...]:
-    """Reject policies whose structurally valid dependency target cannot run.
+    """Warn when a structurally valid dependency target cannot currently run.
 
     Template validity is intentionally read from ``normalize_config`` rather
     than duplicated here.  This keeps regex, RAG, LLM, and future template
-    validation aligned with the runtime compiler.
+    validation aligned with the runtime compiler. These availability warnings
+    must not prevent saving a graph with intentionally disabled nodes or Steps.
     """
 
-    errors: list[str] = []
+    warnings: list[str] = []
     rule_by_id = {rule.rule_id: rule for rule in library.rules}
     emitted: set[tuple[str, str, str, str]] = set()
     for policy in library.policies:
@@ -672,8 +673,8 @@ def _runtime_dependency_errors(
                 continue
             if key not in emitted:
                 emitted.add(key)
-                errors.append(message)
-    return tuple(errors)
+                warnings.append(message)
+    return tuple(warnings)
 
 
 def _copy_config(raw_config: Any) -> dict[str, Any]:

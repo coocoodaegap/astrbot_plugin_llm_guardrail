@@ -2808,8 +2808,10 @@ function renderPolicyGraph(policy, { resetSelection = false } = {}) {
   policyGraphState.model = buildPolicyGraphModel(policy);
   renderPolicyGraphStepToggles(policyGraphState.model);
   const issues = policyGraphState.model.nodes.flatMap((node) => node.issues);
+  const errorCount = issues.filter((issue) => issue.level === "error").length;
+  const warningCount = issues.filter((issue) => issue.level === "warning").length;
   policyGraphStatus.textContent = issues.length
-    ? `图中有 ${issues.length} 项需要处理的问题；保存时以后端校验为准。`
+    ? `图中有 ${errorCount} 项错误、${warningCount} 项警告；警告不阻止保存，最终以后端校验为准。`
     : `共 ${policyGraphState.model.nodes.length} 个节点、${policyGraphState.model.edges.length} 条依赖。`;
   policyGraphCanvas.classList.toggle("is-interactive", policyGraphState.model.nodes.length > 0);
   policyGraphCanvas.classList.toggle("is-dependency-selecting", Boolean(policyGraphState.dependencySelection));
@@ -3696,9 +3698,11 @@ function collectPolicyDetailDraft(policy) {
 function validCustomPolicyId(id) {
   return /^[a-z][a-z0-9_]{0,63}$/.test(id);
 }
-function currentPolicyGraphIssues() {
+function currentPolicyGraphIssues(level = "") {
   return policyGraphState.model?.nodes
-    .flatMap((node) => node.issues.map((issue) => `${node.id}：${issue.message}`)) || [];
+    .flatMap((node) => node.issues
+      .filter((issue) => !level || issue.level === level)
+      .map((issue) => `${node.id}：${issue.message}`)) || [];
 }
 function showPolicySaveIssues(title, messages, intro = "请修复以下问题后再试。") {
   const uniqueMessages = [...new Set(messages.map((message) => String(message || "").trim()).filter(Boolean))];
@@ -3717,7 +3721,7 @@ function policySaveFailureMessages(result) {
   if (Array.isArray(result?.diagnostics)) messages.push(...result.diagnostics);
   if (typeof result?.detail === "string") messages.push(...result.detail.split(/\r?\n/));
   if (!messages.length && result?.error) messages.push(result.error);
-  return [...currentPolicyGraphIssues(), ...messages];
+  return [...currentPolicyGraphIssues("error"), ...messages];
 }
 async function persistPolicyLibrary(successMessage, { showIssues = false, operation = "保存策略" } = {}) {
   if (!Number.isInteger(currentRevision)) return false;
@@ -3742,7 +3746,7 @@ async function persistPolicyLibrary(successMessage, { showIssues = false, operat
     const message = error instanceof Error ? error.message : String(error);
     policyLibraryStatus.textContent = "";
     publishReport(`保存策略失败：${message}`, { tone: "error" });
-    if (showIssues) showPolicySaveIssues(`${operation}失败`, [...currentPolicyGraphIssues(), message]);
+    if (showIssues) showPolicySaveIssues(`${operation}失败`, [...currentPolicyGraphIssues("error"), message]);
     return false;
   }
 }
@@ -3823,7 +3827,7 @@ function openSavePolicyAsDialog() {
   const source = policyLibrary.policies.find((policy) => policy.policy_id === selectedPolicyId);
   if (!source || source.builtin) return;
   const draft = collectPolicyDetailDraft(source);
-  const issues = currentPolicyGraphIssues();
+  const issues = currentPolicyGraphIssues("error");
   if (!draft || issues.length) {
     showPolicySaveIssues(
       "策略暂不能另存为",

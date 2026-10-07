@@ -628,7 +628,7 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertFalse(validation.valid)
         self.assertTrue(any("has cyclic dependency" in error for error in validation.fatal_errors))
 
-    def test_policy_rejects_dependency_on_disabled_node(self):
+    def test_policy_warns_on_disabled_dependency_without_rejecting_it(self):
         library = PolicyLibrary(
             rules=(
                 RuleDefinition("source", "plain_keywords", {"keywords": ["source"]}),
@@ -650,8 +650,56 @@ class PolicyLibraryTests(unittest.TestCase):
 
         validation = library.validate()
 
-        self.assertFalse(validation.valid)
-        self.assertTrue(any("references disabled node source" in error for error in validation.fatal_errors))
+        self.assertTrue(validation.valid)
+        self.assertTrue(any("references disabled node source" in warning for warning in validation.warnings))
+
+    def test_disabled_component_dependencies_and_logic_inputs_are_warnings(self):
+        for reference in ("source", "!source", "?source", "~source"):
+            with self.subTest(reference=reference):
+                library = PolicyLibrary(
+                    rules=(RuleDefinition("dependent", "plain_keywords", {"keywords": ["risk"]}),),
+                    policies=(
+                        PolicyDefinition(
+                            "disabled_component",
+                            "Disabled component",
+                            bindings=(PolicyRuleBinding("dependent", "input_rail", depend_on=reference),),
+                            components=(
+                                PolicyComponent("source", "length_anomaly_detector", "input_rail", enabled=False),
+                                PolicyComponent("gate", "logic_gate", "input_rail", config={"inputs": [reference]}),
+                            ),
+                        ),
+                    ),
+                    active_policy_id="disabled_component",
+                )
+
+                validation = library.validate()
+
+                self.assertTrue(validation.valid, validation.fatal_errors)
+                self.assertTrue(any("node dependent depend_on references disabled node source" in warning for warning in validation.warnings))
+                self.assertTrue(any("node gate logic input references disabled node source" in warning for warning in validation.warnings))
+
+    def test_sensitive_echo_skip_list_can_retain_a_disabled_source(self):
+        library = PolicyLibrary(
+            rules=(RuleDefinition("source", "plain_keywords", {"keywords": ["risk"]}),),
+            policies=(
+                PolicyDefinition(
+                    "echo_policy",
+                    "Echo policy",
+                    bindings=(PolicyRuleBinding("source", "input_rail", enabled=False),),
+                    components=(
+                        PolicyComponent(
+                            "echo",
+                            "sensitive_echo_detector",
+                            "output_rail",
+                            config={"skip_source_node_ids": ["source"]},
+                        ),
+                    ),
+                ),
+            ),
+            active_policy_id="echo_policy",
+        )
+
+        self.assertTrue(library.validate().valid)
 
     def test_logic_gate_inputs_obey_policy_dependency_step_order(self):
         library = PolicyLibrary(

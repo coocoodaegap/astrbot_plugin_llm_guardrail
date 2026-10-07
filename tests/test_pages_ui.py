@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -6,6 +8,51 @@ PAGES_DIR = Path(__file__).resolve().parents[1] / "pages" / "guardrail"
 
 
 class GuardrailPagesUiTests(unittest.TestCase):
+    def test_save_as_allows_graph_warnings_and_still_blocks_errors(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is required to execute the Pages save-as logic")
+        javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")
+        issue_collector = javascript[
+            javascript.index("function currentPolicyGraphIssues("):
+            javascript.index("function showPolicySaveIssues(")
+        ]
+        save_as = javascript[
+            javascript.index("function openSavePolicyAsDialog("):
+            javascript.index("async function savePolicyAsCopy(")
+        ]
+        script = """
+const assert = require('node:assert/strict');
+const policyGraphState = { model: { nodes: [{
+  id: 'review', issues: [{ level: 'warning', message: 'dependency disabled' }],
+}] } };
+const policyLibrary = { policies: [{ policy_id: 'active', name: 'Active' }] };
+const selectedPolicyId = 'active';
+const collectPolicyDetailDraft = (source) => ({ ...source });
+const policyNameInput = { value: 'Active' };
+const policyDescriptionInput = { value: '' };
+const saveAsPolicyId = { value: '', focus() {} };
+const saveAsPolicyName = { value: '' };
+const saveAsPolicyDescription = { value: '' };
+const saveAsPolicyStatus = { textContent: '' };
+const policyBasicStatus = { textContent: '' };
+let opened = 0;
+const savePolicyAsDialog = { showModal() { opened++; } };
+const failures = [];
+const showPolicySaveIssues = (title, messages) => failures.push(messages);
+""" + issue_collector + save_as + """
+openSavePolicyAsDialog();
+assert.equal(opened, 1);
+assert.equal(failures.length, 0);
+assert.deepEqual(currentPolicyGraphIssues(), ['review：dependency disabled']);
+policyGraphState.model.nodes[0].issues.push({ level: 'error', message: 'missing target' });
+openSavePolicyAsDialog();
+assert.equal(opened, 1);
+assert.deepEqual(failures, [['review：missing target']]);
+"""
+
+        subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
     def test_pages_use_documented_tabs_and_visual_rule_editor(self):
         html = (PAGES_DIR / "index.html").read_text(encoding="utf-8")
         javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")

@@ -9,7 +9,7 @@ if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
 from pages_api import GuardrailPagesApiMixin
-from policy_library import PolicyDefinition, PolicyLibrary
+from policy_library import PolicyDefinition, PolicyLibrary, RuleDefinition
 from access_control import AccessControlService
 from rag_experience import RagExperienceService
 from session_lock import PrincipalLockManager, UmoLockManager
@@ -943,6 +943,91 @@ class GuardrailPagesApiTests(unittest.TestCase):
 
         self.assertEqual(rejected[1], 400)
         self.assertIn("references missing rule risk", rejected[0]["detail"])
+
+    def test_save_policy_allows_disabled_output_dependencies_and_returns_warnings(self):
+        for nodes_enabled, step_enabled in ((False, True), (True, False)):
+            with self.subTest(nodes_enabled=nodes_enabled, step_enabled=step_enabled):
+                plugin = _Plugin()
+                seeded = asyncio.run(
+                    plugin.snapshot_manager.publish_rule_library(
+                        (RuleDefinition("review", "llm_review", {"audit_prompt": "Review the content."}),),
+                        expected_revision=0,
+                    )
+                )
+                self.assertTrue(seeded.success)
+                detectors = (
+                    ("format", "format_violation_detector"),
+                    ("language", "language_drift_detector"),
+                    ("metadata", "metadata_leakage_detector"),
+                )
+                policy = {
+                    "policy_id": "output_policy",
+                    "name": "Output policy",
+                    "rail_settings": {"output_rail": {"enabled": step_enabled}},
+                    "bindings": [{"rule_id": "review", "rail": "output_rail", "depend_on": "output_or"}],
+                    "components": [
+                        {"component_id": node_id, "component_type": component_type, "rail": "output_rail", "enabled": nodes_enabled}
+                        for node_id, component_type in detectors
+                    ] + [{
+                        "component_id": "output_or",
+                        "component_type": "logic_gate",
+                        "rail": "output_rail",
+                        "enabled": nodes_enabled,
+                        "config": {"gate": "any", "inputs": [node_id for node_id, _kind in detectors]},
+                    }],
+                }
+                with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+                    with patch("pages_api.request", _Request({
+                        "expected_revision": 1,
+                        "policy_library": {"policies": [policy], "active_policy_id": "output_policy"},
+                    })):
+                        saved = asyncio.run(plugin._pages_save_policy_library())
+                    loaded = asyncio.run(plugin._pages_get_policy_library())
+
+                self.assertTrue(saved["success"])
+                self.assertEqual(saved["revision"], 2)
+                self.assertTrue(saved["diagnostics"])
+                self.assertTrue(loaded["validation"]["valid"])
+                self.assertFalse(loaded["validation"]["fatal_errors"])
+                self.assertTrue(loaded["validation"]["warnings"])
+                stored = loaded["policy_library"]["policies"][0]
+                self.assertEqual(stored["rail_settings"]["output_rail"]["enabled"], step_enabled)
+                self.assertTrue(all(component["enabled"] == nodes_enabled for component in stored["components"]))
+                self.assertEqual(stored["bindings"][0]["depend_on"], "output_or")
+
+    def test_policy_warnings_do_not_hide_fatal_missing_references(self):
+        plugin = _Plugin()
+        seeded = asyncio.run(
+            plugin.snapshot_manager.publish_rule_library(
+                (RuleDefinition("source", "plain_keywords", {"keywords": ["risk"]}),),
+                expected_revision=0,
+            )
+        )
+        self.assertTrue(seeded.success)
+        previous = plugin.snapshot_manager.current
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request({
+                "expected_revision": 1,
+                "policy_library": {
+                    "active_policy_id": "invalid",
+                    "policies": [{
+                        "policy_id": "invalid",
+                        "name": "Invalid",
+                        "bindings": [{"rule_id": "source", "rail": "input_rail", "enabled": False}],
+                        "components": [{
+                            "component_id": "gate",
+                            "component_type": "logic_gate",
+                            "rail": "input_rail",
+                            "config": {"inputs": ["source", "missing"]},
+                        }],
+                    }],
+                },
+            })):
+                rejected = asyncio.run(plugin._pages_save_policy_library())
+
+        self.assertEqual(rejected[1], 400)
+        self.assertIn("missing, which is not present in this policy", rejected[0]["detail"])
+        self.assertIs(plugin.snapshot_manager.current, previous)
 
     def test_rule_library_rejects_policy_component_templates(self):
         plugin = _Plugin()
