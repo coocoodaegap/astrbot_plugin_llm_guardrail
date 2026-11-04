@@ -51,7 +51,7 @@
         "description": "默认辅助 Provider",
         "_special": "select_provider",
         "default": "",
-        "hint": "仅供本插件 LLM 旁审类规则使用。留空则相关辅助调用尝试使用 AstrBot 当前会话默认 Provider。此设置为所有自定义策略提供默认值。"
+        "hint": "仅供本插件 LLM 旁审类规则使用。规则和策略 Step 都未指定辅助 Provider 时使用本项；本项留空才回退到 AstrBot 当前会话默认 Provider。此设置为所有自定义策略提供默认值。"
       },
       "default_action_on_hit": {
         "type": "string",

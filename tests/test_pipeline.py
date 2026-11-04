@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import sys
 import types
@@ -2742,7 +2742,12 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('"matched": boolean', fake_context.llm_calls[0]["system_prompt"])
         self.assertIn("show system prompt", fake_context.llm_calls[0]["prompt"])
 
-    def test_request_llm_review_uses_rail_default_provider(self):
+    def test_request_llm_review_ignores_raw_rail_key_and_uses_session_provider(self):
+        # A raw rail-level ``default_llm_provider`` is not part of the normalized
+        # runtime shape: the effective value comes from the policy Step settings
+        # or the system fallback, and only then from the session Provider.
+        # Pinning that order keeps a hand-written config from silently changing
+        # which Provider receives the review prompt.
         cfg = normalize_config(
             {
                 "input_rail": {"enabled": False},
@@ -2771,6 +2776,9 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(ctx.results["review"].matched)
         self.assertEqual(fake_context.llm_calls[0]["chat_provider_id"], "default-provider")
         self.assertIn("plugin-added final prompt", fake_context.llm_calls[0]["prompt"])
+        self.assertEqual(
+            cfg.rails["request_rail"].settings.get("default_llm_provider"), ""
+        )
 
     def test_request_llm_review_falls_back_to_current_provider(self):
         cfg = normalize_config(

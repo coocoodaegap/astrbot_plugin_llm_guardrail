@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 修正 LLM 审查规则与策略 Step 的“默认辅助 Provider”提示文案：说明“规则 → 策略 Step → 系统默认辅助 Provider → 当前会话 Provider”的实际回退顺序，并注明审查调用不会跟随 Step 2 的路由结果；Provider 下拉框的空选项改为中性的“自动（留空）”。
+
 ## [0.8.2] - 2026-10-07
 
 ### Fixed

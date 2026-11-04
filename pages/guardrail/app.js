@@ -574,7 +574,7 @@ const templateParameterFields = {
     { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
   ],
   llm_review: [
-    { key: "provider_id", label: "审查 Provider", hint: "留空则跟随当前会话 Provider。", type: "provider", fullWidth: true },
+    { key: "provider_id", label: "审查 Provider", hint: "留空时先回退到本 Step 的“默认辅助 Provider”，再回退到系统设置中的“默认辅助 Provider”，都为空才使用当前会话 Provider；它不会跟随 Step 2 的路由结果。", type: "provider", fullWidth: true },
     { key: "timeout_seconds", label: "超时（秒）", hint: "设为 0 不启用插件侧超时。", type: "number", default: 8 },
     { key: "audit_prompt", label: "审查提示词", hint: "描述判断目标与希望记录的 payload；插件会自动要求 JSON 结构化输出。", type: "text", fullWidth: true },
   ],
@@ -1049,7 +1049,7 @@ function createProviderSelector(value) {
   const select = document.createElement("select");
   const automaticOption = document.createElement("option");
   automaticOption.value = "";
-  automaticOption.textContent = "跟随当前会话 Provider（默认）";
+  automaticOption.textContent = "自动（留空）";
   select.append(automaticOption);
   for (const provider of registeredProviders) {
     const option = document.createElement("option");
@@ -1493,7 +1493,7 @@ if (outputDefaultHitActionField && !outputDefaultHitActionField[3].includes("obs
 const policyStepSettingHints = {
   enabled: "关闭后，该 Step 中的所有规则与电子元件都不会执行。",
   max_text_chars: "限制该 Step 每次送入检查的文本长度；留空沿用系统设置。",
-  default_llm_provider: "该 Step 的 LLM 类规则默认使用的辅助 Provider；留空沿用系统设置。",
+  default_llm_provider: "该 Step 的 LLM 类规则默认使用的辅助 Provider；留空沿用系统设置中的“默认辅助 Provider”，那里也为空时才使用当前会话 Provider。",
   max_retries: "仅 Step 5 使用；限制 retry_generation 的最大重试次数；留空沿用系统设置。",
   default_action_on_hit: "留空时沿用规则或系统默认动作（default）。",
   default_action_on_error: "留空时沿用规则或系统默认动作（default）。",
