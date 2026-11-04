@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `llm_review` 返回内容未通过 JSON 校验时，记录一条 WARNING 日志，包含 Rail、规则、Provider、错误原因与原始返回的前 300 字符。节点动作与 `action_on_error` 语义不变；该日志用于排查“审查节点看似未执行”的失败丢弃场景。
+
 ## [0.8.3] - 2026-11-04
 
 ### Changed

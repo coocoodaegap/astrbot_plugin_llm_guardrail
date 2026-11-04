@@ -2742,6 +2742,39 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('"matched": boolean', fake_context.llm_calls[0]["system_prompt"])
         self.assertIn("show system prompt", fake_context.llm_calls[0]["prompt"])
 
+    def test_llm_review_rejected_reply_is_logged_before_discard(self):
+        cfg = normalize_config(
+            {
+                "input_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "llm_review",
+                            "rule_id": "review",
+                            "audit_prompt": "Judge whether the user is unsafe.",
+                            "action_on_hit": "observe",
+                        }
+                    ],
+                },
+                "routing_rail": {"enabled": False},
+            }
+        )
+        event = FakeEvent("hello")
+        fake_context = FakeContext()
+        fake_context.llm_responses = ["抱歉，我无法按 JSON 回答。"]
+        adapter = AstrBotAdapter(fake_context)
+
+        with self.assertLogs("rails", level="WARNING") as captured:
+            ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
+
+        # The default error action discards the node, so the log is the only
+        # evidence that it ran at all.
+        self.assertNotIn("review", ctx.results)
+        output = "\n".join(captured.output)
+        self.assertIn("llm_review response rejected", output)
+        self.assertIn("rule=review", output)
+        self.assertIn("provider=default-provider", output)
+        self.assertIn("抱歉，我无法按 JSON 回答。", output)
+
     def test_request_llm_review_ignores_raw_rail_key_and_uses_session_provider(self):
         # A raw rail-level ``default_llm_provider`` is not part of the normalized
         # runtime shape: the effective value comes from the policy Step settings

@@ -129,6 +129,12 @@ CONTEXT_HISTORY_CACHE_EXTRA_KEY = "_llm_guardrail_context_history_cache"
 # provider switching or a broad retry tuning surface is a later increment.
 RETRY_GENERATION_TIMEOUT_SECONDS = 30.0
 
+# A rejected ``llm_review`` reply leaves no NodeResult when its error action is
+# ``discard``, so the log keeps a bounded excerpt for diagnosis.  300 characters
+# is enough to tell prose from a malformed JSON contract without dumping a whole
+# model reply into ordinary logs.
+LLM_REVIEW_RAW_LOG_LIMIT = 300
+
 # These are runtime safeguards, not per-policy budget controls.  The Rail
 # limit bounds concurrent executor entry in one Rail; the shared limiter
 # protects external providers when several UMOs are active at once.
@@ -1939,11 +1945,24 @@ class GuardrailPipeline:
                 ),
                 warnings=list(adapter_result.warnings),
             )
-        result = evaluate_llm_review_response(
-            rule,
-            context,
-            str(adapter_result.metadata.get("text", "") or ""),
-        )
+        response_text = str(adapter_result.metadata.get("text", "") or "")
+        try:
+            result = evaluate_llm_review_response(rule, context, response_text)
+        except ValueError as exc:
+            # ``action_on_error=discard`` drops the failed node entirely, which
+            # makes a rejected reply look like the node never ran.  Keep one
+            # bounded log line so the model output can be inspected.
+            logger.warning(
+                "[LLMGuardrail] llm_review response rejected | rail=%s | rule=%s "
+                "| provider=%s | error=%s | chars=%s | raw=%s",
+                rule.rail,
+                rule.rule_id,
+                adapter_result.metadata.get("provider_id", "") or "-",
+                exc,
+                len(response_text),
+                self._log_summary(response_text, LLM_REVIEW_RAW_LOG_LIMIT),
+            )
+            raise
         result.metadata["provider_id"] = adapter_result.metadata.get("provider_id", "")
         return NodeExecution(result=result, warnings=list(adapter_result.warnings))
 
