@@ -8,6 +8,10 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
+from _astrbot_runtime_stub import install as _install_astrbot_runtime
+
+_install_astrbot_runtime()
+
 from access_control import (
     ACCESS_CONTROL_NAMESPACE,
     ACCESS_CONTROL_TABLE_KEY,

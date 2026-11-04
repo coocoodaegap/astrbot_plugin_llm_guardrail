@@ -5,16 +5,12 @@ from __future__ import annotations
 import copy
 import inspect
 import json
-import logging
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-try:
-    from astrbot.api import logger
-except ImportError:  # pragma: no cover - fallback for isolated unit tests.
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 try:
     from quart import jsonify, request

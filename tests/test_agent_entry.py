@@ -10,6 +10,10 @@ import unittest
 from enum import Enum
 from unittest.mock import patch
 
+from _astrbot_runtime_stub import install as _install_astrbot_runtime
+
+_install_astrbot_runtime()
+
 from agent_entry import AgentRequestEntry
 from internal_runtime import internal_guardrail_call, is_internal_guardrail_call
 from policy_library import (

@@ -11,17 +11,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import logging
 import time
 import weakref
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from astrbot.api import logger
-except ImportError:  # pragma: no cover - local unit tests do not load AstrBot.
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 try:
     from .constants import (

@@ -10,6 +10,10 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
+from _astrbot_runtime_stub import install as _install_astrbot_runtime
+
+_install_astrbot_runtime()
+
 from adapters import AstrBotAdapter
 from config import normalize_config
 from context_extractor import CONTEXT_EXTRACTOR_SCHEMA, build_context_extraction

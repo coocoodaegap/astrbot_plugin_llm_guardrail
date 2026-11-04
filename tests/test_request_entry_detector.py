@@ -8,6 +8,10 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
+from _astrbot_runtime_stub import install as _install_astrbot_runtime
+
+_install_astrbot_runtime()
+
 from components import evaluate_request_entry_detector
 from config import normalize_config
 from core import RailContext

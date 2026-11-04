@@ -11,6 +11,10 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
+from _astrbot_runtime_stub import install as _install_astrbot_runtime
+
+_install_astrbot_runtime()
+
 from config import normalize_config
 from access_control import (
     DECISION_BAN,
@@ -2763,7 +2767,7 @@ class PipelineTests(unittest.TestCase):
         fake_context.llm_responses = ["抱歉，我无法按 JSON 回答。"]
         adapter = AstrBotAdapter(fake_context)
 
-        with self.assertLogs("rails", level="WARNING") as captured:
+        with self.assertLogs("astrbot", level="WARNING") as captured:
             ctx = asyncio.run(GuardrailPipeline(cfg, adapter).run_message(event))
 
         # The default error action discards the node, so the log is the only

@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import math
 import re
 from typing import Any
 
-try:
-    from astrbot.api import logger
-except ImportError:  # pragma: no cover - fallback for local tests
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 try:
     from .access_control import AccessControlService, make_principal_identity
