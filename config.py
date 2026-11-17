@@ -1225,6 +1225,7 @@ def _normalize_style_dialogs(
             raw_pairs = []
 
     pairs: list[dict[str, str]] = []
+    unsupported_references: set[str] = set()
     for item in raw_pairs:
         if not isinstance(item, dict):
             warnings.append(
@@ -1251,7 +1252,19 @@ def _normalize_style_dialogs(
                 "characters; truncated"
             )
             assistant = assistant[:STYLE_DIALOGS_MAX_ENTRY_CHARS]
+        for text in (user, assistant):
+            for reference in VALUE_ITEM_PLACEHOLDER_PATTERN.findall(text):
+                name = reference.strip()
+                if SYSTEM_CONSTANT_NAME_PATTERN.fullmatch(name) is None:
+                    unsupported_references.add(name)
         pairs.append({"user": user, "assistant": assistant})
+
+    if unsupported_references:
+        warnings.append(
+            f"{rule_id}.pairs only supports ${{CONSTANT_NAME}} system constants; "
+            "payload references are kept literally: "
+            + ", ".join(sorted(unsupported_references))
+        )
 
     if len(pairs) > STYLE_DIALOGS_MAX_PAIRS:
         warnings.append(

@@ -1347,7 +1347,7 @@ class GuardrailPipeline:
     ) -> RuleResult:
         pairs = rule.config.get("pairs", [])
         dialogs = [
-            str(text)
+            self._render_system_constants(str(text))
             for pair in pairs
             if isinstance(pair, dict)
             for text in (pair.get("user", ""), pair.get("assistant", ""))

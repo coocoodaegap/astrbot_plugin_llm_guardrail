@@ -375,6 +375,64 @@ class StyleDialogsConfigTests(unittest.TestCase):
 
 
 class StyleDialogsPipelineTests(unittest.TestCase):
+    def test_system_constants_are_rendered(self):
+        cfg = normalize_config(
+            {
+                "system_constants": {"GREETING": "你好", "BOT_NAME": "小司"},
+                "output_rail": {"enabled": False},
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "style_dialogs",
+                            "rule_id": "style",
+                            "pairs": [
+                                {
+                                    "user": "${GREETING}",
+                                    "assistant": "我是${BOT_NAME}",
+                                }
+                            ],
+                            "position": "tail",
+                        }
+                    ]
+                },
+            }
+        )
+        request = _request([{"role": "assistant", "content": "previous"}])
+
+        asyncio.run(GuardrailPipeline(cfg).run_request(FakeEvent("hello"), request))
+
+        entries = _marker_entries(request.contexts)
+        self.assertEqual(
+            [entry["content"] for entry in entries], ["你好", "我是小司"]
+        )
+
+    def test_payload_references_are_kept_literal_and_warned(self):
+        cfg = normalize_config(
+            {
+                "output_rail": {"enabled": False},
+                "prompt_rail": {
+                    "rule_list": [
+                        {
+                            "__template_key": "style_dialogs",
+                            "rule_id": "style",
+                            "pairs": [
+                                {"user": "${prepared.value}", "assistant": "a"}
+                            ],
+                            "position": "tail",
+                        }
+                    ]
+                },
+            }
+        )
+        node = cfg.rails["prompt_rail"].nodes[0]
+        self.assertIn("payload references", " ".join(node.warnings))
+
+        request = _request([{"role": "assistant", "content": "previous"}])
+        asyncio.run(GuardrailPipeline(cfg).run_request(FakeEvent("hello"), request))
+
+        entries = _marker_entries(request.contexts)
+        self.assertEqual(entries[0]["content"], "${prepared.value}")
+
     def test_prompt_rail_injects_into_request_contexts(self):
         request = _request([*PERSONA_TURNS])
         pipeline = GuardrailPipeline(_style_config())

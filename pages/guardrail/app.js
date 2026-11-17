@@ -1567,7 +1567,7 @@ const componentDefinitions = {
       {
         key: "pairs",
         label: "示例对话",
-        hint: "每行一组：用户与助手各一条。user 轮请保持同一对话者身份；最多 8 组，单条 500 字。",
+        hint: "每行一组：用户与助手各一条。user 轮请保持同一对话者身份；最多 8 组，单条 500 字。支持 ${CONSTANT_NAME} 系统常量；不支持 ${node.field} 等 payload 引用，这类引用会原样保留。",
         type: "pairs",
         default: [],
         fullWidth: true,
