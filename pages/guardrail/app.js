@@ -539,6 +539,7 @@ const templateDescriptions = {
   rag_judge: "知识库裁判",
   llm_review: "LLM 审查",
   strengthen_prompt: "增强提示词",
+  style_dialogs: "风格对话",
   route_policy: "模型路由",
 };
 const templateCreationDetails = {
@@ -1555,6 +1556,43 @@ const componentDefinitions = {
     defaultConfig: () => ({
       insertion_target: "temp_user_context",
       insertion_text: "",
+    }),
+    defaultAction: "observe",
+  },
+  style_dialogs: {
+    label: "风格对话",
+    description: "仅在 Step 4 向当前请求注入成对的 user/assistant 示例对话，用真实对话轮强化角色语气；只修改请求上下文，不写入对话历史。",
+    rails: new Set(["prompt_rail"]),
+    fields: [
+      {
+        key: "pairs",
+        label: "示例对话",
+        hint: "每行一组：用户与助手各一条。user 轮请保持同一对话者身份；最多 8 组，单条 500 字。",
+        type: "pairs",
+        default: [],
+        fullWidth: true,
+      },
+      {
+        key: "position",
+        label: "插入位置",
+        hint: "front：人设预设对话之后、历史之前；tail：历史末尾、贴近当前消息。",
+        type: "select",
+        default: "front",
+        options: [["front", "人设之后（front）"], ["tail", "历史末尾（tail）"]],
+      },
+      {
+        key: "persona_dialogs",
+        label: "人设预设对话",
+        hint: "keep 保留 AstrBot 人设中的 begin_dialogs；discard 仅在本次请求中丢弃它们，不会移除本元件或其他 style_dialogs 已注入的对话。",
+        type: "select",
+        default: "keep",
+        options: [["keep", "保留（keep）"], ["discard", "丢弃（discard）"]],
+      },
+    ],
+    defaultConfig: () => ({
+      pairs: [],
+      position: "front",
+      persona_dialogs: "keep",
     }),
     defaultAction: "observe",
   },
@@ -2887,7 +2925,11 @@ function setLabeledText(target, labelText, fieldKey = "") {
   target.replaceChildren(heading);
 }
 function createPolicyGraphEditorField(labelText, hintText, control, fullWidth = false, fieldKey = "") {
-  const label = document.createElement("label");
+  // A <label> wrapping buttons would forward clicks from the field's heading or
+  // hint to the first button inside it (e.g. the pair editor's delete action).
+  const avoidLabel = control?.dataset?.avoidLabelAssociation === "true";
+  const label = document.createElement(avoidLabel ? "div" : "label");
+  if (avoidLabel) label.classList.add("policy-graph-editor-field");
   if (fullWidth) label.classList.add("full-width");
   const title = document.createElement("span");
   setLabeledText(title, labelText, fieldKey);
@@ -3265,6 +3307,7 @@ function renderPolicyGraphNodeEditor(node) {
       control.addEventListener("change", () => {
         let nextValue;
         if (field.type === "boolean") nextValue = control.checked;
+        else if (field.type === "pairs") nextValue = control.pairsValue();
         else if (field.type === "list") {
           nextValue = control.value
             .split(/\r?\n/)
@@ -3739,7 +3782,12 @@ async function persistPolicyLibrary(successMessage, { showIssues = false, operat
     }
     currentRevision = result.revision;
     policyLibraryStatus.textContent = "";
-    publishReport(successMessage(result.revision));
+    const styleDialogsWarnings = (Array.isArray(result.diagnostics) ? result.diagnostics : [])
+      .filter((message) => String(message).includes("persona_dialogs"));
+    const warningSuffix = styleDialogsWarnings.length
+      ? ` 注意：${styleDialogsWarnings.join("；")}`
+      : "";
+    publishReport(`${successMessage(result.revision)}${warningSuffix}`);
     rerenderOverviewIfReady();
     return true;
   } catch (error) {
@@ -3943,7 +3991,102 @@ function createRuleFieldHint(text) {
 function templateConfigValue(config, field) {
   return Object.hasOwn(config, field.key) ? config[field.key] : field.default;
 }
+function createStyleDialogsPairsEditor(value) {
+  const container = document.createElement("div");
+  container.className = "style-dialogs-pairs";
+  container.dataset.avoidLabelAssociation = "true";
+  const rows = document.createElement("div");
+  rows.className = "style-dialogs-pairs-rows";
+  const pairs = (Array.isArray(value) ? value : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      user: String(item.user ?? ""),
+      assistant: String(item.assistant ?? ""),
+    }));
+
+  const notify = () => container.dispatchEvent(new Event("change", { bubbles: true }));
+
+  const render = () => {
+    rows.replaceChildren();
+    pairs.forEach((pair, index) => {
+      const row = document.createElement("div");
+      row.className = "style-dialogs-pair";
+      const heading = document.createElement("div");
+      heading.className = "style-dialogs-pair-heading";
+      const title = document.createElement("span");
+      title.textContent = `第 ${index + 1} 组`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger-button";
+      remove.textContent = "删除";
+      remove.title = "删除这一组对话";
+      remove.setAttribute("aria-label", "删除这一组对话");
+      remove.addEventListener("click", () => {
+        pairs.splice(index, 1);
+        render();
+        notify();
+      });
+      heading.append(title, remove);
+
+      const userLabel = document.createElement("label");
+      userLabel.className = "style-dialogs-field";
+      const userTitle = document.createElement("span");
+      userTitle.textContent = "用户";
+      const userInput = document.createElement("textarea");
+      userInput.rows = 1;
+      userInput.value = pair.user;
+      userInput.placeholder = "用户这一轮的台词";
+      userInput.addEventListener("input", () => {
+        pair.user = userInput.value;
+        notify();
+      });
+      userLabel.append(userTitle, userInput);
+
+      const assistantLabel = document.createElement("label");
+      assistantLabel.className = "style-dialogs-field";
+      const assistantTitle = document.createElement("span");
+      assistantTitle.textContent = "助手";
+      const assistantInput = document.createElement("textarea");
+      assistantInput.rows = 1;
+      assistantInput.value = pair.assistant;
+      assistantInput.placeholder = "Bot 这一轮的回复";
+      assistantInput.addEventListener("input", () => {
+        pair.assistant = assistantInput.value;
+        notify();
+      });
+      assistantLabel.append(assistantTitle, assistantInput);
+
+      row.append(heading, userLabel, assistantLabel);
+      rows.append(row);
+    });
+  };
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "button-secondary style-dialogs-add";
+  add.textContent = "添加一组对话";
+  add.addEventListener("click", () => {
+    pairs.push({ user: "", assistant: "" });
+    render();
+    notify();
+  });
+
+  if (!pairs.length) pairs.push({ user: "", assistant: "" });
+  render();
+  container.append(rows, add);
+  container.pairsValue = () =>
+    pairs
+      .map((pair) => ({
+        user: pair.user.trim(),
+        assistant: pair.assistant.trim(),
+      }))
+      .filter((pair) => pair.user && pair.assistant);
+  return container;
+}
 function createTemplateParameterControl(field, value) {
+  if (field.type === "pairs") {
+    return createStyleDialogsPairsEditor(value);
+  }
   if (field.type === "provider") {
     return createProviderSelector(String(value ?? ""));
   }

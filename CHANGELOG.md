@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-17
+
+### Added
+
+- 新增仅限 Step 4 的策略局部元件 `style_dialogs`：以成对 `pairs` 存储 user/assistant 示例对话，注入当前请求的 `req.contexts`，用于强化角色口癖与语气；注入轮带 `_no_save`，不进入对话历史。
+- 支持 `front`（人设预设对话之后、历史之前）与 `tail`（历史末尾）两种插入位置，以及 `persona_dialogs=keep|discard`：`discard` 仅在本次请求中丢弃 AstrBot 人设的预设对话，不会移除本元件或其他 `style_dialogs` 已注入的对话。
+- 同一节点重复执行时按 `_llm_guardrail_dialogs` 标记替换而非追加；重试快照会剥离该运行时标记。字符串 `contexts` 在启用该元件时做一次入口归一化，失败则跳过注入。
+- 配置上限为 8 组、单条 500 字、总计 3000 字；旧扁平 `dialogs` 在加载时迁移为 `pairs`，奇数条目、空对话、超限和非法位置均记 warning。
+- Pages 新增成对对话编辑器、位置与人设策略选项，并在保存策略时提示 keep/discard 并存的行为。
+
 ## [0.8.4] - 2026-11-04
 
 ### Changed

@@ -481,5 +481,18 @@ assert.deepEqual(failures, [['review：missing target']]);
         self.assertIn(".overview-diagnostics-list", stylesheet)
 
 
+    def test_style_dialogs_uses_a_pair_editor(self):
+        javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")
+        stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('style_dialogs: "风格对话"', javascript)
+        self.assertIn("function createStyleDialogsPairsEditor(", javascript)
+        self.assertIn('field.type === "pairs"', javascript)
+        self.assertIn("pairsValue", javascript)
+        self.assertIn("persona_dialogs", javascript)
+        self.assertIn(".style-dialogs-pair", stylesheet)
+        self.assertIn(".style-dialogs-field textarea", stylesheet)
+
+
 if __name__ == "__main__":
     unittest.main()

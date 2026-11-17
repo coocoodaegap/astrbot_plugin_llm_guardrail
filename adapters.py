@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 ROUTE_TARGET_PROVIDER_EXTRA = "_llm_guardrail_target_provider"
 ROUTE_SELECTED_PROVIDER_EXTRA = "selected_provider"
 AGENT_PROVIDER_ID_EXTRA = "_llm_guardrail_agent_provider_id"
+BEGIN_DIALOGS_MARKER = "_llm_guardrail_dialogs"
 VIDEO_FILE_EXTENSIONS = frozenset(
     {"3gp", "avi", "flv", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "webm", "wmv"}
 )
@@ -648,6 +649,183 @@ class AstrBotAdapter:
             )
         return AdapterResult(True)
 
+    def normalize_request_contexts(self, request: Any) -> AdapterResult:
+        """Parse a JSON-string contexts value once, before policy nodes run.
+
+        A string contexts value already breaks AstrBot's own
+        ``bind_checkpoint_messages``; this repair is best-effort and only runs
+        when a ``style_dialogs`` node is configured.
+        """
+
+        if request is None:
+            return AdapterResult(False, ["request is unavailable"])
+        contexts = getattr(request, "contexts", None)
+        if contexts is None:
+            try:
+                setattr(request, "contexts", [])
+            except (AttributeError, TypeError) as exc:
+                return AdapterResult(
+                    False, [f"failed to initialize request.contexts: {exc}"]
+                )
+            return AdapterResult(True, metadata={"normalized": False})
+        if isinstance(contexts, list):
+            return AdapterResult(True, metadata={"normalized": False})
+        if isinstance(contexts, str):
+            try:
+                parsed = json.loads(contexts)
+            except (TypeError, ValueError) as exc:
+                return AdapterResult(
+                    False,
+                    [f"request.contexts is not valid JSON: {exc}"],
+                    {"normalized": False},
+                )
+            if not isinstance(parsed, list):
+                return AdapterResult(
+                    False,
+                    ["request.contexts JSON is not a list"],
+                    {"normalized": False},
+                )
+            try:
+                setattr(request, "contexts", parsed)
+            except (AttributeError, TypeError) as exc:
+                return AdapterResult(
+                    False,
+                    [f"failed to set request.contexts: {exc}"],
+                    {"normalized": False},
+                )
+            return AdapterResult(
+                True,
+                ["request.contexts was a JSON string; normalized to a list"],
+                {"normalized": True},
+            )
+        return AdapterResult(
+            False,
+            [f"request.contexts has unsupported type {type(contexts).__name__}"],
+            {"normalized": False},
+        )
+
+    def get_request_contexts(self, request: Any) -> AdapterResult:
+        """Return request.contexts as a list, refusing unsupported shapes."""
+
+        if request is None:
+            return AdapterResult(False, ["request is unavailable"], {"contexts": []})
+        contexts = getattr(request, "contexts", None)
+        if contexts is None:
+            return AdapterResult(True, metadata={"contexts": []})
+        if isinstance(contexts, str):
+            return AdapterResult(
+                False,
+                ["request.contexts is still a JSON string"],
+                {"contexts": []},
+            )
+        if not isinstance(contexts, list):
+            return AdapterResult(
+                False,
+                [f"request.contexts has unsupported type {type(contexts).__name__}"],
+                {"contexts": []},
+            )
+        return AdapterResult(True, metadata={"contexts": contexts})
+
+    def insert_begin_dialogs(
+        self,
+        request: Any,
+        dialogs: list[str],
+        position: str = "front",
+        *,
+        node_id: str = "",
+        discard_persona: bool = False,
+    ) -> AdapterResult:
+        """Insert one idempotent block of style dialogs into request.contexts.
+
+        Entries carry ``_no_save`` and a per-node marker.  Insertion first
+        removes this node's previous entries, so re-running Step 4 replaces the
+        block instead of appending another copy.  ``discard_persona`` removes
+        only the leading persona ``_no_save`` block and never removes another
+        ``style_dialogs`` node's entries.
+        """
+
+        if request is None:
+            return AdapterResult(False, ["request is unavailable"])
+        if position not in {"front", "tail"}:
+            return AdapterResult(
+                False, [f"unsupported dialogs position {position!r}"]
+            )
+        texts = [str(item) for item in (dialogs or [])]
+        if len(texts) % 2 != 0:
+            return AdapterResult(
+                False, ["style dialogs must contain an even number of entries"]
+            )
+
+        contexts_result = self.get_request_contexts(request)
+        if not contexts_result.success:
+            return contexts_result
+        contexts = list(contexts_result.metadata.get("contexts", []))
+        marker_value = str(node_id or "default")
+        filtered = [
+            entry
+            for entry in contexts
+            if not (
+                isinstance(entry, dict)
+                and entry.get(BEGIN_DIALOGS_MARKER) == marker_value
+            )
+        ]
+
+        warnings: list[str] = []
+        discarded_persona = 0
+        if discard_persona:
+            index = 0
+            while index < len(filtered):
+                entry = filtered[index]
+                if not isinstance(entry, dict):
+                    break
+                if entry.get(BEGIN_DIALOGS_MARKER) is not None:
+                    break
+                if not entry.get("_no_save"):
+                    break
+                if entry.get("role") not in {"user", "assistant"}:
+                    break
+                index += 1
+            if index:
+                filtered = filtered[index:]
+                discarded_persona = index
+
+        if position == "front":
+            index = 0
+            while index < len(filtered):
+                entry = filtered[index]
+                if not isinstance(entry, dict) or not entry.get("_no_save"):
+                    break
+                index += 1
+        else:
+            index = len(filtered)
+
+        entries = [
+            {
+                "role": "user" if offset % 2 == 0 else "assistant",
+                "content": text,
+                "_no_save": True,
+                BEGIN_DIALOGS_MARKER: marker_value,
+            }
+            for offset, text in enumerate(texts)
+        ]
+        updated = filtered[:index] + entries + filtered[index:]
+        try:
+            setattr(request, "contexts", updated)
+        except (AttributeError, TypeError) as exc:
+            return AdapterResult(
+                False, [f"failed to set request.contexts: {exc}"]
+            )
+        return AdapterResult(
+            True,
+            warnings,
+            {
+                "inserted": len(entries),
+                "position": position,
+                "index": index,
+                "discarded_persona": discarded_persona,
+            },
+        )
+
     async def apply_route(self, event: Any, request: Any, provider_id: str) -> AdapterResult:
         warnings: list[str] = []
         route_target = str(provider_id or "").strip()
@@ -839,6 +1017,9 @@ class AstrBotAdapter:
         else:
             try:
                 contexts = tuple(copy.deepcopy(raw_contexts))
+                for item in contexts:
+                    if isinstance(item, dict):
+                        item.pop(BEGIN_DIALOGS_MARKER, None)
             except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
                 unsupported_reason = (
                     "request contexts cannot be copied "

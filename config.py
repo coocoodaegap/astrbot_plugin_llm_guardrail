@@ -52,7 +52,7 @@ COMPONENT_TEMPLATES: dict[str, set[str]] = {
     }
     for rail_name in RAIL_NAMES
 }
-COMPONENT_TEMPLATES["prompt_rail"].add("strengthen_prompt")
+COMPONENT_TEMPLATES["prompt_rail"].update({"strengthen_prompt", "style_dialogs"})
 COMPONENT_TEMPLATES["input_rail"].update(
     {
         "encoded_payload_detector",
@@ -111,8 +111,21 @@ DEFAULT_OBSERVE_OUTPUT_COMPONENT_TEMPLATES = {
     "language_drift_detector",
 }
 DEFAULT_OBSERVE_COMPONENT_TEMPLATES = {"request_entry_detector"}
-FIXED_OBSERVE_COMPONENT_TEMPLATES = {"context_extractor", "compose_text"}
-FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES = {"context_extractor", "compose_text"}
+FIXED_OBSERVE_COMPONENT_TEMPLATES = {
+    "context_extractor",
+    "compose_text",
+    "style_dialogs",
+}
+FIXED_DISCARD_ERROR_COMPONENT_TEMPLATES = {
+    "context_extractor",
+    "compose_text",
+    "style_dialogs",
+}
+STYLE_DIALOGS_MAX_PAIRS = 8
+STYLE_DIALOGS_MAX_ENTRY_CHARS = 500
+STYLE_DIALOGS_MAX_TOTAL_CHARS = 3000
+STYLE_DIALOGS_POSITIONS = {"front", "tail"}
+STYLE_DIALOGS_PERSONA_MODES = {"keep", "discard"}
 ERROR_ACTIONS = {"default", "discard", "record", "block"}
 DEFAULT_ERROR_ACTIONS = {"discard", "record", "block"}
 LEGACY_FALLBACK_DETECTOR_SWITCHES = (
@@ -227,7 +240,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     """Normalize AstrBotConfig or a dict into runtime-only dataclasses."""
 
     warnings: list[str] = []
-    schema_version = "0.8.4"
+    schema_version = "0.9.0"
     fallback_policy_settings = _normalize_fallback_policy_settings(
         _as_dict(_config_get(raw_config, "fallback_policy_settings", {})),
         warnings,
@@ -571,6 +584,8 @@ def _normalize_node(
             enabled = False
     elif template_key == "strengthen_prompt":
         _normalize_strengthen_prompt(rule_id, config, warnings)
+    elif template_key == "style_dialogs":
+        _normalize_style_dialogs(rule_id, config, warnings)
     elif template_key == "route_policy":
         config["provider_id"] = _as_str(config.get("provider_id", "")).strip()
     elif template_key == "rag_judge":
@@ -607,6 +622,7 @@ def _normalize_node(
         "sensitive_echo_detector",
         *MESSAGE_FACT_TEMPLATES,
         "strengthen_prompt",
+        "style_dialogs",
         "route_policy",
     }:
         raw_action = "observe" if (
@@ -1186,6 +1202,94 @@ def _normalize_strengthen_prompt(
         target = "temp_user_context"
     config["insertion_target"] = target
     config["insertion_text"] = _as_str(config.get("insertion_text", ""))
+
+
+def _normalize_style_dialogs(
+    rule_id: str, config: dict[str, Any], warnings: list[str]
+) -> None:
+    raw_pairs = config.get("pairs")
+    if not isinstance(raw_pairs, list):
+        legacy = config.get("dialogs")
+        if isinstance(legacy, list):
+            if len(legacy) % 2 != 0:
+                warnings.append(
+                    f"{rule_id}.dialogs must contain an even number of entries; "
+                    "the trailing entry is ignored"
+                )
+                legacy = legacy[:-1]
+            raw_pairs = [
+                {"user": legacy[index], "assistant": legacy[index + 1]}
+                for index in range(0, len(legacy), 2)
+            ]
+        else:
+            raw_pairs = []
+
+    pairs: list[dict[str, str]] = []
+    for item in raw_pairs:
+        if not isinstance(item, dict):
+            warnings.append(
+                f"{rule_id}.pairs entries must be objects; one entry is ignored"
+            )
+            continue
+        user = _as_str(item.get("user", ""))
+        assistant = _as_str(item.get("assistant", ""))
+        if not user.strip() or not assistant.strip():
+            warnings.append(
+                f"{rule_id}.pairs entries need non-empty user and assistant text; "
+                "one pair is ignored"
+            )
+            continue
+        if len(user) > STYLE_DIALOGS_MAX_ENTRY_CHARS:
+            warnings.append(
+                f"{rule_id}.user exceeds {STYLE_DIALOGS_MAX_ENTRY_CHARS} characters; "
+                "truncated"
+            )
+            user = user[:STYLE_DIALOGS_MAX_ENTRY_CHARS]
+        if len(assistant) > STYLE_DIALOGS_MAX_ENTRY_CHARS:
+            warnings.append(
+                f"{rule_id}.assistant exceeds {STYLE_DIALOGS_MAX_ENTRY_CHARS} "
+                "characters; truncated"
+            )
+            assistant = assistant[:STYLE_DIALOGS_MAX_ENTRY_CHARS]
+        pairs.append({"user": user, "assistant": assistant})
+
+    if len(pairs) > STYLE_DIALOGS_MAX_PAIRS:
+        warnings.append(
+            f"{rule_id}.pairs exceeds {STYLE_DIALOGS_MAX_PAIRS} pairs; "
+            "extra pairs are ignored"
+        )
+        pairs = pairs[:STYLE_DIALOGS_MAX_PAIRS]
+
+    total_chars = sum(len(pair["user"]) + len(pair["assistant"]) for pair in pairs)
+    trimmed = False
+    while len(pairs) > 1 and total_chars > STYLE_DIALOGS_MAX_TOTAL_CHARS:
+        removed = pairs.pop()
+        total_chars -= len(removed["user"]) + len(removed["assistant"])
+        trimmed = True
+    if trimmed:
+        warnings.append(
+            f"{rule_id}.pairs exceeds {STYLE_DIALOGS_MAX_TOTAL_CHARS} characters; "
+            "trailing pairs are ignored"
+        )
+
+    position = _as_str(config.get("position", "front")).strip() or "front"
+    if position not in STYLE_DIALOGS_POSITIONS:
+        warnings.append(f"{rule_id}.position is invalid; fallback to front")
+        position = "front"
+    config["position"] = position
+
+    persona_mode = (
+        _as_str(config.get("persona_dialogs", "keep")).strip().lower() or "keep"
+    )
+    if persona_mode not in STYLE_DIALOGS_PERSONA_MODES:
+        warnings.append(f"{rule_id}.persona_dialogs is invalid; fallback to keep")
+        persona_mode = "keep"
+    config["persona_dialogs"] = persona_mode
+
+    config["pairs"] = pairs
+    config.pop("dialogs", None)
+    if not pairs and persona_mode == "keep":
+        warnings.append(f"{rule_id}.pairs is empty; the node has no effect")
 
 
 def _normalize_llm_review(

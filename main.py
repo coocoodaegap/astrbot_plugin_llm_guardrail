@@ -74,7 +74,7 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
-PLUGIN_VERSION = "0.8.4"
+PLUGIN_VERSION = "0.9.0"
 POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
@@ -307,6 +307,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                 candidate = copy.copy(req)
                 fields = ("prompt", "system_prompt", "extra_user_content_parts")
                 originals = {name: getattr(req, name) for name in fields}
+                original_contexts = getattr(req, "contexts", None)
                 for name, value in originals.items():
                     setattr(candidate, name, copy.deepcopy(value))
                 provider_config = getattr(provider, "provider_config", {})
@@ -328,9 +329,14 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                     try:
                         for name in fields:
                             setattr(req, name, getattr(candidate, name))
+                        # Step 4 may replace request.contexts with a new list
+                        # (style-dialog injection or string normalization).
+                        if getattr(candidate, "contexts", None) is not original_contexts:
+                            req.contexts = candidate.contexts
                     except Exception:
                         for name, value in originals.items():
                             setattr(req, name, value)
+                        req.contexts = original_contexts
                         raise
                 self.adapter.set_event_extra(
                     event, REQUEST_HANDLED_EXTRA, (req, rail_context.input_blocked)

@@ -95,7 +95,9 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
         self.entry.uninstall()
         Runner.reset = self.original_reset
 
-    async def policy(self, target="system_suffix", *, block=False, error=False):
+    async def policy(
+        self, target="system_suffix", *, block=False, error=False, extra_components=()
+    ):
         rules = [RuleDefinition("check", "plain_keywords", {"keywords": ["deny"]})]
         if error:
             rules = [RuleDefinition("check", "llm_review", {"audit_prompt": "review"})]
@@ -114,13 +116,18 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
             }),
             # These would visibly block or route if the bridge ran Step 1/2.
             PolicyComponent("input_stop", "random_signal", "input_rail", action_on_hit="block", config={"probability": 1.0}),
+            *extra_components,
         ]
+        extra_order = tuple(component.node_id for component in extra_components)
         library = PolicyLibrary(rules=tuple(rules), policies=(PolicyDefinition(
             "agent_policy", "Agent policy", bindings=(PolicyRuleBinding(
                 "check", "request_rail", action_on_hit="block" if block else "observe",
                 action_on_error="block" if error else "discard",
             ), PolicyRuleBinding("output_check", "output_rail", action_on_hit="observe")), components=tuple(components),
-            node_order=("input_stop", "agent_entry", "check", "prepared", "strengthen", "output_check"),
+            node_order=(
+                "input_stop", "agent_entry", "check", "prepared", "strengthen",
+                *extra_order, "output_check",
+            ),
         ),), active_policy_id="agent_policy")
         result = await self.plugin.snapshot_manager.publish_policy_library(
             library, expected_revision=self.plugin.snapshot_manager.current.revision
@@ -191,6 +198,31 @@ class AgentEntryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(provider.calls), 1)
         _, req2, _, _, _ = await self.run_request(FakeRequest("two", "base"), event)
         self.assertIn("ADDED two", req2.system_prompt)
+
+    async def test_agent_entry_writes_style_dialogs_back_to_request_contexts(self):
+        await self.policy(
+            extra_components=(
+                PolicyComponent(
+                    "style",
+                    "style_dialogs",
+                    "prompt_rail",
+                    config={
+                        "pairs": [{"user": "u1", "assistant": "a1"}],
+                        "position": "front",
+                    },
+                ),
+            )
+        )
+        request = FakeRequest("actual request", "base")
+        request.contexts = [{"role": "assistant", "content": "previous"}]
+
+        _event, req, _provider, _runner, _responses = await self.run_request(request)
+
+        self.assertEqual(
+            [entry["content"] for entry in req.contexts[:2]], ["u1", "a1"]
+        )
+        self.assertEqual(req.contexts[2]["content"], "previous")
+        self.assertTrue(req.contexts[0]["_no_save"])
 
     async def test_block_never_calls_provider_and_gate_survives_uninstall(self):
         await self.policy(block=True)

@@ -349,6 +349,8 @@ class GuardrailPipeline:
             self._store_context(event, context)
             return context
 
+        self._normalize_style_dialogs_contexts(request, context)
+
         request_origin = self.adapter.get_request_prompt(request) or context.current_input
         origin_result = self.adapter.set_event_extra(
             event, REQUEST_ORIGIN_EXTRA_KEY, request_origin
@@ -1252,6 +1254,8 @@ class GuardrailPipeline:
                     return execution
                 elif rule.template_key == "strengthen_prompt":
                     return NodeExecution(result=self._execute_strengthen_prompt(rule, ctx))
+                elif rule.template_key == "style_dialogs":
+                    return NodeExecution(result=self._execute_style_dialogs(rule, ctx))
                 else:
                     result = skipped_result(rule, "unsupported_template")
             except Exception as exc:
@@ -1337,6 +1341,68 @@ class GuardrailPipeline:
             matched=adapter_result.success,
             metadata={"target": target, "text_length": len(insertion_text)},
         )
+
+    def _execute_style_dialogs(
+        self, rule: NormalizedRule, context: RailContext
+    ) -> RuleResult:
+        pairs = rule.config.get("pairs", [])
+        dialogs = [
+            str(text)
+            for pair in pairs
+            if isinstance(pair, dict)
+            for text in (pair.get("user", ""), pair.get("assistant", ""))
+        ]
+        position = str(rule.config.get("position", "front"))
+        persona_mode = str(rule.config.get("persona_dialogs", "keep"))
+        if not dialogs and persona_mode != "discard":
+            return make_result(
+                rule, matched=False, metadata={"reason": "empty_dialogs"}
+            )
+
+        adapter_result = self.adapter.insert_begin_dialogs(
+            context.request,
+            dialogs,
+            position,
+            node_id=rule.rule_id,
+            discard_persona=persona_mode == "discard",
+        )
+        context.warnings.extend(adapter_result.warnings)
+        if adapter_result.success:
+            context.prompt_mutations.append(
+                {
+                    "rule_id": rule.rule_id,
+                    "kind": "style_dialogs",
+                    "target": position,
+                    "count": len(pairs),
+                    "persona_dialogs": persona_mode,
+                }
+            )
+        return make_result(
+            rule,
+            matched=adapter_result.success,
+            metadata={
+                "position": position,
+                "persona_dialogs": persona_mode,
+                "pairs": len(pairs),
+                **adapter_result.metadata,
+            },
+        )
+
+    def _normalize_style_dialogs_contexts(
+        self, request: Any, context: RailContext
+    ) -> None:
+        """Repair a JSON-string contexts value once, before policy nodes run."""
+
+        prompt_rail = self.config.rails["prompt_rail"]
+        if not prompt_rail.enabled:
+            return
+        if not any(
+            node.template_key == "style_dialogs" and node.enabled and node.valid
+            for node in prompt_rail.nodes
+        ):
+            return
+        result = self.adapter.normalize_request_contexts(request)
+        context.warnings.extend(result.warnings)
 
     async def _run_routing_rail(self, rail: NormalizedRail, context: RailContext) -> None:
         await self._log_step_provider(rail, context)

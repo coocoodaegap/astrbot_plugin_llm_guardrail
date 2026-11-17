@@ -4,7 +4,7 @@
 
 `LLM Guardrail` 不是只做关键词拦截的安全插件。它把一次 LLM 请求拆为五个明确阶段，让你按策略组合本地检测、RAG/LLM 复核、提示词加固、Provider 路由和输出处置，同时保留清晰的依赖、日志和会话状态边界。
 
-> 当前为 **v0.8.4 测试版**。欢迎用于真实群聊或私聊环境，但建议先从观察模式和少量策略开始配置。
+> 当前为 **v0.9.0 测试版**。欢迎用于真实群聊或私聊环境，但建议先从观察模式和少量策略开始配置。
 
 ## 能做什么
 
@@ -25,7 +25,7 @@
 | 能力 | 说明 |
 | --- | --- |
 | 输入与最终请求检查 | 支持关键词、正则、本地检测元件、逻辑门、RAG 与 LLM 复核；可观察、净化或阻断。 |
-| 提示词加固 | Step 4 策略元件可读取系统常量及此前节点 payload，并向 system prompt、临时上下文或输入包装注入动态文本。 |
+| 提示词加固 | Step 4 策略元件可读取系统常量及此前节点 payload，并向 system prompt、临时上下文或输入包装注入动态文本；`style_dialogs` 可注入成对 user/assistant 示例对话，用真实对话轮强化角色语气。 |
 | Provider 路由 | 支持策略内 first-hit 路由，在本轮请求中选择聊天 Provider。 |
 | 输出检查 | 支持质量、格式、敏感回显、元数据泄露、拒答泄露、语言漂移等检测，以及观察、净化、阻断。 |
 | 有界输出重试 | Step 5 命中 `retry_generation` 时，只使用本轮实际 Provider 重新生成并再次检查输出；通过才交付，失败或耗尽则一次性阻断。 |
@@ -86,6 +86,7 @@ git clone https://github.com/coocoodaegap/astrbot_plugin_llm_guardrail.git
 - 重试不会重新进入完整 AstrBot hook 链，也不会重跑 Step 1 至 Step 4；它不会切换模型或使用备用 Provider。
 - `${node_id.field}` 是同策略、同次执行内的非阻塞数据引用。需要等候来源结果时，请显式配置 `depend_on`（通常使用 `?source`）。
 - 终止性 `block` 优先于输出重定向和 `retry_generation`。多轮升级判断、备用 Provider、流式检测、通用 `payload_schema` 与自定义检测器均未默认启用。
+- `style_dialogs` 注入的对话轮只属于当前请求，带 `_no_save`，不写入对话历史；`persona_dialogs=discard` 只影响本次请求的人设预设对话，且无法精确区分其他插件在头部注入的 `_no_save` 条目，属于 best-effort。
 
 ## 配置与管理
 

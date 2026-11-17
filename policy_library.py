@@ -54,6 +54,7 @@ CONTEXT_EXTRACTOR_COMPONENT_TYPE = "context_extractor"
 COMPOSE_TEXT_COMPONENT_TYPE = "compose_text"
 RANDOM_SIGNAL_COMPONENT_TYPE = "random_signal"
 STRENGTHEN_PROMPT_COMPONENT_TYPE = "strengthen_prompt"
+STYLE_DIALOGS_COMPONENT_TYPE = "style_dialogs"
 
 
 @dataclass(frozen=True)
@@ -688,6 +689,7 @@ class PolicyLibrary:
         for policy in self.policies:
             fatal_errors.extend(_validate_context_extractor_payload_uses(policy))
             fatal_errors.extend(_validate_compose_text_payload_uses(policy))
+            warnings.extend(_validate_style_dialogs_policy(policy))
             dependency_validation = _validate_policy_dependency_graph(policy, rule_by_id)
             fatal_errors.extend(dependency_validation.fatal_errors)
             warnings.extend(dependency_validation.warnings)
@@ -1128,6 +1130,35 @@ def _policy_dependency_references(
         for value in _clean_string_list(config.get("inputs")):
             references.append((component.node_id, value, "logic input"))
     return references
+
+
+def _validate_style_dialogs_policy(policy: PolicyDefinition) -> list[str]:
+    """Warn about persona-dialog keep/discard combinations, never fatal."""
+
+    modes: list[tuple[str, str]] = []
+    for component in policy.components:
+        if component.component_type != STYLE_DIALOGS_COMPONENT_TYPE:
+            continue
+        config = component.config if isinstance(component.config, Mapping) else {}
+        mode = str(config.get("persona_dialogs") or "keep").strip().lower()
+        modes.append((component.node_id, mode))
+    if not any(mode == "discard" for _, mode in modes):
+        return []
+
+    warnings: list[str] = []
+    if any(mode == "keep" for _, mode in modes):
+        warnings.append(
+            f"policy {policy.policy_id} mixes persona_dialogs keep and discard; "
+            "discard wins for the persona preset dialogs only, and never removes "
+            "style_dialogs entries"
+        )
+    discard_nodes = [node_id for node_id, mode in modes if mode == "discard"]
+    if len(discard_nodes) > 1:
+        warnings.append(
+            f"policy {policy.policy_id} configures persona_dialogs discard more than "
+            f"once ({', '.join(discard_nodes)}); extra discards are no-ops"
+        )
+    return warnings
 
 
 def _validate_sensitive_echo_component(
