@@ -1575,7 +1575,7 @@ const componentDefinitions = {
       {
         key: "position",
         label: "插入位置",
-        hint: "front：人设预设对话之后、历史之前；tail：历史末尾、贴近当前消息。",
+        hint: "front：人设预设对话之后、历史之前；tail：紧邻当前用户消息之前。",
         type: "select",
         default: "front",
         options: [["front", "人设之后（front）"], ["tail", "历史末尾（tail）"]],

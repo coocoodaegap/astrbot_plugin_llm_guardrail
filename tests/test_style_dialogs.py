@@ -107,6 +107,23 @@ class StyleDialogsAdapterTests(unittest.TestCase):
         self.assertEqual(request.contexts[-2]["content"], "u1")
         self.assertEqual(request.contexts[-1]["content"], "a1")
 
+    def test_tail_stops_before_trailing_user_when_prompt_is_empty(self):
+        request = FakeRequest("")
+        request.contexts = [
+            {"role": "assistant", "content": "previous"},
+            {"role": "user", "content": "current"},
+        ]
+
+        result = self.adapter.insert_begin_dialogs(
+            request, ["u1", "a1"], "tail", node_id="n1"
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            [entry.get("content") for entry in request.contexts],
+            ["previous", "u1", "a1", "current"],
+        )
+
     def test_second_run_replaces_instead_of_duplicating(self):
         request = _request([*PERSONA_TURNS])
 

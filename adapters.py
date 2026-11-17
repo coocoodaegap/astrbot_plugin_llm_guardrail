@@ -798,6 +798,16 @@ class AstrBotAdapter:
                 index += 1
         else:
             index = len(filtered)
+            current_prompt = str(getattr(request, "prompt", "") or "").strip()
+            if (
+                not current_prompt
+                and filtered
+                and isinstance(filtered[-1], dict)
+                and filtered[-1].get("role") == "user"
+            ):
+                # The host already placed the current user message inside
+                # contexts (no separate prompt); keep style turns before it.
+                index -= 1
 
         entries = [
             {
