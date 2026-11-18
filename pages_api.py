@@ -62,6 +62,7 @@ class GuardrailPagesApiMixin:
             ("get_session_policy_states", self._pages_get_session_policy_states, ["GET"], "List observed UMO policy states"),
             ("get_session_policy_state", self._pages_get_session_policy_state, ["GET"], "Get one observed UMO policy state"),
             ("delete_session_policy_state", self._pages_delete_session_policy_state, ["POST"], "Delete all observed state for one UMO"),
+            ("get_token_usage", self._pages_get_token_usage, ["GET"], "Get the read-only Token usage ledger"),
             ("set_umo_policy_selection", self._pages_set_umo_policy_selection, ["POST"], "Set or clear one UMO explicit policy selection"),
             ("get_rag_experiences", self._pages_get_rag_experiences, ["GET"], "List RAG experience records"),
             ("get_rag_experience", self._pages_get_rag_experience, ["GET"], "Get one RAG experience record"),
@@ -114,6 +115,7 @@ class GuardrailPagesApiMixin:
                     },
                     "access_control": dict(config.access_control),
                     "session_policy_state": dict(config.session_policy_state),
+                    "token_usage": dict(config.token_usage),
                     "debug_settings": dict(config.debug_settings),
                 },
                 "schema": _load_system_settings_schema(),
@@ -247,6 +249,7 @@ class GuardrailPagesApiMixin:
                 "session_control",
                 "access_control",
                 "session_policy_state",
+                "token_usage",
                 "debug_settings",
             )
         }
@@ -474,6 +477,58 @@ class GuardrailPagesApiMixin:
         if not result.success:
             return self._pages_error(result.warning or "Session-policy state was not deleted.")
         return jsonify({"success": True, "found": result.found})
+
+    async def _pages_get_token_usage(self):
+        """Return the read-only Token usage ledger for Pages."""
+
+        service = getattr(self, "token_usage", None)
+        if service is None:
+            return self._pages_error("Token usage service is unavailable", 503)
+        scope = str(self._pages_query_value("scope", "global") or "global").strip().lower()
+        if scope not in {"global", "umo"}:
+            return self._pages_error("scope must be global or umo")
+        umo = str(self._pages_query_value("umo", "") or "").strip()
+        if scope == "umo" and not umo:
+            return self._pages_error("umo is required for scope=umo")
+        raw_days = str(self._pages_query_value("days", "7") or "7").strip()
+        try:
+            days = int(raw_days)
+        except (TypeError, ValueError):
+            return self._pages_error("days must be an integer")
+        snapshot = await service.snapshot(
+            scope=scope,
+            umo=umo,
+            days=days,
+            settings=self._pages_token_usage_settings(),
+        )
+        if not snapshot.success:
+            return self._pages_error(snapshot.warning or "Token usage is unavailable", 503)
+        return jsonify(
+            {
+                "success": True,
+                "scope": snapshot.scope,
+                "umo": snapshot.umo,
+                "totals": snapshot.totals,
+                "by_day": snapshot.by_day,
+                "by_task": snapshot.by_task,
+                "by_provider": snapshot.by_provider,
+                "recent": snapshot.recent,
+                "unaccounted": snapshot.unaccounted,
+                "other_calls": snapshot.other_calls,
+                "updated_at": snapshot.updated_at,
+            }
+        )
+
+    def _pages_token_usage_settings(self) -> dict[str, Any]:
+        try:
+            settings = self.snapshot_manager.current.runtime_config.token_usage
+            if isinstance(settings, dict):
+                return settings
+        except Exception:
+            pass
+        config = getattr(self, "normalized_config", None)
+        settings = getattr(config, "token_usage", None)
+        return settings if isinstance(settings, dict) else {}
 
     def _pages_umo_policy_selection_payload(self, umo: str) -> dict[str, Any]:
         """Describe persisted selection and current effective resolution for Pages."""
@@ -970,6 +1025,7 @@ def _load_system_settings_schema() -> dict[str, Any]:
             "session_control",
             "access_control",
             "session_policy_state",
+            "token_usage",
             "debug_settings",
         )
         if isinstance(raw_schema.get(key), dict)
@@ -987,6 +1043,7 @@ def _validate_system_settings_payload(
         "session_control",
         "access_control",
         "session_policy_state",
+        "token_usage",
         "debug_settings",
     }
     if set(settings) != expected_groups:
@@ -1058,6 +1115,24 @@ def _validate_system_settings_payload(
                 not isinstance(value, int) or isinstance(value, bool) or value < 1
             ):
                 diagnostics.append(f"{label} must be a positive integer")
+            if label == "token_usage.retention_days" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 1
+                or value > 365
+            ):
+                diagnostics.append(f"{label} must be within 1..365")
+            if label == "token_usage.max_umo_records" and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 1
+            ):
+                diagnostics.append(f"{label} must be a positive integer")
+            if label == "token_usage.recent_limit" and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 1
+                or value > 500
+            ):
+                diagnostics.append(f"{label} must be within 1..500")
     return diagnostics
 
 

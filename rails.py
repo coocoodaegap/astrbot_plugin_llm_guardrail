@@ -2050,6 +2050,7 @@ class GuardrailPipeline:
             query=inspected_text,
             top_k=int(rule.config.get("top_k", 5) or 5),
             timeout_seconds=float(rule.config.get("timeout_seconds", 0.0) or 0.0),
+            event=context.event,
         )
         if not adapter_result.success:
             return self._make_rule_error_execution(
@@ -2198,6 +2199,7 @@ class GuardrailPipeline:
                     query=text,
                     top_k=int(source.config.get("top_k", 5) or 5),
                     timeout_seconds=float(source.config.get("timeout_seconds", 0.0) or 0.0),
+                    event=context.event,
                 )
             if not adapter_result.success:
                 raise RuntimeError("virtual rag recheck is unavailable")
@@ -2221,6 +2223,7 @@ class GuardrailPipeline:
                         str(source.config.get("audit_prompt", ""))
                     ),
                     timeout_seconds=float(source.config.get("timeout_seconds", 0.0) or 0.0),
+                    purpose="recheck",
                 )
             if not adapter_result.success:
                 raise RuntimeError("virtual llm recheck is unavailable")

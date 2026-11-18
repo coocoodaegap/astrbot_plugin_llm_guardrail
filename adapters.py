@@ -96,9 +96,121 @@ class AstrBotAdapter:
 
     def __init__(self, context: Any | None = None) -> None:
         self.context = context
+        self._usage_sink: Any = None
+        self._usage_sink_warned = False
+
+    def set_usage_sink(self, sink: Any) -> None:
+        """Register the single accounting choke point for internal LLM calls."""
+
+        self._usage_sink = sink if callable(sink) else None
+
+    async def _emit_usage(
+        self,
+        *,
+        kind: str,
+        event: Any,
+        task: str = "",
+        provider_id: str = "",
+        prompt: str = "",
+        completion: str = "",
+        response: Any = None,
+        elapsed_ms: int = 0,
+        success: bool = True,
+        error: str = "",
+    ) -> None:
+        """Forward one observed call to the ledger without ever raising."""
+
+        sink = self._usage_sink
+        if sink is None:
+            return
+        try:
+            await sink(
+                kind=kind,
+                event=event,
+                task=task,
+                provider_id=provider_id,
+                prompt=prompt,
+                completion=completion,
+                response=response,
+                elapsed_ms=max(0, int(elapsed_ms or 0)),
+                success=bool(success),
+                error=str(error or ""),
+            )
+        except Exception as exc:  # Accounting must never break the caller.
+            if not self._usage_sink_warned:
+                self._usage_sink_warned = True
+                try:
+                    from astrbot.api import logger
+
+                    logger.warning("[LLMGuardrail] token usage sink failed: %s", exc)
+                except Exception:
+                    pass
 
     def get_umo(self, event: Any) -> str:
         return str(getattr(event, "unified_msg_origin", "") or "")
+
+    def estimate_request_tokens(self, request: Any) -> int:
+        """Estimate prompt tokens for one ProviderRequest.
+
+        Only the estimate is retained by callers; the flattened prompt text is
+        discarded immediately.
+        """
+
+        try:
+            from .token_usage import estimate_token_count
+        except ImportError:  # pragma: no cover - direct script loading
+            from token_usage import estimate_token_count
+        return estimate_token_count(self._request_text_for_usage(request))
+
+    def _request_text_for_usage(self, request: Any) -> str:
+        if request is None:
+            return ""
+        parts: list[str] = []
+        for attr in ("system_prompt", "prompt"):
+            value = getattr(request, attr, None)
+            text = self._content_text_for_usage(value)
+            if text:
+                parts.append(text)
+        contexts = getattr(request, "contexts", None)
+        if isinstance(contexts, (list, tuple)):
+            for item in contexts:
+                if not isinstance(item, Mapping):
+                    continue
+                role = str(item.get("role") or "").strip()
+                text = self._content_text_for_usage(item.get("content"))
+                if text:
+                    parts.append(f"{role}: {text}" if role else text)
+        extra_parts = getattr(request, "extra_user_content_parts", None)
+        if isinstance(extra_parts, (list, tuple)) and extra_parts:
+            text = self._content_text_for_usage(extra_parts)
+            if text:
+                parts.append(text)
+        image_count = len(getattr(request, "image_urls", None) or [])
+        audio_count = len(getattr(request, "audio_urls", None) or [])
+        if image_count:
+            parts.append(f"[images] x{image_count}")
+        if audio_count:
+            parts.append(f"[audio] x{audio_count}")
+        return "\n\n".join(parts).strip()
+
+    @classmethod
+    def _content_text_for_usage(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, Mapping):
+            if str(value.get("type") or "") == "text":
+                return str(value.get("text") or "")
+            return str(value.get("text") or value.get("content") or "")
+        if isinstance(value, (list, tuple)):
+            return "\n".join(
+                text for text in (cls._content_text_for_usage(item) for item in value) if text
+            )
+        text = getattr(value, "text", None)
+        return text if isinstance(text, str) else ""
 
     def get_principal_parts(self, event: Any) -> tuple[str, str] | None:
         """Return AstrBot's platform/user identity without deriving it from UMO.
@@ -934,6 +1046,39 @@ class AstrBotAdapter:
         prompt: str,
         system_prompt: str,
         timeout_seconds: float = 0.0,
+        *,
+        purpose: str = "review",
+    ) -> AdapterResult:
+        """Review call wrapper that also reports usage to the ledger."""
+
+        started_at = time.monotonic()
+        result = await self._request_llm_text_impl(
+            event, provider_id, prompt, system_prompt, timeout_seconds
+        )
+        attempted = bool(result.metadata.pop("_usage_attempted", False))
+        response = result.metadata.pop("_usage_response", None)
+        if attempted:
+            await self._emit_usage(
+                kind="llm",
+                event=event,
+                task="guardrail_recheck" if purpose == "recheck" else "guardrail_review",
+                provider_id=str(result.metadata.get("provider_id", "") or provider_id),
+                prompt=f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
+                completion=str(result.metadata.get("text", "") or ""),
+                response=response,
+                elapsed_ms=_elapsed_milliseconds(started_at),
+                success=bool(result.success),
+                error="" if result.success else "; ".join(result.warnings),
+            )
+        return result
+
+    async def _request_llm_text_impl(
+        self,
+        event: Any,
+        provider_id: str,
+        prompt: str,
+        system_prompt: str,
+        timeout_seconds: float = 0.0,
     ) -> AdapterResult:
         if self.context is None:
             return AdapterResult(False, ["llm context is unavailable"])
@@ -982,23 +1127,29 @@ class AstrBotAdapter:
             return AdapterResult(
                 False,
                 [f"llm review timed out after {timeout_seconds:g}s"],
-                {"provider_id": target_provider_id},
+                {"provider_id": target_provider_id, "_usage_attempted": True},
             )
         except Exception as exc:
             return AdapterResult(
                 False,
                 [f"llm review call failed: {type(exc).__name__}: {exc}"],
-                {"provider_id": target_provider_id},
+                {"provider_id": target_provider_id, "_usage_attempted": True},
             )
 
         if isinstance(response, AdapterResult):
             response.metadata.setdefault("provider_id", target_provider_id)
+            response.metadata.setdefault("_usage_attempted", True)
             return response
 
         text = str(getattr(response, "completion_text", "") or "")
         return AdapterResult(
             True,
-            metadata={"provider_id": target_provider_id, "text": text},
+            metadata={
+                "provider_id": target_provider_id,
+                "text": text,
+                "_usage_attempted": True,
+                "_usage_response": response,
+            },
         )
 
     async def capture_retry_request_snapshot(
@@ -1077,6 +1228,37 @@ class AstrBotAdapter:
         return AdapterResult(True, metadata={"snapshot": snapshot})
 
     async def regenerate_llm_text(
+        self,
+        event: Any,
+        snapshot: RetryRequestSnapshot,
+        prompt: str,
+        *,
+        timeout_seconds: float,
+    ) -> AdapterResult:
+        """Retry wrapper that also reports usage to the ledger."""
+
+        started_at = time.monotonic()
+        result = await self._regenerate_llm_text_impl(
+            event, snapshot, prompt, timeout_seconds=timeout_seconds
+        )
+        attempted = bool(result.metadata.pop("_usage_attempted", False))
+        response = result.metadata.pop("_usage_response", None)
+        if attempted:
+            await self._emit_usage(
+                kind="llm",
+                event=event,
+                task="guardrail_retry",
+                provider_id=str(result.metadata.get("provider_id", "") or snapshot.provider_id),
+                prompt=f"{snapshot.system_prompt}\n\n{prompt}" if snapshot.system_prompt else prompt,
+                completion=str(result.metadata.get("text", "") or ""),
+                response=response,
+                elapsed_ms=_elapsed_milliseconds(started_at),
+                success=bool(result.success),
+                error="" if result.success else "; ".join(result.warnings),
+            )
+        return result
+
+    async def _regenerate_llm_text_impl(
         self,
         event: Any,
         snapshot: RetryRequestSnapshot,
@@ -1170,6 +1352,7 @@ class AstrBotAdapter:
                     "provider_id": snapshot.provider_id,
                     "provider_source": provider_source,
                     "elapsed_ms": _elapsed_milliseconds(started_at),
+                    "_usage_attempted": True,
                 },
             )
         except asyncio.CancelledError:
@@ -1180,6 +1363,7 @@ class AstrBotAdapter:
                     "provider_id": snapshot.provider_id,
                     "provider_source": provider_source,
                     "elapsed_ms": _elapsed_milliseconds(started_at),
+                    "_usage_attempted": True,
                 },
             )
         except Exception as exc:
@@ -1190,6 +1374,7 @@ class AstrBotAdapter:
                     "provider_id": snapshot.provider_id,
                     "provider_source": provider_source,
                     "elapsed_ms": _elapsed_milliseconds(started_at),
+                    "_usage_attempted": True,
                 },
             )
 
@@ -1203,6 +1388,8 @@ class AstrBotAdapter:
                     "provider_id": snapshot.provider_id,
                     "provider_source": provider_source,
                     "elapsed_ms": _elapsed_milliseconds(started_at),
+                    "_usage_attempted": True,
+                    "_usage_response": response,
                 },
             )
         if not isinstance(text, str) or not text.strip():
@@ -1213,6 +1400,8 @@ class AstrBotAdapter:
                     "provider_id": snapshot.provider_id,
                     "provider_source": provider_source,
                     "elapsed_ms": _elapsed_milliseconds(started_at),
+                    "_usage_attempted": True,
+                    "_usage_response": response,
                 },
             )
         return AdapterResult(
@@ -1222,6 +1411,8 @@ class AstrBotAdapter:
                 "provider_source": provider_source,
                 "elapsed_ms": _elapsed_milliseconds(started_at),
                 "text": text,
+                "_usage_attempted": True,
+                "_usage_response": response,
             },
         )
 
@@ -1231,6 +1422,7 @@ class AstrBotAdapter:
         query: str,
         top_k: int,
         timeout_seconds: float = 0.0,
+        event: Any = None,
     ) -> AdapterResult:
         if self.context is None:
             return AdapterResult(False, ["knowledge base context is unavailable"])
@@ -1259,18 +1451,21 @@ class AstrBotAdapter:
                 else await call()
             )
         except TimeoutError:
+            await self._emit_usage(kind="retrieval", event=event, success=False)
             return AdapterResult(
                 False,
                 [f"rag search timed out after {timeout_seconds:g}s"],
                 {"knowledge_bases": kb_refs},
             )
         except Exception as exc:
+            await self._emit_usage(kind="retrieval", event=event, success=False)
             return AdapterResult(
                 False,
                 [f"rag search failed: {type(exc).__name__}: {exc}"],
                 {"knowledge_bases": kb_refs},
             )
 
+        await self._emit_usage(kind="retrieval", event=event, success=True)
         evidence = self._normalize_kb_evidence(raw_result, top_k)
         return AdapterResult(
             True,

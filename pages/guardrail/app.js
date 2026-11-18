@@ -5545,11 +5545,162 @@ function applySharedConstantsPayload(payload) {
   renderSharedConstantsEditor(payload.constants);
   return true;
 }
+const tokenUsageScope = $("token-usage-scope"),
+  tokenUmoRow = $("token-umo-row"),
+  tokenUsageUmo = $("token-usage-umo"),
+  tokenUsageDays = $("token-usage-days"),
+  refreshTokenUsage = $("refresh-token-usage"),
+  tokenUsageStatus = $("token-usage-status"),
+  tokenTotal = $("token-total"),
+  tokenTotalNote = $("token-total-note"),
+  tokenToday = $("token-today"),
+  tokenEstimated = $("token-estimated"),
+  tokenUnaccountedTotal = $("token-unaccounted-total"),
+  tokenUnaccountedDetail = $("token-unaccounted-detail"),
+  tokenByDayBody = $("token-by-day"),
+  tokenByTaskList = $("token-by-task"),
+  tokenByProviderList = $("token-by-provider"),
+  tokenOtherCalls = $("token-other-calls"),
+  tokenRecentBody = $("token-recent");
+let tokenUsageEpoch = 0;
+function formatTokenCount(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "0";
+}
+function maskTokenUmo(value) {
+  const text = String(value || "").trim();
+  if (!text) return "—";
+  if (text.length <= 4) {
+    return `${text.slice(0, 1)}${"*".repeat(Math.max(0, text.length - 2))}${text.slice(-1)}`;
+  }
+  return `${text.slice(0, 2)}…${text.slice(-2)}`;
+}
+function appendTokenRow(body, values) {
+  const row = document.createElement("tr");
+  for (const value of values) {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    row.append(cell);
+  }
+  body.append(row);
+}
+function renderTokenRank(list, items, emptyLabel) {
+  list.replaceChildren();
+  const entries = Array.isArray(items) ? items : [];
+  if (!entries.length) {
+    const item = document.createElement("li");
+    item.className = "muted";
+    item.textContent = emptyLabel;
+    list.append(item);
+    return;
+  }
+  for (const entry of entries) {
+    const item = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = entry.name || "—";
+    const value = document.createElement("span");
+    value.textContent = formatTokenCount(entry.total_tokens);
+    item.append(name, value);
+    list.append(item);
+  }
+}
+function renderTokenUsage(payload) {
+  const totals = payload.totals || {};
+  const total = Number(totals.total_tokens || 0);
+  const estimated = Number(totals.estimated_tokens || 0);
+  const ratio = Number(totals.estimated_ratio || 0);
+  tokenTotal.textContent = formatTokenCount(total);
+  tokenTotalNote.textContent = `输入 ${formatTokenCount(totals.prompt_tokens)} / 输出 ${formatTokenCount(totals.completion_tokens)} / 估算 ${formatTokenCount(estimated)}`;
+  const byDay = Array.isArray(payload.by_day) ? payload.by_day : [];
+  const latest = byDay.length ? byDay[byDay.length - 1] : null;
+  tokenToday.textContent = formatTokenCount(latest ? latest.total_tokens : 0);
+  const estimateShare = total > 0 ? Math.max(ratio, estimated / total) : 0;
+  tokenEstimated.textContent = `${(estimateShare * 100).toFixed(1)}%`;
+  const unaccounted = payload.unaccounted || {};
+  const unaccountedTotal = ["stream_chunk", "aborted_partial", "error_no_usage", "missing_usage"]
+    .reduce((sum, key) => sum + Number(unaccounted[key] || 0), 0);
+  tokenUnaccountedTotal.textContent = formatTokenCount(unaccountedTotal);
+  tokenUnaccountedDetail.textContent =
+    `逐 chunk ${unaccounted.stream_chunk || 0} · 中止 ${unaccounted.aborted_partial || 0} · `
+    + `错误无 usage ${unaccounted.error_no_usage || 0} · 关闭估算 ${unaccounted.missing_usage || 0}`;
+  tokenByDayBody.replaceChildren();
+  if (!byDay.length) {
+    appendTokenRow(tokenByDayBody, ["—", "0", "0", "0", "0", "0"]);
+  } else {
+    for (const day of [...byDay].reverse()) {
+      appendTokenRow(tokenByDayBody, [
+        day.day || "—",
+        formatTokenCount(day.calls),
+        formatTokenCount(day.prompt_tokens),
+        formatTokenCount(day.completion_tokens),
+        formatTokenCount(day.total_tokens),
+        formatTokenCount(day.estimated_tokens),
+      ]);
+    }
+  }
+  renderTokenRank(tokenByTaskList, payload.by_task, "暂无任务数据");
+  renderTokenRank(tokenByProviderList, payload.by_provider, "暂无 Provider 数据");
+  const other = payload.other_calls || {};
+  tokenOtherCalls.textContent =
+    `RAG 检索：${formatTokenCount(other.retrieval)} 次`
+    + `（失败 ${formatTokenCount(other.retrieval_failed)}；不可观测，未折算 Token）`;
+  const recent = Array.isArray(payload.recent) ? payload.recent : [];
+  tokenRecentBody.replaceChildren();
+  if (!recent.length) {
+    appendTokenRow(tokenRecentBody, ["—", "—", "—", "—", "0", "—"]);
+  } else {
+    for (const entry of recent) {
+      const source = entry.usage_source || (entry.estimated ? "estimated" : "");
+      appendTokenRow(tokenRecentBody, [
+        entry.time || "—",
+        entry.task || "—",
+        entry.provider || "(default)",
+        maskTokenUmo(entry.umo),
+        formatTokenCount(entry.total_tokens),
+        source || "—",
+      ]);
+    }
+  }
+  tokenUsageStatus.textContent = payload.updated_at
+    ? `最后写入：${new Date(Number(payload.updated_at) * 1000).toLocaleString("zh-CN")}`
+    : "暂无记录";
+}
+async function loadTokenUsage() {
+  if (!bridge) return;
+  const epoch = ++tokenUsageEpoch;
+  const scope = tokenUsageScope.value === "umo" ? "umo" : "global";
+  const umo = tokenUsageUmo.value.trim();
+  if (scope === "umo" && !umo) {
+    tokenUsageStatus.textContent = "请先输入 UMO 再刷新。";
+    return;
+  }
+  const params = { scope, days: tokenUsageDays.value };
+  if (scope === "umo") params.umo = umo;
+  tokenUsageStatus.textContent = "正在读取 Token 账本…";
+  try {
+    const payload = await bridge.apiGet("get_token_usage", params);
+    if (epoch !== tokenUsageEpoch || activeTabName !== "token") return;
+    if (!payload || payload.success === false) {
+      throw new Error(payload?.error || "Token 账本不可用");
+    }
+    renderTokenUsage(payload);
+  } catch (error) {
+    if (epoch !== tokenUsageEpoch) return;
+    tokenUsageStatus.textContent =
+      `读取失败：${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+tokenUsageScope.addEventListener("change", () => {
+  tokenUmoRow.hidden = tokenUsageScope.value !== "umo";
+  void loadTokenUsage();
+});
+tokenUsageDays.addEventListener("change", () => void loadTokenUsage());
+refreshTokenUsage.addEventListener("click", () => void loadTokenUsage());
 async function loadTabData(name) {
   if (!bridge) return;
   const epoch = ++tabLoadEpoch;
   const isCurrent = () => epoch === tabLoadEpoch && activeTabName === name;
-  status.textContent = `正在刷新${({ overview: "总览", rules: "规则库", policies: "策略编排", access: "访问控制", knowledge: "知识库经验", session: "会话策略监控", system: "系统设置" })[name] || "页面"}…`;
+  status.textContent = `正在刷新${({ overview: "总览", rules: "规则库", policies: "策略编排", access: "访问控制", knowledge: "知识库经验", session: "会话策略监控", token: "Token 用量", system: "系统设置" })[name] || "页面"}…`;
   try {
     if (name === "overview") {
       const [overviewResult, diagnosticsResult] = await Promise.all([
@@ -5595,6 +5746,8 @@ async function loadTabData(name) {
       await refreshSessionPolicyStates();
     } else if (name === "knowledge") {
       await refreshRagExperiences();
+    } else if (name === "token") {
+      await loadTokenUsage();
     }
     if (isCurrent()) status.textContent = "";
   } catch (error) {

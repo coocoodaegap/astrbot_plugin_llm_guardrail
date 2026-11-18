@@ -16,6 +16,7 @@ from session_lock import PrincipalLockManager, UmoLockManager
 from session_policy_state import SessionPolicyStateService
 from snapshots import ConfigSnapshotManager
 from state import MemoryStateStore
+from token_usage import TokenUsageService
 
 
 class _Context:
@@ -103,6 +104,7 @@ class _Plugin(GuardrailPagesApiMixin):
             session_locks=UmoLockManager(),
         )
         self.rag_experience = RagExperienceService(self.state_store)
+        self.token_usage = TokenUsageService(self.state_store)
 
 
 class _Request:
@@ -143,6 +145,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
             "/astrbot_plugin_llm_guardrail/get_session_policy_states",
             "/astrbot_plugin_llm_guardrail/get_session_policy_state",
             "/astrbot_plugin_llm_guardrail/delete_session_policy_state",
+            "/astrbot_plugin_llm_guardrail/get_token_usage",
             "/astrbot_plugin_llm_guardrail/set_umo_policy_selection",
             "/astrbot_plugin_llm_guardrail/get_rag_experiences",
             "/astrbot_plugin_llm_guardrail/get_rag_experience",
@@ -363,6 +366,7 @@ class GuardrailPagesApiTests(unittest.TestCase):
                 "session_control",
                 "access_control",
                 "session_policy_state",
+                "token_usage",
                 "debug_settings",
             },
         )
@@ -376,8 +380,62 @@ class GuardrailPagesApiTests(unittest.TestCase):
         )
         self.assertTrue(result["settings"]["session_policy_state"]["enabled"])
         self.assertEqual(result["settings"]["session_policy_state"]["state_ttl_seconds"], 604800)
+        self.assertTrue(result["settings"]["token_usage"]["enabled"])
+        self.assertEqual(result["settings"]["token_usage"]["retention_days"], 31)
+        self.assertTrue(result["settings"]["token_usage"]["read_agent_run_stats"])
         self.assertFalse(result["settings"]["debug_settings"]["logging"])
         self.assertEqual(result["providers"], [{"id": "openai/test", "name": "Test OpenAI"}])
+
+    def test_token_usage_endpoint_is_read_only_and_validates_parameters(self):
+        plugin = _Plugin()
+        asyncio.run(
+            plugin.token_usage.record(
+                task="main_reply",
+                umo="u1",
+                run_id="run-1",
+                prompt="hello",
+                completion="world",
+            )
+        )
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request(args={"days": "7"})):
+                result = asyncio.run(plugin._pages_get_token_usage())
+            self.assertTrue(result["success"])
+            self.assertEqual(result["scope"], "global")
+            self.assertGreater(result["totals"]["total_tokens"], 0)
+            self.assertTrue(result["recent"])
+
+            with patch("pages_api.request", _Request(args={"scope": "umo"})):
+                missing = asyncio.run(plugin._pages_get_token_usage())
+            self.assertEqual(missing[1], 400)
+
+            with patch("pages_api.request", _Request(args={"scope": "bad"})):
+                invalid_scope = asyncio.run(plugin._pages_get_token_usage())
+            self.assertEqual(invalid_scope[1], 400)
+
+            with patch("pages_api.request", _Request(args={"days": "abc"})):
+                invalid_days = asyncio.run(plugin._pages_get_token_usage())
+            self.assertEqual(invalid_days[1], 400)
+
+            with patch(
+                "pages_api.request",
+                _Request(args={"scope": "umo", "umo": "u1"}),
+            ):
+                umo_result = asyncio.run(plugin._pages_get_token_usage())
+            self.assertTrue(umo_result["success"])
+            self.assertEqual(umo_result["recent"], [])
+            self.assertEqual(
+                umo_result["totals"]["total_tokens"],
+                result["totals"]["total_tokens"],
+            )
+
+    def test_token_usage_endpoint_requires_the_service(self):
+        plugin = _Plugin()
+        del plugin.token_usage
+        with patch("pages_api.jsonify", side_effect=lambda payload: payload):
+            with patch("pages_api.request", _Request(args={})):
+                result = asyncio.run(plugin._pages_get_token_usage())
+        self.assertEqual(result[1], 503)
 
     def test_shared_constants_return_and_publish_without_astrbot_config_write(self):
         plugin = _Plugin()

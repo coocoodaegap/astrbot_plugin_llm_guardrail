@@ -494,5 +494,33 @@ assert.deepEqual(failures, [['review：missing target']]);
         self.assertIn(".style-dialogs-field textarea", stylesheet)
 
 
+    def test_token_usage_tab_is_read_only_and_lists_unaccounted(self):
+        html = (PAGES_DIR / "index.html").read_text(encoding="utf-8")
+        javascript = (PAGES_DIR / "app.js").read_text(encoding="utf-8")
+        stylesheet = (PAGES_DIR / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('data-tab="token"', html)
+        self.assertIn("Token 用量", html)
+        for element_id in (
+            "panel-token",
+            "token-usage-scope",
+            "token-usage-days",
+            "refresh-token-usage",
+            "token-by-day",
+            "token-by-task",
+            "token-by-provider",
+            "token-unaccounted-detail",
+            "token-recent",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn('bridge.apiGet("get_token_usage"', javascript)
+        self.assertIn("function renderTokenUsage", javascript)
+        self.assertIn("function loadTokenUsage", javascript)
+        self.assertIn("未折算 Token", javascript)
+        self.assertNotIn("delete_token_usage", javascript)
+        self.assertIn(".token-rank-list", stylesheet)
+        self.assertIn(".token-table", stylesheet)
+
+
 if __name__ == "__main__":
     unittest.main()

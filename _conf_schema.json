@@ -2,7 +2,7 @@
   "schema_version": {
     "type": "string",
     "description": "配置模板版本",
-    "default": "0.9.0",
+    "default": "0.10.0",
     "invisible": true
   },
   "fallback_policy_settings": {
@@ -195,6 +195,49 @@
         "description": "每个 UMO 的活动记录上限",
         "hint": "每个 UMO 仅保留最近 N 条活动记录；超过后按时间顺序淘汰最早记录。必须为正整数。",
         "default": 50
+      }
+    }
+  },
+  "token_usage": {
+    "type": "object",
+    "description": "Token 用量账本",
+    "hint": "只读统计 Guardrail 可观测到的全部 LLM 调用（主回复、旁审、复检、重试），不拦截、不限額、不折算费用。关闭后停止记账，历史数据保留。",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Token 记账",
+        "hint": "关闭后不再写入任何新记录；已有账本仍可在 Pages 中查看。",
+        "default": true
+      },
+      "retention_days": {
+        "type": "int",
+        "description": "日聚合保留天数",
+        "hint": "只保留最近 N 天的按日汇总，1 到 365。",
+        "default": 31
+      },
+      "max_umo_records": {
+        "type": "int",
+        "description": "最大 UMO 记录数",
+        "hint": "按 UMO 的账本超过该数量时，淘汰最久未更新的记录。",
+        "default": 500
+      },
+      "recent_limit": {
+        "type": "int",
+        "description": "最近调用条数",
+        "hint": "全局账本保留的最近调用明细条数，1 到 500。",
+        "default": 100
+      },
+      "estimate_when_usage_missing": {
+        "type": "bool",
+        "description": "缺失 usage 时估算",
+        "hint": "Provider 未返回 usage 时按字符估算，并在页面标注为估算值；关闭后只计调用次数。",
+        "default": true
+      },
+      "read_agent_run_stats": {
+        "type": "bool",
+        "description": "读取整轮累计用量",
+        "hint": "从 AstrBot 内部 Agent 运行统计读取整轮累计 Token，避免多步工具调用只记最后一步；读取失败时自动回退到最终响应。",
+        "default": true
       }
     }
   },

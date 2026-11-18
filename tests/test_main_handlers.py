@@ -307,5 +307,100 @@ class MainHandlerSignatureTests(unittest.TestCase):
         self.assertEqual(automatic_policy_id, "")
 
 
+class MainTokenUsageHookTests(unittest.TestCase):
+    class Event:
+        unified_msg_origin = "aiocqhttp:group:100"
+
+        def __init__(self):
+            self.extras = {}
+
+        def get_extra(self, key, default=None):
+            return self.extras.get(key, default)
+
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+        def is_private_chat(self):
+            return False
+
+        def plain_result(self, text):
+            return {"plain": text}
+
+    class Response:
+        def __init__(self, text="hello", is_chunk=False, role="assistant"):
+            self.completion_text = text
+            self.is_chunk = is_chunk
+            self.role = role
+            self.usage = type(
+                "Usage",
+                (),
+                {"input_other": 0, "input_cached": 0, "output": 0},
+            )()
+
+    def _plugin(self):
+        _install_astrbot_stubs()
+        module = importlib.import_module("main")
+        return module, module.LlmGuardrailPlugin(object(), {"enabled": False})
+
+    def test_capture_stores_an_estimate_not_the_prompt_text(self):
+        module, plugin = self._plugin()
+        event = self.Event()
+        request = types.SimpleNamespace(
+            system_prompt="system", prompt="hello world", contexts=[]
+        )
+        asyncio.run(plugin.token_capture_request(event, request))
+        hint = event.get_extra(module.TOKEN_PROMPT_EXTRA)
+        self.assertIsInstance(hint, int)
+        self.assertGreater(hint, 0)
+
+    def test_response_hook_records_one_estimated_call(self):
+        module, plugin = self._plugin()
+        event = self.Event()
+        asyncio.run(plugin.token_record_response(event, self.Response()))
+        snapshot = asyncio.run(plugin.token_usage.snapshot())
+        self.assertEqual(snapshot.totals["calls"], 1)
+        self.assertGreater(snapshot.totals["total_tokens"], 0)
+        self.assertEqual(
+            snapshot.totals["estimated_tokens"], snapshot.totals["total_tokens"]
+        )
+        self.assertEqual(snapshot.by_task[0]["name"], "main_reply")
+
+    def test_chunk_response_is_counted_as_unaccounted(self):
+        module, plugin = self._plugin()
+        event = self.Event()
+        asyncio.run(plugin.token_record_response(event, self.Response(is_chunk=True)))
+        snapshot = asyncio.run(plugin.token_usage.snapshot())
+        self.assertEqual(snapshot.totals["calls"], 0)
+        self.assertEqual(snapshot.unaccounted["stream_chunk"], 1)
+
+    def test_usage_command_reports_the_ledger(self):
+        module, plugin = self._plugin()
+        event = self.Event()
+        asyncio.run(plugin.token_record_response(event, self.Response()))
+
+        async def run():
+            return await _collect_results(plugin.guardrail_usage(event, "7"))
+
+        results = asyncio.run(run())
+        text = results[0]["plain"]
+        self.assertIn("Token 用量", text)
+        self.assertIn("仅统计，不拦截", text)
+
+    def test_agent_run_usage_respects_the_flag_and_missing_module(self):
+        module, plugin = self._plugin()
+        event = self.Event()
+        self.assertIsNone(
+            plugin._agent_run_usage(event, {"read_agent_run_stats": False})
+        )
+        self.assertIsNone(plugin._agent_run_usage(event, {"read_agent_run_stats": True}))
+
+    def test_parse_usage_days_falls_back_to_seven(self):
+        module, plugin = self._plugin()
+        self.assertEqual(plugin._parse_usage_days(""), 7)
+        self.assertEqual(plugin._parse_usage_days("abc"), 7)
+        self.assertEqual(plugin._parse_usage_days("0"), 7)
+        self.assertEqual(plugin._parse_usage_days("30"), 30)
+
+
 if __name__ == "__main__":
     unittest.main()

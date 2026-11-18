@@ -231,6 +231,7 @@ class NormalizedConfig:
     session_control: dict[str, Any]
     access_control: dict[str, Any]
     session_policy_state: dict[str, Any]
+    token_usage: dict[str, Any]
     debug_settings: dict[str, Any]
     rails: dict[str, NormalizedRail]
     warnings: list[str] = field(default_factory=list)
@@ -240,7 +241,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     """Normalize AstrBotConfig or a dict into runtime-only dataclasses."""
 
     warnings: list[str] = []
-    schema_version = "0.9.0"
+    schema_version = "0.10.0"
     fallback_policy_settings = _normalize_fallback_policy_settings(
         _as_dict(_config_get(raw_config, "fallback_policy_settings", {})),
         warnings,
@@ -261,6 +262,10 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
     )
     session_policy_state = _normalize_session_policy_state(
         _as_dict(_config_get(raw_config, "session_policy_state", {})),
+        warnings,
+    )
+    token_usage = _normalize_token_usage(
+        _as_dict(_config_get(raw_config, "token_usage", {})),
         warnings,
     )
     debug_settings = _normalize_debug_settings(
@@ -290,6 +295,7 @@ def normalize_config(raw_config: Any) -> NormalizedConfig:
         session_control=session_control,
         access_control=access_control,
         session_policy_state=session_policy_state,
+        token_usage=token_usage,
         debug_settings=debug_settings,
         rails=rails,
         warnings=warnings,
@@ -467,6 +473,47 @@ def _normalize_session_policy_state(
         "state_ttl_seconds": state_ttl_seconds,
         "max_entries": max_entries,
         "activity_log_limit": activity_log_limit,
+    }
+
+
+def _normalize_token_usage(
+    raw_settings: dict[str, Any],
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Normalize the v0.10.0 read-only Token usage ledger settings."""
+
+    retention_days = _as_int(raw_settings.get("retention_days"), 31)
+    if retention_days < 1 or retention_days > 365:
+        warnings.append(
+            "token_usage.retention_days must be within 1..365; fallback to 31"
+        )
+        retention_days = 31
+
+    max_umo_records = _as_int(raw_settings.get("max_umo_records"), 500)
+    if max_umo_records < 1:
+        warnings.append(
+            "token_usage.max_umo_records must be positive; fallback to 500"
+        )
+        max_umo_records = 500
+
+    recent_limit = _as_int(raw_settings.get("recent_limit"), 100)
+    if recent_limit < 1 or recent_limit > 500:
+        warnings.append(
+            "token_usage.recent_limit must be within 1..500; fallback to 100"
+        )
+        recent_limit = 100
+
+    return {
+        "enabled": _as_bool(raw_settings.get("enabled"), True),
+        "retention_days": retention_days,
+        "max_umo_records": max_umo_records,
+        "recent_limit": recent_limit,
+        "estimate_when_usage_missing": _as_bool(
+            raw_settings.get("estimate_when_usage_missing"), True
+        ),
+        "read_agent_run_stats": _as_bool(
+            raw_settings.get("read_agent_run_stats"), True
+        ),
     }
 
 

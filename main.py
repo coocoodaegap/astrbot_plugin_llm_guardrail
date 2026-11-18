@@ -44,6 +44,7 @@ try:
     from .session_lock import UmoLockManager, get_global_umo_lock_manager
     from .snapshots import ConfigSnapshotManager
     from .state import AstrBotKvStateStore, MemoryStateStore, StateStore
+    from .token_usage import TokenUsageService
 except ImportError:  # pragma: no cover - fallback for direct script loading
     from access_control import (
         DECISION_BAN,
@@ -71,16 +72,20 @@ except ImportError:  # pragma: no cover - fallback for direct script loading
     from session_lock import UmoLockManager, get_global_umo_lock_manager
     from snapshots import ConfigSnapshotManager
     from state import AstrBotKvStateStore, MemoryStateStore, StateStore
+    from token_usage import TokenUsageService
 
 
 PLUGIN_NAME = "astrbot_plugin_llm_guardrail"
-PLUGIN_VERSION = "0.9.0"
+PLUGIN_VERSION = "0.10.0"
 POLICY_RUN_ID_EXTRA = "_llm_guardrail_policy_run_id"
 POLICY_RUN_STARTED_AT_EXTRA = "_llm_guardrail_policy_run_started_at"
 ACCESS_GATE_CHECKED_EXTRA = "_llm_guardrail_access_gate_checked"
 ACCESS_GATE_BLOCKED_EXTRA = "_llm_guardrail_access_gate_blocked"
 REQUEST_HANDLED_EXTRA = "_llm_guardrail_request_handled"
 REQUEST_ENTRY_EXTRA = "_llm_guardrail_request_entry"
+TOKEN_PROMPT_EXTRA = "_llm_guardrail_token_prompt"
+TOKEN_START_EXTRA = "_llm_guardrail_token_start_ms"
+TOKEN_DEDUPE_EXTRA = "_llm_guardrail_token_dedupe"
 ACCESS_COMMAND_DEFAULT_LIMIT = 20
 ACCESS_COMMAND_MAX_LIMIT = 100
 POLICY_COMMAND_DEFAULT_LIMIT = 20
@@ -136,6 +141,8 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         self.access_control = AccessControlService(self.state_store)
         self.session_policy_state = SessionPolicyStateService(self.state_store)
         self.rag_experience = RagExperienceService(self.state_store)
+        self.token_usage = TokenUsageService(self.state_store)
+        self.adapter.set_usage_sink(self._record_guardrail_usage)
         self.pipeline = GuardrailPipeline(
             self.normalized_config,
             self.adapter,
@@ -168,7 +175,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             except Exception as exc:
                 logger.error("[LLMGuardrail] Agent entry unavailable: %s", exc, exc_info=True)
         logger.info(
-            "[LLMGuardrail] loaded P3 v%s | warnings=%s",
+            "[LLMGuardrail] loaded v%s | warnings=%s",
             PLUGIN_VERSION,
             len(self.normalized_config.warnings),
         )
@@ -440,6 +447,241 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
                     "; ".join(stop_result.warnings),
                 )
 
+    @filter.on_llm_request(priority=1_000_000)
+    async def token_capture_request(
+        self, event: AstrMessageEvent, req: ProviderRequest, *_args, **_kwargs
+    ) -> None:
+        """只读快照最终请求文本，供缺失 usage 时估算使用。"""
+
+        if not self or is_internal_guardrail_call():
+            return
+        try:
+            if not self._token_usage_settings().get("enabled", False):
+                return
+            hint = self.adapter.estimate_request_tokens(req)
+            self.adapter.set_event_extra(event, TOKEN_PROMPT_EXTRA, hint)
+            self.adapter.set_event_extra(event, TOKEN_START_EXTRA, int(time.time() * 1000))
+        except Exception:
+            return
+
+    @filter.on_llm_response(priority=1_000_000)
+    async def token_record_response(
+        self, event: AstrMessageEvent, resp: LLMResponse, *_args, **_kwargs
+    ) -> None:
+        """记录一次可观测的主回复花费；不修改响应。"""
+
+        if not self or is_internal_guardrail_call():
+            return
+        settings = self._token_usage_settings()
+        if not settings.get("enabled", False):
+            return
+        service = getattr(self, "token_usage", None)
+        if service is None:
+            return
+        try:
+            umo = self.adapter.get_umo(event)
+            aborted = bool(self.adapter.get_event_extra(event, "agent_user_aborted", False))
+            if bool(getattr(resp, "is_chunk", False)):
+                await service.record_unaccounted(
+                    reason="aborted_partial" if aborted else "stream_chunk",
+                    umo=umo,
+                    settings=settings,
+                )
+                return
+            run_usage = self._agent_run_usage(event, settings)
+            role = str(getattr(resp, "role", "") or "").strip().lower()
+            success = role != "err"
+            await service.record(
+                task="main_reply",
+                umo=umo,
+                run_id=self._token_run_id(event),
+                provider_id=self._token_provider_id(event, resp),
+                prompt_tokens_hint=int(
+                    self.adapter.get_event_extra(event, TOKEN_PROMPT_EXTRA, 0) or 0
+                ),
+                completion=str(getattr(resp, "completion_text", "") or ""),
+                response=resp,
+                run_usage=run_usage,
+                elapsed_ms=self._token_elapsed_ms(event),
+                success=success,
+                error="" if success else f"role:{role or 'unknown'}",
+                entry=str(
+                    self.adapter.get_event_extra(event, REQUEST_ENTRY_EXTRA, "unavailable")
+                    or "unavailable"
+                ),
+                chat_type="private" if self.adapter.is_private_chat(event) else "group",
+                aborted=aborted,
+                dedupe_set=self._token_dedupe(event),
+                settings=settings,
+            )
+        except Exception as exc:
+            logger.warning("[LLMGuardrail] token accounting failed: %s", exc)
+
+    def _token_usage_settings(self) -> dict[str, Any]:
+        try:
+            settings = self.snapshot_manager.current.runtime_config.token_usage
+            if isinstance(settings, dict):
+                return settings
+        except Exception:
+            pass
+        fallback = getattr(self.normalized_config, "token_usage", None)
+        return fallback if isinstance(fallback, dict) else {}
+
+    def _token_dedupe(self, event: AstrMessageEvent) -> set[str] | None:
+        existing = self.adapter.get_event_extra(event, TOKEN_DEDUPE_EXTRA, None)
+        if isinstance(existing, set):
+            return existing
+        created: set[str] = set()
+        try:
+            self.adapter.set_event_extra(event, TOKEN_DEDUPE_EXTRA, created)
+        except Exception:
+            return None
+        return created
+
+    def _token_run_id(self, event: AstrMessageEvent) -> str:
+        try:
+            return self._ensure_policy_run(event)[0]
+        except Exception:
+            return ""
+
+    def _token_provider_id(self, event: AstrMessageEvent, resp: LLMResponse) -> str:
+        for key in ("provider_id", "llm_provider_id", "chat_provider_id"):
+            value = getattr(resp, key, "")
+            if value:
+                return str(value)
+        agent_provider = self.adapter.get_event_extra(event, AGENT_PROVIDER_ID_EXTRA, "")
+        if agent_provider:
+            return str(agent_provider)
+        return self.adapter.get_selected_request_provider_id(event)
+
+    def _token_elapsed_ms(self, event: AstrMessageEvent) -> int:
+        try:
+            started = int(self.adapter.get_event_extra(event, TOKEN_START_EXTRA, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+        if started <= 0:
+            return 0
+        return max(0, int(time.time() * 1000) - started)
+
+    def _agent_run_usage(self, event: AstrMessageEvent, settings: dict[str, Any]) -> Any:
+        """Return the cumulative TokenUsage for the current internal Agent run."""
+
+        if not settings.get("read_agent_run_stats", True):
+            return None
+        try:
+            from astrbot.core.pipeline.process_stage.follow_up import (
+                _ACTIVE_AGENT_RUNNERS,
+            )
+        except Exception:
+            return None
+        try:
+            runner = _ACTIVE_AGENT_RUNNERS.get(self.adapter.get_umo(event))
+            if runner is None:
+                return None
+            run_context = getattr(runner, "run_context", None)
+            agent_context = getattr(run_context, "context", None)
+            if getattr(agent_context, "event", None) is not event:
+                return None
+            stats = getattr(runner, "stats", None)
+            return getattr(stats, "token_usage", None)
+        except Exception:
+            return None
+
+    async def _record_guardrail_usage(
+        self,
+        *,
+        kind: str = "llm",
+        event: Any = None,
+        task: str = "",
+        provider_id: str = "",
+        prompt: str = "",
+        completion: str = "",
+        response: Any = None,
+        elapsed_ms: int = 0,
+        success: bool = True,
+        error: str = "",
+    ) -> None:
+        """Adapter usage sink: the single accounting entry for internal calls."""
+
+        service = getattr(self, "token_usage", None)
+        if service is None:
+            return
+        settings = self._token_usage_settings()
+        if not settings.get("enabled", False):
+            return
+        umo = self.adapter.get_umo(event) if event is not None else ""
+        if kind == "retrieval":
+            await service.record_retrieval(success=success, umo=umo, settings=settings)
+            return
+        await service.record(
+            task=task or "guardrail_review",
+            umo=umo,
+            run_id=self._token_run_id(event) if event is not None else "",
+            provider_id=provider_id,
+            prompt=prompt,
+            completion=completion,
+            response=response,
+            elapsed_ms=elapsed_ms,
+            success=success,
+            error=error,
+            entry="unavailable",
+            chat_type=(
+                "private"
+                if event is not None and self.adapter.is_private_chat(event)
+                else ""
+            ),
+            settings=settings,
+        )
+
+    @staticmethod
+    def _parse_usage_days(value: str) -> int:
+        text = str(value or "").strip()
+        if not text.isdigit():
+            return 7
+        days = int(text)
+        return days if 1 <= days <= 365 else 7
+
+    @classmethod
+    def _format_usage_text(cls, snapshot: Any, days: int) -> str:
+        if not getattr(snapshot, "success", False):
+            return "Token 账本暂不可用。"
+        totals = getattr(snapshot, "totals", {}) or {}
+        total = int(totals.get("total_tokens", 0) or 0)
+        estimated = int(totals.get("estimated_tokens", 0) or 0)
+        ratio = (estimated / total * 100.0) if total else 0.0
+        lines = [
+            f"Token 用量（最近 {days} 天，全局）",
+            f"- 合计：{total:,}（估算 {ratio:.1f}%）",
+        ]
+        by_day = getattr(snapshot, "by_day", []) or []
+        if by_day:
+            lines.append(f"- 今日：{int(by_day[-1].get('total_tokens', 0) or 0):,}")
+        tasks = (getattr(snapshot, "by_task", []) or [])[:5]
+        if tasks:
+            lines.append(
+                "- 按任务："
+                + " / ".join(
+                    f"{item.get('name', '')} {int(item.get('total_tokens', 0) or 0):,}"
+                    for item in tasks
+                )
+            )
+        unaccounted = getattr(snapshot, "unaccounted", {}) or {}
+        lines.append(
+            "- 未统计："
+            f"逐 chunk {int(unaccounted.get('stream_chunk', 0) or 0)} / "
+            f"中止 {int(unaccounted.get('aborted_partial', 0) or 0)} / "
+            f"错误无 usage {int(unaccounted.get('error_no_usage', 0) or 0)} / "
+            f"关闭估算 {int(unaccounted.get('missing_usage', 0) or 0)}"
+        )
+        other = getattr(snapshot, "other_calls", {}) or {}
+        if other:
+            lines.append(
+                f"- RAG 检索：{int(other.get('retrieval', 0) or 0)} 次"
+                f"（失败 {int(other.get('retrieval_failed', 0) or 0)}；未折算 Token）"
+            )
+        lines.append("仅统计，不拦截。")
+        return "\n".join(lines)
+
     @filter.command_group("guardrail")
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def guardrail(self, event: AstrMessageEvent):
@@ -451,7 +693,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("status")
     async def guardrail_status(self, event: AstrMessageEvent):
-        """查看当前 LLM Guardrail P3 状态。"""
+        """查看当前 LLM Guardrail 状态。"""
 
         yield event.plain_result(self._guardrail_status_text(event))
 
@@ -543,6 +785,27 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
         yield event.plain_result(
             f"已为 UMO “{target_umo}”明确指定策略“{target}”；后续请求将优先使用它。"
         )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guardrail.command("usage")
+    async def guardrail_usage(self, event: AstrMessageEvent, days: str = ""):
+        """查看 Guardrail 可观测的 Token 用量（只读）。"""
+
+        try:
+            parsed_days = self._parse_usage_days(days)
+            service = getattr(self, "token_usage", None)
+            if service is None:
+                yield event.plain_result("Token 账本暂不可用。")
+                return
+            snapshot = await service.snapshot(
+                scope="global",
+                days=parsed_days,
+                settings=self._token_usage_settings(),
+            )
+            yield event.plain_result(self._format_usage_text(snapshot, parsed_days))
+        except Exception as exc:
+            logger.warning("[LLMGuardrail] usage command failed: %s", exc)
+            yield event.plain_result("Token 账本暂不可用。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @guardrail.command("access")
@@ -700,7 +963,7 @@ class LlmGuardrailPlugin(GuardrailPagesApiMixin, Star):
             )
 
         lines = [
-            "LLM Guardrail P3",
+            "LLM Guardrail",
             f"- version: {PLUGIN_VERSION}",
             f"- schema: {cfg.schema_version}",
             "- session scope: "

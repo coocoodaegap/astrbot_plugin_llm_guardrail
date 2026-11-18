@@ -37,6 +37,8 @@
           aria-controls="panel-knowledge" data-tab="knowledge">知识库经验</button>
         <button class="tab" id="tab-session" type="button" role="tab" aria-selected="false"
           aria-controls="panel-session" data-tab="session">会话策略监控</button>
+        <button class="tab" id="tab-token" type="button" role="tab" aria-selected="false"
+          aria-controls="panel-token" data-tab="token">Token 用量</button>
         <button class="tab" id="tab-system" type="button" role="tab" aria-selected="false"
           aria-controls="panel-system" data-tab="system">系统设置</button>
       </nav>
@@ -542,6 +544,100 @@
         <div><p class="eyebrow">CLEAR UMO STATE</p><h3 id="confirm-session-policy-state-delete-title">清除全部会话状态？</h3><p id="confirm-session-policy-state-delete-message" class="danger-notice"></p></div>
         <div class="dialog-actions"><button id="cancel-session-policy-state-delete" type="button" class="button-secondary">取消</button><button id="confirm-session-policy-state-delete" type="button" class="danger-button">清除全部状态</button></div>
       </dialog>
+    </section>
+    <section class="tab-panel" id="panel-token" role="tabpanel" aria-labelledby="tab-token" data-panel="token"
+      hidden>
+      <div class="page-section-heading">
+        <p class="eyebrow">TOKEN LEDGER</p>
+        <h2>Token 用量</h2>
+        <p>只读统计 Guardrail 可观测到的全部 LLM 调用：主回复、旁审、复检与重试。不计费、不拦截；无法观测的调用会单独列出。</p>
+      </div>
+      <section class="card token-controls-card">
+        <div class="token-controls">
+          <label>范围<select id="token-usage-scope">
+              <option value="global">全局</option>
+              <option value="umo">单个会话</option>
+            </select></label>
+          <label id="token-umo-row" hidden>UMO<input id="token-usage-umo" type="text" autocomplete="off"
+              placeholder="platform:message_type:session" /></label>
+          <label>窗口<select id="token-usage-days">
+              <option value="7">近 7 天</option>
+              <option value="1">今天</option>
+              <option value="30">近 30 天</option>
+            </select></label>
+          <button id="refresh-token-usage" type="button" class="button-secondary">刷新</button>
+        </div>
+        <p id="token-usage-status" class="muted" aria-live="polite"></p>
+      </section>
+      <div class="token-metric-grid">
+        <section class="card">
+          <p class="eyebrow">TOTAL</p>
+          <h3 id="token-total">0</h3>
+          <p id="token-total-note" class="muted">—</p>
+        </section>
+        <section class="card">
+          <p class="eyebrow">TODAY</p>
+          <h3 id="token-today">0</h3>
+          <p class="muted">本地日期</p>
+        </section>
+        <section class="card">
+          <p class="eyebrow">ESTIMATED</p>
+          <h3 id="token-estimated">0%</h3>
+          <p class="muted">缺失 usage 时按字符估算</p>
+        </section>
+        <section class="card">
+          <p class="eyebrow">UNACCOUNTED</p>
+          <h3 id="token-unaccounted-total">0</h3>
+          <p id="token-unaccounted-detail" class="muted">—</p>
+        </section>
+      </div>
+      <div class="token-layout">
+        <section class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">BY DAY</p>
+              <h3>按日用量</h3>
+            </div>
+          </div>
+          <div class="token-table-wrap">
+            <table class="token-table">
+              <thead>
+                <tr><th>日期</th><th>调用</th><th>输入</th><th>输出</th><th>合计</th><th>估算</th></tr>
+              </thead>
+              <tbody id="token-by-day"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">BREAKDOWN</p>
+              <h3>按任务</h3>
+            </div>
+          </div>
+          <ul id="token-by-task" class="token-rank-list"></ul>
+          <h3>按 Provider</h3>
+          <ul id="token-by-provider" class="token-rank-list"></ul>
+          <p id="token-other-calls" class="muted"></p>
+        </section>
+      </div>
+      <section class="card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">RECENT</p>
+            <h3>最近调用</h3>
+            <p>不含任何对话正文；UMO 默认脱敏。</p>
+          </div>
+        </div>
+        <div class="token-table-wrap">
+          <table class="token-table">
+            <thead>
+              <tr><th>时间</th><th>任务</th><th>Provider</th><th>会话</th><th>合计</th><th>来源</th></tr>
+            </thead>
+            <tbody id="token-recent"></tbody>
+          </table>
+        </div>
+      </section>
     </section>
     <section class="tab-panel" id="panel-system" role="tabpanel" aria-labelledby="tab-system" data-panel="system"
       hidden>

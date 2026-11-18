@@ -743,6 +743,43 @@ class ConfigNormalizerTests(unittest.TestCase):
         self.assertEqual(cfg.debug_settings["stats_max_records"], 200)
         self.assertIn("stats_max_records must be positive", " ".join(cfg.warnings))
 
+    def test_token_usage_defaults_and_invalid_values(self):
+        cfg = normalize_config({})
+        self.assertEqual(
+            cfg.token_usage,
+            {
+                "enabled": True,
+                "retention_days": 31,
+                "max_umo_records": 500,
+                "recent_limit": 100,
+                "estimate_when_usage_missing": True,
+                "read_agent_run_stats": True,
+            },
+        )
+
+        invalid = normalize_config(
+            {
+                "token_usage": {
+                    "retention_days": 0,
+                    "max_umo_records": 0,
+                    "recent_limit": 501,
+                    "enabled": "false",
+                    "estimate_when_usage_missing": "true",
+                    "read_agent_run_stats": "false",
+                }
+            }
+        )
+        self.assertFalse(invalid.token_usage["enabled"])
+        self.assertTrue(invalid.token_usage["estimate_when_usage_missing"])
+        self.assertFalse(invalid.token_usage["read_agent_run_stats"])
+        self.assertEqual(invalid.token_usage["retention_days"], 31)
+        self.assertEqual(invalid.token_usage["max_umo_records"], 500)
+        self.assertEqual(invalid.token_usage["recent_limit"], 100)
+        warnings = " ".join(invalid.warnings)
+        self.assertIn("token_usage.retention_days", warnings)
+        self.assertIn("token_usage.max_umo_records", warnings)
+        self.assertIn("token_usage.recent_limit", warnings)
+
     def test_invalid_session_mode_falls_back_to_all_run(self):
         cfg = normalize_config(
             {

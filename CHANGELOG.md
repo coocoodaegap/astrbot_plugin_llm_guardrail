@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-18
+
+### Added
+
+- 新增只读 Token 用量账本：按全局与 UMO 记录主回复、`llm_review` 旁审、`sensitive_echo` 外部复检与 `retry_generation` 重试的输入、输出与缓存 Token；缺失 usage 时按字符估算并标记来源。
+- 新增 Pages「Token 用量」页与 `/guardrail usage [天数]` 指令，展示按日、任务、Provider 的分布、最近调用与未统计原因；账本不拦截、不限額、不折算费用。
+- 新增 `token_usage` 系统设置组（保留天数、UMO 记录上限、最近条数、缺失估算、读取整轮累计用量）。
+- 主动 Agent 的多步工具调用优先读取整轮累计 Token，避免只记录最后一步；读取失败时自动回退最终响应。
+
+### Changed
+
+- LLM 旁审、复检与重试统一经 adapter usage sink 记账，新增调用点不会绕过账本；无法观测的调用按原因计入 `unaccounted`，不再静默丢弃。
+
 ## [0.9.0] - 2026-11-17
 
 ### Added
